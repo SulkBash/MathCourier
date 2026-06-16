@@ -1,6 +1,7 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const renderer = require('./renderer');
+const solver = require('./solver');
 const config = require('./config');
 const { create, all } = require('mathjs');
 const math = create(all);
@@ -152,6 +153,13 @@ client.on('message_create', async (msg) => {
             '  *e) Definite Integrals:*',
             '  • `!plot y = integ("sin(t)", "t", 0, x) [-10, 10] [-3, 3]`',
             '',
+            '*5. Equation Solver*',
+            '• *Command:* `!solve <equation(s)>`',
+            '  _Solves equations or linear systems (returns a styled card with symbolic roots or numerical convergence steps)._',
+            '  • `!solve x^2 - 5x + 6 = 0` (symbolic quadratic)',
+            '  • `!solve cos(x) - x = 0` (numerical Newton-Raphson)',
+            '  • `!solve x + y = 5; x - y = 1` (linear system)',
+            '',
             '──────────────────────────',
             '*Tip:* Wrap ranges in brackets `[min, max]`. If you specify one range, it defines the X-axis limits. If you specify two, they define the X and Y limits respectively.'
         ].join('\n');
@@ -165,13 +173,14 @@ client.on('message_create', async (msg) => {
     }
 
     let triggered = false;
-    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'mixed'
+    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'solve' | 'mixed'
     let input = '';
 
     const latexInput = parseCommand(body, '!latex') || parseCommand(body, '!tex');
     const chemInput = parseCommand(body, '!chem') || parseCommand(body, '!chemfig');
     const tikzInput = parseCommand(body, '!tikz');
     const plotInput = parseCommand(body, '!plot');
+    const solveInput = parseCommand(body, '!solve');
 
     if (latexInput) {
         triggered = true; mode = 'latex'; input = latexInput;
@@ -181,6 +190,8 @@ client.on('message_create', async (msg) => {
         triggered = true; mode = 'tikz'; input = tikzInput;
     } else if (plotInput) {
         triggered = true; mode = 'plot'; input = plotInput;
+    } else if (solveInput) {
+        triggered = true; mode = 'solve'; input = solveInput;
     } else if (body.includes('\\begin{tikzpicture}')) {
         triggered = true; mode = 'tikz'; input = body;
     } else if (config.bot.autoRenderBlock && body.includes('$$')) {
@@ -224,6 +235,8 @@ client.on('message_create', async (msg) => {
             result = await renderer.renderTikz(input);
         } else if (mode === 'plot') {
             result = await handlePlotCommand(input);
+        } else if (mode === 'solve') {
+            result = await handleSolveCommand(input);
         } else if (mode === 'latex') {
             result = await renderer.render(input, true);
         } else {
@@ -318,6 +331,14 @@ async function handlePlotCommand(input) {
     if (yDomain) opts.yDomain = yDomain;
 
     return await renderer.renderPlot(expr, opts);
+}
+
+async function handleSolveCommand(input) {
+    const solveRes = solver.solveEquation(input);
+    if (!solveRes.success) {
+        return { success: false, error: solveRes.error };
+    }
+    return await renderer.render(solveRes.latex, true);
 }
 
 console.log('Starting LaTeX Render Bot...');

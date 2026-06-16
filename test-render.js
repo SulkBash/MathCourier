@@ -85,6 +85,25 @@ async function runTests() {
     await runTest('Plot integral of sin(t)', () =>
         renderer.renderPlot('y = integ("sin(t)", "t", 0, x)', { xDomain: [-10, 10], yDomain: [-3, 3] }));
 
+    const solver = require('./solver');
+    await runTest('Solve quadratic', async () => {
+        const res = solver.solveEquation('x^2 - 5x + 6 = 0');
+        if (res.success) return await renderer.render(res.latex, true);
+        return res;
+    });
+
+    await runTest('Solve system', async () => {
+        const res = solver.solveEquation('x + y = 5; x - y = 1');
+        if (res.success) return await renderer.render(res.latex, true);
+        return res;
+    });
+
+    await runTest('Solve transcendental cos(x) - x', async () => {
+        const res = solver.solveEquation('cos(x) - x = 0');
+        if (res.success) return await renderer.render(res.latex, true);
+        return res;
+    });
+
     console.log('\nShutting down...');
     await renderer.close();
     console.log('--- DONE ---');
