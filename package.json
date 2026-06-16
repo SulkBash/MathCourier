@@ -1,0 +1,16 @@
+{
+  "name": "latex-render-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp bot that renders LaTeX in group chats.",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "test": "node test-render.js"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "katex": "^0.16.9",
+    "puppeteer": "^21.6.1",
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
+  }
+}
