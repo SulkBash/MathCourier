@@ -18,7 +18,7 @@ module.exports = {
         
         graph: {
             width: 600,
-            height: 450,
+            height: 600,
             gridColor: 'rgba(255, 255, 255, 0.06)',
             axisColor: 'rgba(255, 255, 255, 0.3)',
             axisLabelColor: 'rgba(248, 250, 252, 0.5)',
