@@ -79,6 +79,12 @@ async function runTests() {
     await runTest('Plot ln(x)', () =>
         renderer.renderPlot('y = ln(x)', { xDomain: [-10, 10], yDomain: [-10, 10] }));
 
+    await runTest('Plot derivative of x^3', () =>
+        renderer.renderPlot('y = deriv("x^3", "x", x)', { xDomain: [-3, 3], yDomain: [-10, 10] }));
+
+    await runTest('Plot integral of sin(t)', () =>
+        renderer.renderPlot('y = integ("sin(t)", "t", 0, x)', { xDomain: [-10, 10], yDomain: [-3, 3] }));
+
     console.log('\nShutting down...');
     await renderer.close();
     console.log('--- DONE ---');

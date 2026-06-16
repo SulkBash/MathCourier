@@ -5,6 +5,36 @@ const config = require('./config');
 const { create, all } = require('mathjs');
 const math = create(all);
 
+const deriv = function (expr, varName, val) {
+    return math.derivative(expr, varName).evaluate({ [varName]: val });
+};
+deriv.toTex = function (node, options) {
+    const exprStr = node.args[0].value;
+    const varStr = node.args[1].value;
+    const innerTex = math.parse(exprStr).toTex();
+    return `\\frac{d}{d${varStr}}\\left(${innerTex}\\right)`;
+};
+
+const integ = function (expr, varName, lower, upper) {
+    const compiled = math.compile(expr);
+    const f = (val) => compiled.evaluate({ [varName]: val });
+    const n = 100;
+    const h = (upper - lower) / n;
+    let sum = 0.5 * (f(lower) + f(upper));
+    for (let i = 1; i < n; i++) {
+        sum += f(lower + i * h);
+    }
+    return sum * h;
+};
+integ.toTex = function (node, options) {
+    const exprStr = node.args[0].value;
+    const varStr = node.args[1].value;
+    const lowerTex = node.args[2].toTex(options);
+    const upperTex = node.args[3].toTex(options);
+    const innerTex = math.parse(exprStr).toTex();
+    return `\\int_{${lowerTex}}^{${upperTex}} ${innerTex} d${varStr}`;
+};
+
 math.import({
     arcsin: math.asin,
     arccos: math.acos,
@@ -24,7 +54,9 @@ math.import({
     tg: math.tan,
     ctg: math.cot,
     arctg: math.atan,
-    arcctg: math.acot
+    arcctg: math.acot,
+    deriv,
+    integ
 }, { override: true });
 
 
@@ -73,7 +105,65 @@ client.on('message_create', async (msg) => {
         const snippet = body.substring(0, 40).replace(/\n/g, ' ');
         console.log(`msg from [${msg.author || msg.from}]: "${snippet}${body.length > 40 ? '...' : ''}"`);
     }
-    
+
+    if (body.toLowerCase() === '!help') {
+        const helpText = [
+            '*LaTeX Render Bot Help Menu*',
+            '',
+            'Welcome to the LaTeX & Graphing Bot! Here are all the commands you can use to render math, chemistry, diagrams, and plots.',
+            '',
+            '──────────────────────────',
+            '',
+            '*1. LaTeX / Mathematics*',
+            '• *Command:* `!latex <formula>` (or `!tex`)',
+            '  _Example:_ `!latex \\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}`',
+            '• *Inline Blocks:* Wrap formulas in `$$` anywhere in your text.',
+            '  _Example:_ `The solution to $x^2=4$ is $$x = \\pm 2$$`',
+            '',
+            '*2. Chemistry Structures*',
+            '• *Command:* `!chem <formula>` (or `!chemfig`)',
+            '  _Example:_ `!chem \\chemfig{A-B*6(=-=-=-)}`',
+            '',
+            '*3. TikZ Diagrams*',
+            '• *Command:* `!tikz <tikz code>`',
+            '  _Example:_',
+            '  `!tikz`',
+            '  `\\draw[thick, fill=blue!10] (0,0) circle (1.5);`',
+            '  `\\node at (0,0) {Hello!};`',
+            '',
+            '*4. Function & Equation Plotting*',
+            '• *Command:* `!plot <expression> [xRange] [yRange]`',
+            '  _Plots lines, implicit curves, vector fields, derivatives, and integrals on a square coordinate grid._',
+            '',
+            '  *a) Explicit Functions:*',
+            '  • `!plot y = x^2 - 4`',
+            '  • `!plot sin(x) * cos(x/2) [-10, 10] [-2, 2]`',
+            '',
+            '  *b) Implicit Equations:*',
+            '  • `!plot x^2 + y^2 = 9` (renders a circle)',
+            '  • `!plot y^2 = x^3 - x [-2, 2] [-2, 2]`',
+            '',
+            '  *c) Vector Fields:*',
+            '  • `!plot v(x,y) = (-y, x) [-5, 5] [-5, 5]`',
+            '',
+            '  *d) Derivatives:*',
+            '  • `!plot y = deriv("x^3", "x", x) [-3, 3] [-10, 10]`',
+            '',
+            '  *e) Definite Integrals:*',
+            '  • `!plot y = integ("sin(t)", "t", 0, x) [-10, 10] [-3, 3]`',
+            '',
+            '──────────────────────────',
+            '*Tip:* Wrap ranges in brackets `[min, max]`. If you specify one range, it defines the X-axis limits. If you specify two, they define the X and Y limits respectively.'
+        ].join('\n');
+
+        try {
+            await msg.reply(helpText);
+        } catch (err) {
+            console.error('Failed to send help message:', err.message);
+        }
+        return;
+    }
+
     let triggered = false;
     let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'mixed'
     let input = '';
@@ -107,14 +197,14 @@ client.on('message_create', async (msg) => {
     const sender = msg.author || msg.from;
     if (renderer.isRateLimited(sender)) {
         console.warn(`Rate limited: ${sender}`);
-        try { await msg.reply(`${config.bot.errorPrefix}Too many requests. Please wait a moment before sending another formula.`); } catch (_) {}
+        try { await msg.reply(`${config.bot.errorPrefix}Too many requests. Please wait a moment before sending another formula.`); } catch (_) { }
         return;
     }
 
     const lengthErr = renderer.validateInputLength(input);
     if (lengthErr) {
         console.warn(`Input rejected (${sender}): ${lengthErr}`);
-        try { await msg.reply(`${config.bot.errorPrefix}${lengthErr}`); } catch (_) {}
+        try { await msg.reply(`${config.bot.errorPrefix}${lengthErr}`); } catch (_) { }
         return;
     }
 
@@ -126,7 +216,7 @@ client.on('message_create', async (msg) => {
         } catch (e) {
             console.warn('Failed to set typing state:', e.message);
         }
-        
+
         let result;
         if (mode === 'chem') {
             result = await renderer.renderChem(input);
@@ -174,7 +264,7 @@ async function renderMixed(text) {
     // Fallback: extract the first $$ block and send it to the API
     const first = text.indexOf('$$');
     const second = text.indexOf('$$', first + 2);
-    
+
     if (first !== -1 && second !== -1) {
         const extracted = text.substring(first + 2, second).trim();
         if (extracted) {
@@ -182,7 +272,7 @@ async function renderMixed(text) {
             return await renderer.render(extracted, true);
         }
     }
-    
+
     return {
         success: false,
         error: 'Local mixed rendering unavailable, and could not extract formula for API fallback.'
@@ -191,9 +281,9 @@ async function renderMixed(text) {
 
 async function handlePlotCommand(input) {
     let expr = input.trim();
-    
+
     const rangeMatches = [...expr.matchAll(/\[([^\]]+)\]/g)];
-    
+
     let xDomain = null;
     let yDomain = null;
 
@@ -208,7 +298,7 @@ async function handlePlotCommand(input) {
             console.warn('Failed to parse X domain:', e.message);
         }
     }
-    
+
     if (rangeMatches.length > 1) {
         try {
             const parts = rangeMatches[1][1].split(',');
@@ -220,13 +310,13 @@ async function handlePlotCommand(input) {
             console.warn('Failed to parse Y domain:', e.message);
         }
     }
-    
+
     expr = expr.trim();
-    
+
     const opts = {};
     if (xDomain) opts.xDomain = xDomain;
     if (yDomain) opts.yDomain = yDomain;
-    
+
     return await renderer.renderPlot(expr, opts);
 }
 

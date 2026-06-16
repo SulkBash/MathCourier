@@ -35,6 +35,36 @@ function validateInputLength(formula) {
     return null;
 }
 
+const deriv = function(expr, varName, val) {
+    return math.derivative(expr, varName).evaluate({ [varName]: val });
+};
+deriv.toTex = function(node, options) {
+    const exprStr = node.args[0].value;
+    const varStr = node.args[1].value;
+    const innerTex = math.parse(exprStr).toTex();
+    return `\\frac{d}{d${varStr}}\\left(${innerTex}\\right)`;
+};
+
+const integ = function(expr, varName, lower, upper) {
+    const compiled = math.compile(expr);
+    const f = (val) => compiled.evaluate({ [varName]: val });
+    const n = 100;
+    const h = (upper - lower) / n;
+    let sum = 0.5 * (f(lower) + f(upper));
+    for (let i = 1; i < n; i++) {
+        sum += f(lower + i * h);
+    }
+    return sum * h;
+};
+integ.toTex = function(node, options) {
+    const exprStr = node.args[0].value;
+    const varStr = node.args[1].value;
+    const lowerTex = node.args[2].toTex(options);
+    const upperTex = node.args[3].toTex(options);
+    const innerTex = math.parse(exprStr).toTex();
+    return `\\int_{${lowerTex}}^{${upperTex}} ${innerTex} d${varStr}`;
+};
+
 math.import({
     arcsin: math.asin,
     arccos: math.acos,
@@ -54,7 +84,9 @@ math.import({
     tg: math.tan,
     ctg: math.cot,
     arctg: math.atan,
-    arcctg: math.acot
+    arcctg: math.acot,
+    deriv,
+    integ
 }, { override: true });
 
 
