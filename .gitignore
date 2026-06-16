@@ -1,30 +1,22 @@
-# Dependency directories
 node_modules/
-jspm_packages/
 
-# WhatsApp Auth and Session files (CRITICAL: Private keys and session data)
+# WhatsApp session data
 .wwebjs_auth/
 .wwebjs_cache/
 
-# Local test outputs and temporary files
+# Test outputs
 test_output/
-temp/
 *.png
 *.jpg
 *.jpeg
 
 # Logs
-logs
 *.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
 
-# System Files
+# OS files
 .DS_Store
 Thumbs.db
 
-# Documentation
+# Docs (not shipped)
 Docs/
-

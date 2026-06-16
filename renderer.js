@@ -7,88 +7,50 @@ const config = require('./config');
 const { create, all } = require('mathjs');
 const math = create(all);
 
-// ─── Security constants ────────────────────────────────────────────────────────
-/** Maximum allowed length (characters) for any user-supplied formula / expression. */
 const MAX_INPUT_LENGTH = 4000;
-
-/**
- * Allowed hostnames for the image URL returned by the QuickLaTeX API response.
- * This prevents SSRF attacks where a malicious QuickLaTeX response redirects us
- * to an internal network address.
- */
 const QUICKLATEX_ALLOWED_HOSTS = new Set(['quicklatex.com', 'www.quicklatex.com']);
 
-// ─── Rate limiter ─────────────────────────────────────────────────────────────
-/**
- * Simple in-memory rate limiter (per sender ID).
- * Allows at most MAX_REQUESTS_PER_WINDOW renders within RATE_WINDOW_MS milliseconds.
- */
-const RATE_WINDOW_MS = 60_000;   // 1 minute sliding window
+// Rate limiter (per sender, sliding window)
+const RATE_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 10;
-const _rateLimitMap = new Map(); // senderId -> { count, windowStart }
+const _rateLimitMap = new Map();
 
-/**
- * Returns true if the given sender has exceeded the rate limit.
- * @param {string} senderId
- */
 function isRateLimited(senderId) {
     const now = Date.now();
     let entry = _rateLimitMap.get(senderId);
     if (!entry || now - entry.windowStart >= RATE_WINDOW_MS) {
-        // Start a fresh window
         entry = { count: 1, windowStart: now };
         _rateLimitMap.set(senderId, entry);
         return false;
     }
     entry.count++;
-    if (entry.count > MAX_REQUESTS_PER_WINDOW) {
-        return true; // Rate limited
-    }
-    return false;
+    return entry.count > MAX_REQUESTS_PER_WINDOW;
 }
 
-/**
- * Validates that a formula string is within the allowed length limit.
- * @param {string} formula
- * @returns {string|null} Error message if invalid, or null if OK.
- */
 function validateInputLength(formula) {
-    if (!formula || typeof formula !== 'string') {
-        return 'Empty or invalid formula.';
-    }
+    if (!formula || typeof formula !== 'string') return 'Empty or invalid formula.';
     if (formula.length > MAX_INPUT_LENGTH) {
         return `Input too long. Maximum allowed length is ${MAX_INPUT_LENGTH} characters.`;
     }
     return null;
 }
-// ──────────────────────────────────────────────────────────────────────────────
 
-// Define custom function aliases for user convenience
 math.import({
-    // Inverse trigonometric aliases
     arcsin: math.asin,
     arccos: math.acos,
     arctan: math.atan,
     arccot: math.acot,
     arcsec: math.asec,
     arccsc: math.acsc,
-    
-    // Hyperbolic inverse trigonometric aliases
     arcsinh: math.asinh,
     arccosh: math.acosh,
     arctanh: math.atanh,
     arccoth: math.acoth,
     arcsech: math.asech,
     arccsch: math.acsch,
-
-    // Cosecant aliases
     cosec: math.csc,
     cosech: math.csch,
-
-    // Natural logarithm alias
     ln: math.log,
-
-    // Tangent/cotangent shorthand aliases
     tg: math.tan,
     ctg: math.cot,
     arctg: math.atan,
@@ -102,7 +64,8 @@ let templatePath = null;
 let isInitialized = false;
 
 /**
- * Initialize the LaTeX renderer (launches Puppeteer and prepares the template).
+ * Launches Puppeteer and writes the KaTeX HTML template.
+ * Must be called before any rendering.
  */
 async function initialize() {
     if (isInitialized) return;
@@ -110,7 +73,6 @@ async function initialize() {
     try {
         console.log('Initializing LaTeX Renderer...');
         
-        // 1. Resolve KaTeX paths and verify installations
         const katexDir = path.join(__dirname, 'node_modules', 'katex', 'dist');
         const katexCssPath = path.join(katexDir, 'katex.min.css');
         const katexJsPath = path.join(katexDir, 'katex.min.js');
@@ -119,8 +81,7 @@ async function initialize() {
             throw new Error('KaTeX node_modules files not found. Run npm install first.');
         }
 
-        // 2. Generate and write the HTML rendering template inside KaTeX dist
-        // This placement allows the HTML to naturally resolve KaTeX relative font assets (fonts/*)
+        // Write the template inside katex/dist so relative font paths resolve naturally
         templatePath = path.join(katexDir, 'render_temp.html');
         
         const templateHtml = `
@@ -129,9 +90,9 @@ async function initialize() {
 <head>
   <meta charset="UTF-8">
   <link rel="stylesheet" href="katex.min.css">
-  <script src="katex.min.js"></script>
-  <script src="contrib/mhchem.min.js"></script>
-  <script src="contrib/auto-render.min.js"></script>
+  <script src="katex.min.js"><\/script>
+  <script src="contrib/mhchem.min.js"><\/script>
+  <script src="contrib/auto-render.min.js"><\/script>
   <style>
     body {
       margin: 0;
@@ -151,7 +112,7 @@ async function initialize() {
       border-radius: ${config.style.borderRadius};
       border: ${config.style.border};
       box-shadow: ${config.style.boxShadow};
-      margin: 10px; /* spacing for box-shadow glow */
+      margin: 10px;
     }
     #math {
       display: block;
@@ -204,7 +165,6 @@ async function initialize() {
         katex.render(latex, mathDiv, {
           displayMode: isBlock,
           throwOnError: true,
-          // trust: false (default) — do NOT enable; it allows arbitrary HTML/href injection
           trust: false
         });
         return { success: true };
@@ -221,7 +181,6 @@ async function initialize() {
             {left: "$$", right: "$$", display: true}
           ],
           throwOnError: false,
-          // trust: false (default) — do NOT enable; it allows arbitrary HTML/href injection
           trust: false
         });
         return { success: true };
@@ -232,15 +191,12 @@ async function initialize() {
     function renderGraph(latex, type, data, options) {
       const mathDiv = document.getElementById('math');
       try {
-        // Render equation header at the top
         katex.render(latex, mathDiv, {
           displayMode: true,
           throwOnError: true,
-          // trust: false (default) — do NOT enable; it allows arbitrary HTML/href injection
           trust: false
         });
 
-        // Ensure canvas exists and is sized correctly
         let canvas = document.getElementById('graph-canvas');
         if (!canvas) {
           canvas = document.createElement('canvas');
@@ -248,7 +204,6 @@ async function initialize() {
           canvas.style.marginTop = '16px';
           canvas.style.display = 'block';
           canvas.style.borderRadius = '8px';
-          // Insert canvas before watermark
           const watermarkDiv = document.getElementById('watermark');
           mathDiv.parentNode.insertBefore(canvas, watermarkDiv);
         }
@@ -270,16 +225,13 @@ async function initialize() {
       const width = canvas.width;
       const height = canvas.height;
       
-      // Clear canvas
       ctx.clearRect(0, 0, width, height);
       
-      // Domain and range in math space
       const xMin = options.xDomain[0];
       const xMax = options.xDomain[1];
       const yMin = options.yDomain[0];
       const yMax = options.yDomain[1];
       
-      // Coordinate conversion helpers: math space -> screen space
       function toScreenX(x) {
         return ((x - xMin) / (xMax - xMin)) * width;
       }
@@ -287,11 +239,10 @@ async function initialize() {
         return height - ((y - yMin) / (yMax - yMin)) * height;
       }
       
-      // Grid lines
+      // Grid
       ctx.strokeStyle = options.gridColor || 'rgba(255, 255, 255, 0.06)';
       ctx.lineWidth = 1;
       
-      // Choose grid intervals
       function getGridStep(min, max) {
         const range = max - min;
         const roughStep = range / 8;
@@ -306,7 +257,6 @@ async function initialize() {
       const xStep = getGridStep(xMin, xMax);
       const yStep = getGridStep(yMin, yMax);
       
-      // Vertical grid lines
       const startX = Math.ceil(xMin / xStep) * xStep;
       for (let x = startX; x <= xMax; x += xStep) {
         if (Math.abs(x) < 1e-10) continue;
@@ -316,7 +266,6 @@ async function initialize() {
         ctx.stroke();
       }
       
-      // Horizontal grid lines
       const startY = Math.ceil(yMin / yStep) * yStep;
       for (let y = startY; y <= yMax; y += yStep) {
         if (Math.abs(y) < 1e-10) continue;
@@ -326,7 +275,7 @@ async function initialize() {
         ctx.stroke();
       }
       
-      // Axes (X and Y)
+      // Axes
       ctx.strokeStyle = options.axisColor || 'rgba(255, 255, 255, 0.3)';
       ctx.lineWidth = 2;
       
@@ -343,13 +292,12 @@ async function initialize() {
       ctx.lineTo(screenX0, height);
       ctx.stroke();
       
-      // Axis ticks and labels
+      // Tick labels
       ctx.fillStyle = options.axisLabelColor || 'rgba(248, 250, 252, 0.5)';
       ctx.font = '12px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       
-      // X ticks and labels
       for (let x = startX; x <= xMax; x += xStep) {
         const sx = toScreenX(x);
         ctx.beginPath();
@@ -362,7 +310,6 @@ async function initialize() {
         ctx.fillText(label, sx, labelY);
       }
       
-      // Y ticks and labels
       ctx.textAlign = screenX0 - 6 < 15 ? 'left' : 'right';
       ctx.textBaseline = 'middle';
       for (let y = startY; y <= yMax; y += yStep) {
@@ -382,13 +329,12 @@ async function initialize() {
         ctx.fillText('0', screenX0 - 6 < 15 ? screenX0 + 8 : screenX0 - 6, screenY0 + 6);
       }
       
-      // Plot curves
+      // Curve
       ctx.save();
       ctx.lineWidth = options.lineWidth || 3.5;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
-      // Glow effect
       ctx.shadowColor = options.glowColor || 'rgba(6, 182, 212, 0.4)';
       ctx.shadowBlur = options.glowBlur || 10;
       
@@ -410,13 +356,13 @@ async function initialize() {
           
           const sx = toScreenX(pt.x);
           const sy = toScreenY(pt.y);
-          const isOutOfBounds = sy < -height || sy > height * 2 || sx < -width || sx > width * 2;
+          const oob = sy < -height || sy > height * 2 || sx < -width || sx > width * 2;
           
           if (!isDrawing) {
-            if (!isOutOfBounds) {
+            if (!oob) {
               if (i > 0 && data[i-1].y !== null && !isNaN(data[i-1].y) && isFinite(data[i-1].y)) {
-                const prevPt = data[i-1];
-                ctx.moveTo(toScreenX(prevPt.x), toScreenY(prevPt.y));
+                const prev = data[i-1];
+                ctx.moveTo(toScreenX(prev.x), toScreenY(prev.y));
                 ctx.lineTo(sx, sy);
               } else {
                 ctx.moveTo(sx, sy);
@@ -425,14 +371,12 @@ async function initialize() {
             }
           } else {
             ctx.lineTo(sx, sy);
-            if (isOutOfBounds) {
-              isDrawing = false;
-            }
+            if (oob) isDrawing = false;
           }
         }
         ctx.stroke();
         
-        // Fill area under the curve
+        // Fill under curve
         ctx.restore();
         ctx.save();
         const fillGradient = ctx.createLinearGradient(0, 0, 0, height);
@@ -440,27 +384,27 @@ async function initialize() {
         fillGradient.addColorStop(1, 'transparent');
         ctx.fillStyle = fillGradient;
         
-        let isPathStarted = false;
+        let pathStarted = false;
         for (let i = 0; i < data.length; i++) {
           const pt = data[i];
-          const validVal = pt.y !== null && !isNaN(pt.y) && isFinite(pt.y);
-          if (validVal) {
-            if (!isPathStarted) {
+          const ok = pt.y !== null && !isNaN(pt.y) && isFinite(pt.y);
+          if (ok) {
+            if (!pathStarted) {
               ctx.beginPath();
               ctx.moveTo(toScreenX(pt.x), toScreenY(0));
               ctx.lineTo(toScreenX(pt.x), toScreenY(pt.y));
-              isPathStarted = true;
+              pathStarted = true;
             } else {
               ctx.lineTo(toScreenX(pt.x), toScreenY(pt.y));
             }
           }
           
-          if (isPathStarted && (!validVal || i === data.length - 1)) {
-            const lastPt = data[validVal ? i : i - 1];
-            ctx.lineTo(toScreenX(lastPt.x), toScreenY(0));
+          if (pathStarted && (!ok || i === data.length - 1)) {
+            const last = data[ok ? i : i - 1];
+            ctx.lineTo(toScreenX(last.x), toScreenY(0));
             ctx.closePath();
             ctx.fill();
-            isPathStarted = false;
+            pathStarted = false;
           }
         }
         
@@ -484,6 +428,7 @@ async function initialize() {
               continue;
             }
             
+            // marching squares: find zero-crossings on cell edges
             const crossings = [];
             if (v00 * v10 <= 0 && v00 !== v10) {
               const t = -v00 / (v10 - v00);
@@ -547,30 +492,27 @@ async function initialize() {
           
           const dx = ex - sx;
           const dy = ey - sy;
-          const pixelLength = Math.sqrt(dx * dx + dy * dy);
-          const headLength = options.arrowHeadLength || 10;
+          const pixelLen = Math.sqrt(dx * dx + dy * dy);
+          const headLen = options.arrowHeadLength || 10;
           
-          if (pixelLength > headLength) {
+          if (pixelLen > headLen) {
             const angle = Math.atan2(dy, dx);
-            const shaftEndX = ex - headLength * Math.cos(angle);
-            const shaftEndY = ey - headLength * Math.sin(angle);
+            const shaftEndX = ex - headLen * Math.cos(angle);
+            const shaftEndY = ey - headLen * Math.sin(angle);
             
-            // Draw arrow shaft stopping at arrowhead base
             ctx.beginPath();
             ctx.moveTo(sx, sy);
             ctx.lineTo(shaftEndX, shaftEndY);
             ctx.stroke();
             
-            // Draw arrowhead at the vector tip
             ctx.beginPath();
             ctx.moveTo(ex, ey);
-            ctx.lineTo(ex - headLength * Math.cos(angle - Math.PI / 6), ey - headLength * Math.sin(angle - Math.PI / 6));
-            ctx.lineTo(ex - headLength * Math.cos(angle + Math.PI / 6), ey - headLength * Math.sin(angle + Math.PI / 6));
+            ctx.lineTo(ex - headLen * Math.cos(angle - Math.PI / 6), ey - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(ex - headLen * Math.cos(angle + Math.PI / 6), ey - headLen * Math.sin(angle + Math.PI / 6));
             ctx.closePath();
             ctx.fillStyle = ctx.strokeStyle;
             ctx.fill();
           } else {
-            // Draw simple line if too small for arrowhead
             ctx.beginPath();
             ctx.moveTo(sx, sy);
             ctx.lineTo(ex, ey);
@@ -581,17 +523,15 @@ async function initialize() {
       }
       ctx.restore();
     }
-  </script>
+  <\/script>
 </body>
 </html>
 `;
         fs.writeFileSync(templatePath, templateHtml, 'utf8');
 
-        // 3. Launch Puppeteer browser
         browser = await puppeteer.launch(config.puppeteer.launchArgs);
         page = await browser.newPage();
         
-        // Load the template HTML page
         const fileUrl = 'file:///' + templatePath.replace(/\\/g, '/');
         await page.goto(fileUrl);
         
@@ -602,7 +542,6 @@ async function initialize() {
         console.log('Renderer will operate in Fallback API Mode.');
         isInitialized = false;
         
-        // Clean up if browser was partially launched
         if (browser) {
             try { await browser.close(); } catch (e) {}
             browser = null;
@@ -611,81 +550,53 @@ async function initialize() {
     }
 }
 
-/**
- * Render a LaTeX formula using the local Puppeteer browser.
- * @param {string} formula - The LaTeX formula to render.
- * @param {boolean} isBlock - Render in display/block mode if true, otherwise inline mode.
- * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
- */
+// Coerce mathjs result to a plain number, returning NaN for complex/invalid values
+function toReal(val) {
+    if (val && typeof val === 'object') {
+        if (val.isComplex) return Math.abs(val.im) < 1e-10 ? val.re : NaN;
+        return val.toNumber ? val.toNumber() : NaN;
+    }
+    return typeof val === 'number' ? val : NaN;
+}
+
 async function renderLocal(formula, isBlock = true) {
     if (!isInitialized || !page) {
         throw new Error('Local renderer is not initialized.');
     }
 
     try {
-        // Run the rendering script inside the browser context
-        let renderResult;
+        let result;
         if (isBlock === false) {
-            renderResult = await page.evaluate((txt) => {
-                return window.renderMixedText(txt);
-            }, formula);
+            result = await page.evaluate((txt) => window.renderMixedText(txt), formula);
         } else {
-            renderResult = await page.evaluate((f, block) => {
-                return window.renderFormula(f, block);
-            }, formula, isBlock);
+            result = await page.evaluate((f, block) => window.renderFormula(f, block), formula, isBlock);
         }
 
-        if (!renderResult.success) {
-            return { success: false, error: renderResult.error };
-        }
+        if (!result.success) return { success: false, error: result.error };
 
-        // Locate the card element
-        const cardElement = await page.$('#card');
-        if (!cardElement) {
-            return { success: false, error: 'Card element not found in DOM.' };
-        }
+        const card = await page.$('#card');
+        if (!card) return { success: false, error: 'Card element not found in DOM.' };
 
-        // Take a screenshot of the card bounding box with transparent background around the card
-        const imageBuffer = await cardElement.screenshot({
-            type: 'png',
-            omitBackground: true
-        });
+        const buf = await card.screenshot({ type: 'png', omitBackground: true });
 
-        return {
-            success: true,
-            data: imageBuffer.toString('base64'),
-            source: 'local'
-        };
+        return { success: true, data: buf.toString('base64'), source: 'local' };
     } catch (err) {
-        console.error('Error during local render execution:', err.message);
-        throw err; // Trigger the fallback if error is thrown
+        console.error('Error during local render:', err.message);
+        throw err;
     }
 }
 
-/**
- * Render a LaTeX formula using the external web API fallback (Codecogs).
- * @param {string} formula - The LaTeX formula to render.
- * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
- */
 async function renderFallback(formula) {
     return new Promise((resolve) => {
         try {
-            // Hex color values extracted from configuration (stripping the leading #)
             const bgHex = config.style.backgroundColor.replace('#', '');
             const textHex = config.style.textColor.replace('#', '');
+            const escaped = encodeURIComponent(formula);
+            const apiUrl = `https://latex.codecogs.com/png.image?\\dpi{200}\\bg{${bgHex}}\\color{${textHex}}${escaped}`;
             
-            // Encode the LaTeX formula
-            const escapedFormula = encodeURIComponent(formula);
-            
-            // Build Codecogs API URL with matched configuration colors and 200 DPI resolution
-            const url = `https://latex.codecogs.com/png.image?\\dpi{200}\\bg{${bgHex}}\\color{${textHex}}${escapedFormula}`;
-            
-            https.get(url, (res) => {
+            https.get(apiUrl, (res) => {
                 if (res.statusCode !== 200) {
-                    resolve({
-                        success: false,
-                        error: `Web API returned status code ${res.statusCode}`
-                    });
+                    resolve({ success: false, error: `Web API returned status code ${res.statusCode}` });
                     return;
                 }
 
@@ -693,58 +604,34 @@ async function renderFallback(formula) {
                 res.on('data', (chunk) => chunks.push(chunk));
                 res.on('end', () => {
                     const buffer = Buffer.concat(chunks);
-                    resolve({
-                        success: true,
-                        data: buffer.toString('base64'),
-                        source: 'fallback-api'
-                    });
+                    resolve({ success: true, data: buffer.toString('base64'), source: 'fallback-api' });
                 });
             }).on('error', (err) => {
-                resolve({
-                    success: false,
-                    error: `Network error on Web API request: ${err.message}`
-                });
+                resolve({ success: false, error: `Network error on Web API request: ${err.message}` });
             });
         } catch (err) {
-            resolve({
-                success: false,
-                error: `Web API preparation failed: ${err.message}`
-            });
+            resolve({ success: false, error: `Web API preparation failed: ${err.message}` });
         }
     });
 }
 
 /**
- * Main render function. Tries local rendering first, then falls back to Web API if enabled.
- * @param {string} formula - The LaTeX formula to render.
- * @param {boolean} isBlock - Whether to render in block format.
- * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
+ * Main render entry point. Tries local Puppeteer first, then the Codecogs API.
  */
 async function render(formula, isBlock = true) {
-    // 1. Try local renderer if initialized
     if (isInitialized) {
         try {
-            const result = await renderLocal(formula, isBlock);
-            return result;
+            return await renderLocal(formula, isBlock);
         } catch (err) {
-            console.warn('Local render failed. Error:', err.message, '\nAttempting fallback API...');
+            console.warn('Local render failed:', err.message, '— trying fallback...');
         }
     }
 
-    // 2. Try Fallback API if allowed
-    if (config.bot.useFallback) {
-        return await renderFallback(formula);
-    }
+    if (config.bot.useFallback) return await renderFallback(formula);
 
-    return {
-        success: false,
-        error: 'Local renderer not ready, and Web API Fallback is disabled.'
-    };
+    return { success: false, error: 'Local renderer not ready, and Web API Fallback is disabled.' };
 }
 
-/**
- * Close the Puppeteer browser instance.
- */
 async function close() {
     if (browser) {
         await browser.close();
@@ -752,7 +639,6 @@ async function close() {
         page = null;
         isInitialized = false;
         
-        // Try to delete the temporary template file
         if (templatePath && fs.existsSync(templatePath)) {
             try { fs.unlinkSync(templatePath); } catch (e) {}
         }
@@ -760,26 +646,16 @@ async function close() {
     }
 }
 
-/**
- * Shared helper to render any formula via QuickLaTeX and local Puppeteer card styling.
- * @param {string} formula - The LaTeX formula/diagram.
- * @param {string} preamble - The LaTeX preamble (package imports/settings).
- * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
- */
+// Shared helper for QuickLaTeX POST requests (used by renderChem and renderTikz)
 async function renderQuickLaTeX(formula, preamble) {
     return new Promise(async (resolve) => {
         try {
-            // Extract text/line color from config (removing #) and ensure uppercase for xcolor HTML model
             const textHex = config.style.textColor.replace('#', '').toUpperCase();
             
-            // Helper function to encode parameters for QuickLaTeX API (only escapes % and &)
-            const quicklatexEncode = (str) => str.replace(/%/g, '%25').replace(/&/g, '%26');
+            // QuickLaTeX only needs % and & escaped
+            const qlEncode = (str) => str.replace(/%/g, '%25').replace(/&/g, '%26');
             
-            const encodedFormula = quicklatexEncode(formula);
-            const encodedPreamble = quicklatexEncode(preamble);
-            
-            // Build raw POST body
-            const postData = `formula=${encodedFormula}&preamble=${encodedPreamble}&fsize=18px&fcolor=${textHex}&mode=0&out=1&remhost=quicklatex.com`;
+            const postData = `formula=${qlEncode(formula)}&preamble=${qlEncode(preamble)}&fsize=18px&fcolor=${textHex}&mode=0&out=1&remhost=quicklatex.com`;
 
             const options = {
                 hostname: 'quicklatex.com',
@@ -792,41 +668,36 @@ async function renderQuickLaTeX(formula, preamble) {
                 }
             };
 
-            // Post request to QuickLaTeX
             const req = https.request(options, (res) => {
                 if (res.statusCode !== 200) {
                     resolve({ success: false, error: `QuickLaTeX server returned status code ${res.statusCode}` });
                     return;
                 }
 
-                let responseBody = '';
-                res.on('data', (chunk) => { responseBody += chunk; });
+                let body = '';
+                res.on('data', (chunk) => { body += chunk; });
                 res.on('end', async () => {
                     try {
-                        const lines = responseBody.split('\n').map(l => l.trim());
+                        const lines = body.split('\n').map(l => l.trim());
                         if (lines[0] !== '0') {
                             resolve({ success: false, error: `QuickLaTeX error: ${lines.slice(1).join(' ')}` });
                             return;
                         }
 
-                        // Extract image URL (first token on second line)
                         const imageUrl = lines[1].split(' ')[0];
 
-                        // ── SSRF guard: only fetch from known QuickLaTeX hosts ────────────
-                        let parsedUrl;
-                        try {
-                            parsedUrl = new url.URL(imageUrl);
-                        } catch (_) {
+                        // SSRF guard: only fetch from known QuickLaTeX hosts
+                        let parsed;
+                        try { parsed = new url.URL(imageUrl); }
+                        catch (_) {
                             resolve({ success: false, error: 'QuickLaTeX returned an invalid image URL.' });
                             return;
                         }
-                        if (parsedUrl.protocol !== 'https:' || !QUICKLATEX_ALLOWED_HOSTS.has(parsedUrl.hostname)) {
+                        if (parsed.protocol !== 'https:' || !QUICKLATEX_ALLOWED_HOSTS.has(parsed.hostname)) {
                             resolve({ success: false, error: 'QuickLaTeX returned an image URL from an unexpected host.' });
                             return;
                         }
-                        // ─────────────────────────────────────────────────────────────────
 
-                        // Download the transparent PNG image from QuickLaTeX
                         https.get(imageUrl, (imgRes) => {
                             if (imgRes.statusCode !== 200) {
                                 resolve({ success: false, error: `Failed to download image from QuickLaTeX: ${imgRes.statusCode}` });
@@ -837,25 +708,17 @@ async function renderQuickLaTeX(formula, preamble) {
                             imgRes.on('data', (chunk) => chunks.push(chunk));
                             imgRes.on('end', async () => {
                                 try {
-                                    const imgBuffer = Buffer.concat(chunks);
-                                    const base64Img = imgBuffer.toString('base64');
+                                    const imgBuf = Buffer.concat(chunks);
+                                    const b64 = imgBuf.toString('base64');
 
-                                    // If local puppeteer is not initialized, we return the raw transparent PNG directly
                                     if (!isInitialized || !page) {
-                                        resolve({
-                                            success: true,
-                                            data: base64Img,
-                                            source: 'quicklatex-raw'
-                                        });
+                                        resolve({ success: true, data: b64, source: 'quicklatex-raw' });
                                         return;
                                     }
 
-                                    // Render inside our beautiful card.
-                                    // Use DOM APIs instead of innerHTML to avoid XSS if the
-                                    // base64 string ever contains a crafted payload.
+                                    // Embed the image in our styled card via DOM (not innerHTML, to avoid XSS)
                                     await page.evaluate((b64) => {
                                         const mathDiv = document.getElementById('math');
-                                        // Clear previous content safely
                                         while (mathDiv.firstChild) mathDiv.removeChild(mathDiv.firstChild);
                                         const img = document.createElement('img');
                                         img.src = `data:image/png;base64,${b64}`;
@@ -864,20 +727,12 @@ async function renderQuickLaTeX(formula, preamble) {
                                         img.style.height = 'auto';
                                         mathDiv.appendChild(img);
                                         return { success: true };
-                                    }, base64Img);
+                                    }, b64);
 
-                                    // Capture the card screenshot
-                                    const cardElement = await page.$('#card');
-                                    const imageBuffer = await cardElement.screenshot({
-                                        type: 'png',
-                                        omitBackground: true
-                                    });
+                                    const card = await page.$('#card');
+                                    const screenshotBuf = await card.screenshot({ type: 'png', omitBackground: true });
 
-                                    resolve({
-                                        success: true,
-                                        data: imageBuffer.toString('base64'),
-                                        source: 'quicklatex-card'
-                                    });
+                                    resolve({ success: true, data: screenshotBuf.toString('base64'), source: 'quicklatex-card' });
                                 } catch (err) {
                                     resolve({ success: false, error: `Error during card screenshot generation: ${err.message}` });
                                 }
@@ -903,12 +758,7 @@ async function renderQuickLaTeX(formula, preamble) {
     });
 }
 
-/**
- * Render a chemical formula using chemfig via QuickLaTeX and local Puppeteer card styling.
- * @param {string} formula - The chemfig formula (e.g., \chemfig{A-B}).
- * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
- */
-async function renderChem(formula) {
+function renderChem(formula) {
     const textHex = config.style.textColor.replace('#', '').toUpperCase();
     const preamble = [
         '\\usepackage{xcolor}',
@@ -920,12 +770,7 @@ async function renderChem(formula) {
     return renderQuickLaTeX(formula, preamble);
 }
 
-/**
- * Render a TikZ drawing via QuickLaTeX and local Puppeteer card styling.
- * @param {string} formula - The TikZ drawing code.
- * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
- */
-async function renderTikz(formula) {
+function renderTikz(formula) {
     const textHex = config.style.textColor.replace('#', '').toUpperCase();
     const preamble = [
         '\\usepackage{xcolor}',
@@ -936,19 +781,16 @@ async function renderTikz(formula) {
         '\\tikzset{every node/.style={text=fgcolor}}'
     ].join('\n');
 
-    let fullFormula = formula.trim();
-    if (!fullFormula.includes('\\begin{tikzpicture}')) {
-        fullFormula = `\\begin{tikzpicture}\n${fullFormula}\n\\end{tikzpicture}`;
+    let full = formula.trim();
+    if (!full.includes('\\begin{tikzpicture}')) {
+        full = `\\begin{tikzpicture}\n${full}\n\\end{tikzpicture}`;
     }
 
-    return renderQuickLaTeX(fullFormula, preamble);
+    return renderQuickLaTeX(full, preamble);
 }
 
-/**
- * Helper to insert implicit multiplication operators between adjacent variables (x and y)
- * to ensure mathjs evaluates them correctly (e.g., "yx" -> "y*x").
- */
-function preprocessExpression(expr) {
+// Insert implicit multiplication between adjacent x/y variables for mathjs
+function preprocessExpr(expr) {
     if (!expr) return '';
     return expr
         .replace(/([xX])\s*([yY])/g, '$1*$2')
@@ -958,23 +800,16 @@ function preprocessExpression(expr) {
         .replace(/([xXyY])\s*\(/g, '$1*(');
 }
 
-/**
- * Renders a function or equation plot using the local Puppeteer browser.
- * @param {string} rawExpr - The raw expression to plot (e.g. "y = x^2" or "x^2 + y^2 = 1").
- * @param {object} customOptions - Overrides for domains, etc.
- * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
- */
 async function renderPlot(rawExpr, customOptions = {}) {
     if (!isInitialized || !page) {
         return { success: false, error: 'Local renderer is not initialized.' };
     }
 
     try {
-        const cleanExpr = rawExpr.trim();
+        const expr = rawExpr.trim();
         
-        // Setup options merging config styles and defaults
         const graphStyle = config.style.graph || {};
-        const options = {
+        const opts = {
             width: graphStyle.width || 600,
             height: graphStyle.height || 450,
             gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.06)',
@@ -989,30 +824,27 @@ async function renderPlot(rawExpr, customOptions = {}) {
             fontFamily: config.style.fontFamily || 'sans-serif'
         };
 
-        // Determine if vector, explicit or implicit
         let isImplicit = false;
         let isVector = false;
-        let leftExprText = '';
-        let rightExprText = '';
+        let lhs = '';
+        let rhs = '';
         let funcName = '';
-        let uExprText = '';
-        let vExprText = '';
+        let uExpr = '';
+        let vExpr = '';
 
-        // Matches patterns like v(x,y) = (...) or F(x, y) = (...)
-        const outerMatch = cleanExpr.match(/^([a-zA-Z])\(x\s*,\s*y\)\s*=\s*\((.*)\)$/);
+        // Check for vector field: F(x,y) = (expr, expr)
+        const outerMatch = expr.match(/^([a-zA-Z])\(x\s*,\s*y\)\s*=\s*\((.*)\)$/);
         
         let vectorSplit = null;
         if (outerMatch) {
-            // Helper to split components by top-level comma (ignoring commas inside inner parentheses)
-            const innerContent = outerMatch[2];
+            // Split by top-level comma (skip commas inside nested parens)
+            const inner = outerMatch[2];
             let depth = 0;
-            for (let i = 0; i < innerContent.length; i++) {
-                if (innerContent[i] === '(' || innerContent[i] === '[' || innerContent[i] === '{') {
-                    depth++;
-                } else if (innerContent[i] === ')' || innerContent[i] === ']' || innerContent[i] === '}') {
-                    depth--;
-                } else if (innerContent[i] === ',' && depth === 0) {
-                    vectorSplit = [innerContent.substring(0, i).trim(), innerContent.substring(i + 1).trim()];
+            for (let i = 0; i < inner.length; i++) {
+                if (inner[i] === '(' || inner[i] === '[' || inner[i] === '{') depth++;
+                else if (inner[i] === ')' || inner[i] === ']' || inner[i] === '}') depth--;
+                else if (inner[i] === ',' && depth === 0) {
+                    vectorSplit = [inner.substring(0, i).trim(), inner.substring(i + 1).trim()];
                     break;
                 }
             }
@@ -1021,22 +853,18 @@ async function renderPlot(rawExpr, customOptions = {}) {
         if (outerMatch && vectorSplit) {
             isVector = true;
             funcName = outerMatch[1].trim();
-            uExprText = vectorSplit[0];
-            vExprText = vectorSplit[1];
-        } else if (cleanExpr.includes('=')) {
-            const eqIndex = cleanExpr.indexOf('=');
-            leftExprText = cleanExpr.substring(0, eqIndex).trim();
-            rightExprText = cleanExpr.substring(eqIndex + 1).trim();
+            uExpr = vectorSplit[0];
+            vExpr = vectorSplit[1];
+        } else if (expr.includes('=')) {
+            const eqIdx = expr.indexOf('=');
+            lhs = expr.substring(0, eqIdx).trim();
+            rhs = expr.substring(eqIdx + 1).trim();
             
-            // Check if LHS is just y or f(x)
-            const isExplicitLhs = /^(y|f\(x\))$/i.test(leftExprText);
-            if (!isExplicitLhs) {
-                isImplicit = true;
-            }
+            if (!/^(y|f\(x\))$/i.test(lhs)) isImplicit = true;
         } else {
-            // No '=': treat as y = expression
-            rightExprText = cleanExpr;
-            leftExprText = 'y';
+            // No '=' means y = <expr>
+            rhs = expr;
+            lhs = 'y';
         }
 
         let type = '';
@@ -1047,180 +875,151 @@ async function renderPlot(rawExpr, customOptions = {}) {
             type = 'vector';
             let uCompiled, vCompiled;
             try {
-                uCompiled = math.compile(preprocessExpression(uExprText));
-                vCompiled = math.compile(preprocessExpression(vExprText));
+                uCompiled = math.compile(preprocessExpr(uExpr));
+                vCompiled = math.compile(preprocessExpr(vExpr));
             } catch (err) {
                 return { success: false, error: `Parsing error in vector field components: ${err.message}` };
             }
 
             const steps = 16;
-            const [xMin, xMax] = options.xDomain;
-            const [yMin, yMax] = options.yDomain;
-            const xStepSize = (xMax - xMin) / steps;
-            const yStepSize = (yMax - yMin) / steps;
+            const [xMin, xMax] = opts.xDomain;
+            const [yMin, yMax] = opts.yDomain;
+            const xStep = (xMax - xMin) / steps;
+            const yStep = (yMax - yMin) / steps;
 
             const points = [];
             let maxMag = 0;
 
-            const cleanValue = (val) => {
-                if (val && typeof val === 'object') {
-                    if (val.isComplex) {
-                        return Math.abs(val.im) < 1e-10 ? val.re : NaN;
-                    }
-                    return val.toNumber ? val.toNumber() : NaN;
-                }
-                return typeof val === 'number' ? val : NaN;
-            };
-
             for (let i = 0; i <= steps; i++) {
-                const x = xMin + i * xStepSize;
+                const x = xMin + i * xStep;
                 for (let j = 0; j <= steps; j++) {
-                    const y = yMin + j * yStepSize;
+                    const y = yMin + j * yStep;
                     try {
-                        let uVal = cleanValue(uCompiled.evaluate({ x, y }));
-                        let vVal = cleanValue(vCompiled.evaluate({ x, y }));
+                        let u = toReal(uCompiled.evaluate({ x, y }));
+                        let v = toReal(vCompiled.evaluate({ x, y }));
                         
-                        if (!isNaN(uVal) && isFinite(uVal) && !isNaN(vVal) && isFinite(vVal)) {
-                            const mag = Math.sqrt(uVal * uVal + vVal * vVal);
-                            if (mag > maxMag) {
-                                maxMag = mag;
-                            }
-                            points.push({ x, y, u: uVal, v: vVal, mag });
+                        if (!isNaN(u) && isFinite(u) && !isNaN(v) && isFinite(v)) {
+                            const mag = Math.sqrt(u * u + v * v);
+                            if (mag > maxMag) maxMag = mag;
+                            points.push({ x, y, u, v, mag });
                         }
-                    } catch (e) {
-                        // Skip points with calculation errors
-                    }
+                    } catch (e) {}
                 }
             }
 
             plotData = {
                 points: points.map(pt => ({
-                    x: pt.x,
-                    y: pt.y,
-                    u: pt.u,
-                    v: pt.v,
+                    x: pt.x, y: pt.y, u: pt.u, v: pt.v,
                     norm: maxMag > 0 ? pt.mag / maxMag : 0
                 })),
-                scale: maxMag > 0 ? (xStepSize * 0.9) / maxMag : 0
+                scale: maxMag > 0 ? (xStep * 0.9) / maxMag : 0
             };
 
             try {
-                const latexFunc = `\\vec{${funcName}}(x,y)`;
-                const latexU = math.parse(uExprText).toTex();
-                const latexV = math.parse(vExprText).toTex();
-                latexText = `${latexFunc} = \\begin{pmatrix} ${latexU} \\\\ ${latexV} \\end{pmatrix}`;
+                const latexU = math.parse(uExpr).toTex();
+                const latexV = math.parse(vExpr).toTex();
+                latexText = `\\vec{${funcName}}(x,y) = \\begin{pmatrix} ${latexU} \\\\ ${latexV} \\end{pmatrix}`;
             } catch (e) {
-                latexText = `\\vec{${funcName}}(x,y) = \\left( ${uExprText}, ${vExprText} \\right)`;
+                latexText = `\\vec{${funcName}}(x,y) = \\left( ${uExpr}, ${vExpr} \\right)`;
             }
         } else if (!isImplicit) {
             type = 'explicit';
-            let compiledExpr;
+            let compiled;
             try {
-                compiledExpr = math.compile(preprocessExpression(rightExprText));
+                compiled = math.compile(preprocessExpr(rhs));
             } catch (err) {
                 return { success: false, error: `Parsing error in expression: ${err.message}` };
             }
 
             const points = [];
-            const [xMin, xMax] = options.xDomain;
-            const [yMin, yMax] = options.yDomain;
+            const [xMin, xMax] = opts.xDomain;
+            const [yMin, yMax] = opts.yDomain;
             const steps = 400;
-            const stepSize = (xMax - xMin) / steps;
+            const step = (xMax - xMin) / steps;
 
-            function evaluateExpression(x) {
+            function evalAt(x) {
                 try {
-                    let val = compiledExpr.evaluate({ x });
-                    if (val && typeof val === 'object') {
-                        if (val.isComplex) {
-                            val = Math.abs(val.im) < 1e-10 ? val.re : NaN;
-                        } else {
-                            val = val.toNumber ? val.toNumber() : NaN;
-                        }
-                    }
-                    if (typeof val === 'number' && !isNaN(val) && isFinite(val)) {
-                        return val;
-                    }
-                } catch (e) {
-                }
+                    let val = toReal(compiled.evaluate({ x }));
+                    if (typeof val === 'number' && !isNaN(val) && isFinite(val)) return val;
+                } catch (e) {}
                 return null;
             }
 
             const maxDepth = 6;
             const minXDist = (xMax - xMin) / 100000;
             const yRange = yMax - yMin;
-            const thresholdY = yRange * 0.01;
-            const nearYDomain = (y) => y !== null && y >= yMin - yRange && y <= yMax + yRange;
+            const threshY = yRange * 0.01;
+            const nearDomain = (y) => y !== null && y >= yMin - yRange && y <= yMax + yRange;
 
-            function collectPoints(x1, y1, x2, y2, depth) {
-                let shouldSubdivide = false;
+            function subdivide(x1, y1, x2, y2, depth) {
+                let shouldSplit = false;
                 let yMid = null;
                 const xMid = (x1 + x2) / 2;
 
                 if (depth < maxDepth && Math.abs(x2 - x1) >= minXDist) {
-                    yMid = evaluateExpression(xMid);
+                    yMid = evalAt(xMid);
                     
                     if (y1 === null && y2 === null) {
-                        if (yMid !== null) shouldSubdivide = true;
+                        if (yMid !== null) shouldSplit = true;
                     } else if (y1 === null || y2 === null) {
-                        shouldSubdivide = true;
+                        shouldSplit = true;
                     } else {
-                        const yDiff = Math.abs(y1 - y2);
-                        if (yDiff > thresholdY && (nearYDomain(y1) || nearYDomain(y2) || nearYDomain(yMid))) {
-                            shouldSubdivide = true;
+                        const diff = Math.abs(y1 - y2);
+                        if (diff > threshY && (nearDomain(y1) || nearDomain(y2) || nearDomain(yMid))) {
+                            shouldSplit = true;
                         }
                     }
                 }
 
-                if (shouldSubdivide) {
-                    collectPoints(x1, y1, xMid, yMid, depth + 1);
-                    collectPoints(xMid, yMid, x2, y2, depth + 1);
+                if (shouldSplit) {
+                    subdivide(x1, y1, xMid, yMid, depth + 1);
+                    subdivide(xMid, yMid, x2, y2, depth + 1);
                 } else {
                     points.push({ x: x2, y: y2 });
                 }
             }
 
-            // Start by pushing the first point
-            const yStart = evaluateExpression(xMin);
+            const yStart = evalAt(xMin);
             points.push({ x: xMin, y: yStart });
 
             for (let i = 0; i < steps; i++) {
-                const x1 = xMin + i * stepSize;
-                const x2 = xMin + (i + 1) * stepSize;
+                const x1 = xMin + i * step;
+                const x2 = xMin + (i + 1) * step;
                 const y1 = points[points.length - 1].y;
-                const y2 = evaluateExpression(x2);
-                collectPoints(x1, y1, x2, y2, 0);
+                const y2 = evalAt(x2);
+                subdivide(x1, y1, x2, y2, 0);
             }
 
             plotData = points;
 
             try {
-                const latexLhs = leftExprText === 'y' ? 'y' : 'f(x)';
-                const latexRhs = math.parse(rightExprText).toTex();
-                latexText = `${latexLhs} = ${latexRhs}`;
+                const texLhs = lhs === 'y' ? 'y' : 'f(x)';
+                const texRhs = math.parse(rhs).toTex();
+                latexText = `${texLhs} = ${texRhs}`;
             } catch (e) {
-                latexText = `${leftExprText} = ${rightExprText}`;
+                latexText = `${lhs} = ${rhs}`;
             }
         } else {
             type = 'implicit';
-            const implicitExprText = `(${preprocessExpression(leftExprText)}) - (${preprocessExpression(rightExprText)})`;
-            let compiledExpr;
+            const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+            let compiled;
             try {
-                compiledExpr = math.compile(implicitExprText);
+                compiled = math.compile(combined);
             } catch (err) {
                 return { success: false, error: `Parsing error in equation: ${err.message}` };
             }
 
             const steps = 150;
-            const [xMin, xMax] = options.xDomain;
-            const [yMin, yMax] = options.yDomain;
-            const xStepSize = (xMax - xMin) / steps;
-            const yStepSize = (yMax - yMin) / steps;
+            const [xMin, xMax] = opts.xDomain;
+            const [yMin, yMax] = opts.yDomain;
+            const xStep = (xMax - xMin) / steps;
+            const yStep = (yMax - yMin) / steps;
             
             const X = [];
             const Y = [];
             for (let i = 0; i <= steps; i++) {
-                X.push(xMin + i * xStepSize);
-                Y.push(yMin + i * yStepSize);
+                X.push(xMin + i * xStep);
+                Y.push(yMin + i * yStep);
             }
 
             const V = [];
@@ -1231,17 +1030,8 @@ async function renderPlot(rawExpr, customOptions = {}) {
                     const y = Y[j];
                     let val = NaN;
                     try {
-                        let res = compiledExpr.evaluate({ x, y });
-                        if (res && typeof res === 'object') {
-                            if (res.isComplex) {
-                                res = Math.abs(res.im) < 1e-10 ? res.re : NaN;
-                            } else {
-                                res = res.toNumber ? res.toNumber() : NaN;
-                            }
-                        }
-                        if (typeof res === 'number' && !isNaN(res) && isFinite(res)) {
-                            val = res;
-                        }
+                        let res = toReal(compiled.evaluate({ x, y }));
+                        if (typeof res === 'number' && !isNaN(res) && isFinite(res)) val = res;
                     } catch (e) {
                         val = NaN;
                     }
@@ -1252,45 +1042,32 @@ async function renderPlot(rawExpr, customOptions = {}) {
             plotData = { X, Y, V };
 
             try {
-                const latexLhs = math.parse(leftExprText).toTex();
-                const latexRhs = math.parse(rightExprText).toTex();
-                latexText = `${latexLhs} = ${latexRhs}`;
+                latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
             } catch (e) {
-                latexText = `${leftExprText} = ${rightExprText}`;
+                latexText = `${lhs} = ${rhs}`;
             }
         }
 
         const renderResult = await page.evaluate((lat, t, pData, opt) => {
             return window.renderGraph(lat, t, pData, opt);
-        }, latexText, type, plotData, options);
+        }, latexText, type, plotData, opts);
 
-        if (!renderResult.success) {
-            return { success: false, error: renderResult.error };
-        }
+        if (!renderResult.success) return { success: false, error: renderResult.error };
 
-        const cardElement = await page.$('#card');
-        if (!cardElement) {
-            return { success: false, error: 'Card element not found in DOM.' };
-        }
+        const card = await page.$('#card');
+        if (!card) return { success: false, error: 'Card element not found in DOM.' };
 
-        const imageBuffer = await cardElement.screenshot({
-            type: 'png',
-            omitBackground: true
-        });
+        const buf = await card.screenshot({ type: 'png', omitBackground: true });
 
         await page.evaluate(() => {
             const canvas = document.getElementById('graph-canvas');
             if (canvas) canvas.remove();
         });
 
-        return {
-            success: true,
-            data: imageBuffer.toString('base64'),
-            source: 'local-plot'
-        };
+        return { success: true, data: buf.toString('base64'), source: 'local-plot' };
 
     } catch (err) {
-        console.error('Error during local plot rendering:', err.message);
+        console.error('Error during plot rendering:', err.message);
         return { success: false, error: err.message };
     }
 }
@@ -1303,7 +1080,6 @@ module.exports = {
     renderPlot,
     close,
     isLocalReady: () => isInitialized,
-    // Security helpers consumed by bot.js
     isRateLimited,
     validateInputLength
 };

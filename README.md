@@ -1,113 +1,92 @@
 # WhatsApp LaTeX Render Bot
 
-A modern, high-performance WhatsApp bot designed to run in group chats (or direct messages) and render LaTeX equations into beautiful, high-resolution images. It supports both single equation rendering and full-card text mixed with block equations.
+WhatsApp bot that renders LaTeX equations into images. Works in group chats and DMs.
 
-## Key Features
+Uses a local headless browser (Puppeteer + KaTeX) for fast rendering, with a Codecogs API fallback if Puppeteer breaks.
 
-- **Offline-First local rendering**: Uses a local headless browser (Puppeteer) and KaTeX to render LaTeX locally. Extremely fast, secure, and private.
-- **Premium Aesthetics**: Renders math inside elegant, dark-slate floating cards with rounded corners, transparency, and drop shadows.
-- **Automatic Delimiter Rendering**: Automatically detects messages containing `$$ ... $$` blocks and converts them into rich educational cards preserving the surrounding text.
-- **Explicit Command Triggers**: Support for `!latex <formula>` and `!tex <formula>` commands.
-- **Chemical Equation Support**: Built-in support for rendering chemical formulas via KaTeX `mhchem` extension (e.g., `\ce{H2O}`).
-- **Molecular Structures & Diagrams**: Built-in support for rendering chemical structures using the `chemfig` package via `!chem <formula>`.
-- **TikZ Graphics Support**: Render complex vector graphics and diagrams directly from TikZ code using `!tikz <formula>` or simply by wrapping your code in a `\begin{tikzpicture}` environment.
-- **Robust Web Fallback**: Seamless fallback to external Web APIs (Codecogs) in case local Puppeteer fails, ensuring the bot is 100% resilient.
-- **Persistent Sessions**: Uses `whatsapp-web.js` LocalAuth so you only need to scan the QR code once.
+## What it does
 
----
+- `!latex <formula>` / `!tex <formula>` — renders a single equation
+- `$$ ... $$` in any message — auto-renders the equation in context with surrounding text
+- `!chem <chemfig code>` — draws molecular structures (via QuickLaTeX)
+- `!tikz <code>` — renders TikZ diagrams (via QuickLaTeX)
+- `!plot <expr>` — plots functions and equations on a coordinate grid
 
-## Getting Started
+Output is a dark-themed card with rounded corners, drop shadows, and a small watermark. Looks nice on both light and dark WhatsApp themes.
 
-### 1. Prerequisites
-Ensure you have the following installed on your machine:
-- **Node.js** (v18.0.0 or higher)
-- **NPM** (usually comes with Node.js)
+## Setup
 
-### 2. Installation
-Clone or navigate to the project directory and install the dependencies:
+**Prerequisites:** Node.js v18+
+
 ```bash
 npm install
 ```
-*Note: This will download a compatible version of headless Chromium for local image rendering. This might take a minute.*
 
-### 3. Verify Local Rendering (Test)
-To verify that Puppeteer, KaTeX, and the rendering pipeline are configured correctly without connecting to WhatsApp, run the local test suite:
+This pulls down KaTeX, Puppeteer (with Chromium), mathjs, and whatsapp-web.js.
+
+### Test rendering locally
+
 ```bash
 npm test
 ```
-This script will initialize the local renderer and output test images in a folder named `test_output/`. You can open these images to inspect the rendering layout and quality.
 
-### 4. Running the WhatsApp Bot
-Start the bot application:
+Writes test images to `test_output/`. Good for checking that Puppeteer and KaTeX are working without connecting to WhatsApp.
+
+### Run the bot
+
 ```bash
 npm start
 ```
-1. Once running, a QR code will be generated and printed inside your terminal.
-2. Open **WhatsApp** on your phone.
-3. Tap **Menu** or **Settings** and select **Linked Devices**.
-4. Tap **Link a Device** and scan the QR code in the terminal.
-5. The console will print `Bot "LaTeX Bot" is now connected and ready!` once authenticated.
-6. The bot is now live! It will save its session in the `.wwebjs_auth/` directory, so you won't need to scan the QR code next time you start it.
 
----
+1. Scan the QR code in the terminal with WhatsApp → Linked Devices.
+2. Session is saved in `.wwebjs_auth/`, so you only scan once.
 
 ## Configuration
 
-You can customize the rendering look and bot triggers by editing `config.js`:
-- **Colors & Style**: Change `style.backgroundColor` (hex color) or `style.textColor`. You can also configure margins, shadows, padding, and font-families.
-- **Watermark**: Edit or disable the subtle watermark at the bottom of the rendered cards.
-- **Auto Render Delimiter**: Set `bot.autoRenderBlock` to `false` to disable auto-rendering `$$ ... $$` messages and only respond to explicit commands.
-- **Fallback Mode**: Customize `bot.useFallback` and the fallback engine if you want to bypass local browser automation.
+Edit `config.js` to change:
+- **Colors/fonts/shadows** — `style.*`
+- **Watermark** — `style.watermark.text` (set to `''` to disable)
+- **Auto-render `$$`** — `bot.autoRenderBlock` (default: `true`)
+- **Fallback API** — `bot.useFallback`
 
----
+## Usage examples
 
-## Usage in WhatsApp
+### Equations
+```
+!latex \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+```
 
-Once connected, you can use the bot in any group chat where your WhatsApp account is present, or in direct messages.
+### Mixed text + math
+```
+The Euler identity:
+$$e^{i \pi} + 1 = 0$$
+connects five fundamental constants.
+```
 
-### 1. Direct Command
-Sends a clean card containing just the formatted math block.
-- **Command**: `!latex <formula>` or `!tex <formula>`
-- **Example**:
-  ```text
-  !latex \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
-  ```
+### Chemistry (mhchem)
+```
+!latex \ce{CO2 + H2O <=> H2CO3}
+```
 
-### 2. Auto-Detect / Mixed Text Rendering
-If a message contains text mixed with math equations wrapped in `$$`, the bot will capture the entire message context and render it as a single cohesive educational card.
-- **Syntax**: `$$ <formula> $$`
-- **Example**:
-  ```text
-  Here is the Euler identity:
-  $$e^{i \pi} + 1 = 0$$
-  This connects five fundamental constants.
-  ```
+### Molecular structures (chemfig)
+```
+!chem \chemfig{A-B*6(=-=-=-)}
+```
 
-### 3. Chemical Equations (mhchem)
-Use `\ce{...}` inside your math formulas:
-- **Example**:
-  ```text
-  !latex \ce{CO2 + H2O <=> H2CO3}
-  ```
+### TikZ diagrams
+```
+!tikz
+\draw[thick, fill=blue!10] (0,0) circle (1.5);
+\node at (0,0) {TikZ Works!};
+```
 
-### 4. Molecular Structures (chemfig)
-Use `!chem <chemfig code>` or `!chemfig <chemfig code>` to draw structural molecular diagrams (like carbon chains or benzene rings) using the LaTeX `chemfig` package.
-- **Example**:
-  ```text
-  !chem \chemfig{A-B*6(=-=-=-)}
-  ```
+Or just send a `\begin{tikzpicture}` block directly.
 
-### 5. TikZ Diagrams & Vector Graphics (tikz)
-Render general vector graphics and diagrams using the LaTeX `tikz` package. You can invoke it explicitly with `!tikz <tikz code>` or by enclosing your code in a standard `\begin{tikzpicture} ... \end{tikzpicture}` block.
-- **Example**:
-  ```text
-  !tikz
-  \draw[thick, fill=blue!10] (0,0) circle (1.5);
-  \node at (0,0) {TikZ Works!};
-  ```
+### Plotting
+```
+!plot sin(x) * cos(x/2)
+!plot x^2 + y^2 = 1
+!plot y = ln(x) [-1, 20] [-5, 5]
+```
 
-### 6. Function & Equation Plotting (plot)
-Plot mathematical functions or implicit equations dynamically on a custom grid with a premium glowing curve.
-- **Explicit functions**: `!plot sin(x) * cos(x/2)` or `!plot y = x^2`
-- **Implicit equations**: `!plot x^2 + y^2 = 1` or `!plot y^2 = x^3 - x`
-- **Custom domains**: Add range brackets at the end for custom domains/ranges (e.g. `!plot sin(x) [-2*pi, 2*pi] [-1.2, 1.2]`).
+Brackets at the end set custom x/y domains.
