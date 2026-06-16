@@ -159,6 +159,27 @@ client.on('message_create', async (msg) => {
 
     // Process the LaTeX if triggered
     if (isLaTeXTrigger) {
+        // ─ Rate limiting ─────────────────────────────────────────────────────────────
+        const senderId = msg.author || msg.from;
+        if (renderer.isRateLimited(senderId)) {
+            console.warn(`⚠️ Rate limit exceeded for sender: ${senderId}`);
+            try {
+                await msg.reply(`${config.bot.errorPrefix}Too many requests. Please wait a moment before sending another formula.`);
+            } catch (_) {}
+            return;
+        }
+
+        // ─ Input length guard ─────────────────────────────────────────────────────
+        const lengthError = renderer.validateInputLength(latexInput);
+        if (lengthError) {
+            console.warn(`⚠️ Input rejected (${senderId}): ${lengthError}`);
+            try {
+                await msg.reply(`${config.bot.errorPrefix}${lengthError}`);
+            } catch (_) {}
+            return;
+        }
+        // ──────────────────────────────────────────────────────────────────────────────
+
         console.log(`⚙️ Processing LaTeX request for trigger...`);
         try {
             // Safe typing indicator block

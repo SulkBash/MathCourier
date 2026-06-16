@@ -2,9 +2,66 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const url = require('url');
 const config = require('./config');
 const { create, all } = require('mathjs');
 const math = create(all);
+
+// ─── Security constants ────────────────────────────────────────────────────────
+/** Maximum allowed length (characters) for any user-supplied formula / expression. */
+const MAX_INPUT_LENGTH = 4000;
+
+/**
+ * Allowed hostnames for the image URL returned by the QuickLaTeX API response.
+ * This prevents SSRF attacks where a malicious QuickLaTeX response redirects us
+ * to an internal network address.
+ */
+const QUICKLATEX_ALLOWED_HOSTS = new Set(['quicklatex.com', 'www.quicklatex.com']);
+
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
+/**
+ * Simple in-memory rate limiter (per sender ID).
+ * Allows at most MAX_REQUESTS_PER_WINDOW renders within RATE_WINDOW_MS milliseconds.
+ */
+const RATE_WINDOW_MS = 60_000;   // 1 minute sliding window
+const MAX_REQUESTS_PER_WINDOW = 10;
+const _rateLimitMap = new Map(); // senderId -> { count, windowStart }
+
+/**
+ * Returns true if the given sender has exceeded the rate limit.
+ * @param {string} senderId
+ */
+function isRateLimited(senderId) {
+    const now = Date.now();
+    let entry = _rateLimitMap.get(senderId);
+    if (!entry || now - entry.windowStart >= RATE_WINDOW_MS) {
+        // Start a fresh window
+        entry = { count: 1, windowStart: now };
+        _rateLimitMap.set(senderId, entry);
+        return false;
+    }
+    entry.count++;
+    if (entry.count > MAX_REQUESTS_PER_WINDOW) {
+        return true; // Rate limited
+    }
+    return false;
+}
+
+/**
+ * Validates that a formula string is within the allowed length limit.
+ * @param {string} formula
+ * @returns {string|null} Error message if invalid, or null if OK.
+ */
+function validateInputLength(formula) {
+    if (!formula || typeof formula !== 'string') {
+        return 'Empty or invalid formula.';
+    }
+    if (formula.length > MAX_INPUT_LENGTH) {
+        return `Input too long. Maximum allowed length is ${MAX_INPUT_LENGTH} characters.`;
+    }
+    return null;
+}
+// ──────────────────────────────────────────────────────────────────────────────
 
 // Define custom function aliases for user convenience
 math.import({
@@ -147,7 +204,8 @@ async function initialize() {
         katex.render(latex, mathDiv, {
           displayMode: isBlock,
           throwOnError: true,
-          trust: true
+          // trust: false (default) — do NOT enable; it allows arbitrary HTML/href injection
+          trust: false
         });
         return { success: true };
       } catch (err) {
@@ -163,7 +221,8 @@ async function initialize() {
             {left: "$$", right: "$$", display: true}
           ],
           throwOnError: false,
-          trust: true
+          // trust: false (default) — do NOT enable; it allows arbitrary HTML/href injection
+          trust: false
         });
         return { success: true };
       } catch (err) {
@@ -177,7 +236,8 @@ async function initialize() {
         katex.render(latex, mathDiv, {
           displayMode: true,
           throwOnError: true,
-          trust: true
+          // trust: false (default) — do NOT enable; it allows arbitrary HTML/href injection
+          trust: false
         });
 
         // Ensure canvas exists and is sized correctly
@@ -751,7 +811,21 @@ async function renderQuickLaTeX(formula, preamble) {
 
                         // Extract image URL (first token on second line)
                         const imageUrl = lines[1].split(' ')[0];
-                        
+
+                        // ── SSRF guard: only fetch from known QuickLaTeX hosts ────────────
+                        let parsedUrl;
+                        try {
+                            parsedUrl = new url.URL(imageUrl);
+                        } catch (_) {
+                            resolve({ success: false, error: 'QuickLaTeX returned an invalid image URL.' });
+                            return;
+                        }
+                        if (parsedUrl.protocol !== 'https:' || !QUICKLATEX_ALLOWED_HOSTS.has(parsedUrl.hostname)) {
+                            resolve({ success: false, error: 'QuickLaTeX returned an image URL from an unexpected host.' });
+                            return;
+                        }
+                        // ─────────────────────────────────────────────────────────────────
+
                         // Download the transparent PNG image from QuickLaTeX
                         https.get(imageUrl, (imgRes) => {
                             if (imgRes.statusCode !== 200) {
@@ -776,10 +850,19 @@ async function renderQuickLaTeX(formula, preamble) {
                                         return;
                                     }
 
-                                    // Render inside our beautiful card
+                                    // Render inside our beautiful card.
+                                    // Use DOM APIs instead of innerHTML to avoid XSS if the
+                                    // base64 string ever contains a crafted payload.
                                     await page.evaluate((b64) => {
                                         const mathDiv = document.getElementById('math');
-                                        mathDiv.innerHTML = `<img src="data:image/png;base64,${b64}" style="display: block; max-width: 100%; height: auto;" />`;
+                                        // Clear previous content safely
+                                        while (mathDiv.firstChild) mathDiv.removeChild(mathDiv.firstChild);
+                                        const img = document.createElement('img');
+                                        img.src = `data:image/png;base64,${b64}`;
+                                        img.style.display = 'block';
+                                        img.style.maxWidth = '100%';
+                                        img.style.height = 'auto';
+                                        mathDiv.appendChild(img);
                                         return { success: true };
                                     }, base64Img);
 
@@ -1219,5 +1302,8 @@ module.exports = {
     renderTikz,
     renderPlot,
     close,
-    isLocalReady: () => isInitialized
+    isLocalReady: () => isInitialized,
+    // Security helpers consumed by bot.js
+    isRateLimited,
+    validateInputLength
 };
