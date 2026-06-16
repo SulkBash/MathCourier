@@ -254,7 +254,7 @@ async function render(formula, isBlock = true) {
             const result = await renderLocal(formula, isBlock);
             return result;
         } catch (err) {
-            console.warn('Local render failed. Attempting fallback API...');
+            console.warn('Local render failed. Error:', err.message, '\nAttempting fallback API...');
         }
     }
 
@@ -287,9 +287,172 @@ async function close() {
     }
 }
 
+/**
+ * Shared helper to render any formula via QuickLaTeX and local Puppeteer card styling.
+ * @param {string} formula - The LaTeX formula/diagram.
+ * @param {string} preamble - The LaTeX preamble (package imports/settings).
+ * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
+ */
+async function renderQuickLaTeX(formula, preamble) {
+    return new Promise(async (resolve) => {
+        try {
+            // Extract text/line color from config (removing #) and ensure uppercase for xcolor HTML model
+            const textHex = config.style.textColor.replace('#', '').toUpperCase();
+            
+            // Helper function to encode parameters for QuickLaTeX API (only escapes % and &)
+            const quicklatexEncode = (str) => str.replace(/%/g, '%25').replace(/&/g, '%26');
+            
+            const encodedFormula = quicklatexEncode(formula);
+            const encodedPreamble = quicklatexEncode(preamble);
+            
+            // Build raw POST body
+            const postData = `formula=${encodedFormula}&preamble=${encodedPreamble}&fsize=18px&fcolor=${textHex}&mode=0&out=1&remhost=quicklatex.com`;
+
+            const options = {
+                hostname: 'quicklatex.com',
+                port: 443,
+                path: '/latex3.f',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Content-Length': Buffer.byteLength(postData)
+                }
+            };
+
+            // Post request to QuickLaTeX
+            const req = https.request(options, (res) => {
+                if (res.statusCode !== 200) {
+                    resolve({ success: false, error: `QuickLaTeX server returned status code ${res.statusCode}` });
+                    return;
+                }
+
+                let responseBody = '';
+                res.on('data', (chunk) => { responseBody += chunk; });
+                res.on('end', async () => {
+                    try {
+                        const lines = responseBody.split('\n').map(l => l.trim());
+                        if (lines[0] !== '0') {
+                            resolve({ success: false, error: `QuickLaTeX error: ${lines.slice(1).join(' ')}` });
+                            return;
+                        }
+
+                        // Extract image URL (first token on second line)
+                        const imageUrl = lines[1].split(' ')[0];
+                        
+                        // Download the transparent PNG image from QuickLaTeX
+                        https.get(imageUrl, (imgRes) => {
+                            if (imgRes.statusCode !== 200) {
+                                resolve({ success: false, error: `Failed to download image from QuickLaTeX: ${imgRes.statusCode}` });
+                                return;
+                            }
+
+                            const chunks = [];
+                            imgRes.on('data', (chunk) => chunks.push(chunk));
+                            imgRes.on('end', async () => {
+                                try {
+                                    const imgBuffer = Buffer.concat(chunks);
+                                    const base64Img = imgBuffer.toString('base64');
+
+                                    // If local puppeteer is not initialized, we return the raw transparent PNG directly
+                                    if (!isInitialized || !page) {
+                                        resolve({
+                                            success: true,
+                                            data: base64Img,
+                                            source: 'quicklatex-raw'
+                                        });
+                                        return;
+                                    }
+
+                                    // Render inside our beautiful card
+                                    await page.evaluate((b64) => {
+                                        const mathDiv = document.getElementById('math');
+                                        mathDiv.innerHTML = `<img src="data:image/png;base64,${b64}" style="display: block; max-width: 100%; height: auto;" />`;
+                                        return { success: true };
+                                    }, base64Img);
+
+                                    // Capture the card screenshot
+                                    const cardElement = await page.$('#card');
+                                    const imageBuffer = await cardElement.screenshot({
+                                        type: 'png',
+                                        omitBackground: true
+                                    });
+
+                                    resolve({
+                                        success: true,
+                                        data: imageBuffer.toString('base64'),
+                                        source: 'quicklatex-card'
+                                    });
+                                } catch (err) {
+                                    resolve({ success: false, error: `Error during card screenshot generation: ${err.message}` });
+                                }
+                            });
+                        }).on('error', (err) => {
+                            resolve({ success: false, error: `Failed to fetch image data: ${err.message}` });
+                        });
+                    } catch (err) {
+                        resolve({ success: false, error: `Error parsing QuickLaTeX response: ${err.message}` });
+                    }
+                });
+            });
+
+            req.on('error', (err) => {
+                resolve({ success: false, error: `QuickLaTeX connection error: ${err.message}` });
+            });
+
+            req.write(postData);
+            req.end();
+        } catch (err) {
+            resolve({ success: false, error: `Failed to initiate QuickLaTeX request: ${err.message}` });
+        }
+    });
+}
+
+/**
+ * Render a chemical formula using chemfig via QuickLaTeX and local Puppeteer card styling.
+ * @param {string} formula - The chemfig formula (e.g., \chemfig{A-B}).
+ * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
+ */
+async function renderChem(formula) {
+    const textHex = config.style.textColor.replace('#', '').toUpperCase();
+    const preamble = [
+        '\\usepackage{xcolor}',
+        `\\definecolor{fgcolor}{HTML}{${textHex}}`,
+        '\\usepackage{chemfig}',
+        '\\setchemfig{bond style={color=fgcolor}}',
+        '\\renewcommand*\\printatom[1]{\\color{fgcolor}\\ensuremath{\\mathrm{#1}}}'
+    ].join('\n');
+    return renderQuickLaTeX(formula, preamble);
+}
+
+/**
+ * Render a TikZ drawing via QuickLaTeX and local Puppeteer card styling.
+ * @param {string} formula - The TikZ drawing code.
+ * @returns {Promise<{success: boolean, data?: string, error?: string, source?: string}>}
+ */
+async function renderTikz(formula) {
+    const textHex = config.style.textColor.replace('#', '').toUpperCase();
+    const preamble = [
+        '\\usepackage{xcolor}',
+        `\\definecolor{fgcolor}{HTML}{${textHex}}`,
+        '\\usepackage{tikz}',
+        '\\usetikzlibrary{shapes,arrows,positioning,calc,fit,backgrounds}',
+        '\\tikzset{every picture/.style={color=fgcolor}}',
+        '\\tikzset{every node/.style={text=fgcolor}}'
+    ].join('\n');
+
+    let fullFormula = formula.trim();
+    if (!fullFormula.includes('\\begin{tikzpicture}')) {
+        fullFormula = `\\begin{tikzpicture}\n${fullFormula}\n\\end{tikzpicture}`;
+    }
+
+    return renderQuickLaTeX(fullFormula, preamble);
+}
+
 module.exports = {
     initialize,
     render,
+    renderChem,
+    renderTikz,
     close,
     isLocalReady: () => isInitialized
 };

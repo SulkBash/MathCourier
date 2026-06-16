@@ -20,6 +20,23 @@ client.on('qr', (qr) => {
     console.log('-------------------------------------------------------\n');
 });
 
+// Connection state logging events
+client.on('authenticated', () => {
+    console.log('✅ Authentication successful.');
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('❌ Authentication failure:', msg);
+});
+
+client.on('change_state', (state) => {
+    console.log(`ℹ️ Connection state changed: ${state}`);
+});
+
+client.on('disconnected', (reason) => {
+    console.error('❌ Client was logged out / disconnected:', reason);
+});
+
 // Bot is authenticated and connected
 client.on('ready', async () => {
     console.log(`\n==================================================`);
@@ -36,11 +53,18 @@ client.on('message_create', async (msg) => {
     // Basic guards
     if (!msg.body || typeof msg.body !== 'string') return;
 
-    // Normalize message body for trigger checking
+    // Log potential triggers for debugging
     const body = msg.body.trim();
+    const isPotentialTrigger = body.startsWith('!') || body.includes('$$');
+    if (isPotentialTrigger) {
+        const snippet = body.substring(0, 40).replace(/\n/g, ' ');
+        console.log(`📥 Msg received from [${msg.author || msg.from}]: "${snippet}${body.length > 40 ? '...' : ''}"`);
+    }
     
     let isLaTeXTrigger = false;
     let isCommand = false;
+    let isChemCommand = false;
+    let isTikzCommand = false;
     let latexInput = '';
 
     // 1. Check for Command trigger: !latex or !tex
@@ -52,7 +76,31 @@ client.on('message_create', async (msg) => {
         const firstSpaceIndex = body.indexOf(' ');
         latexInput = body.substring(firstSpaceIndex + 1).trim();
     } 
-    // 2. Check for Inline Block trigger: $$ equation $$
+    // 2. Check for Chemistry Command trigger: !chem or !chemfig
+    else if (body.startsWith('!chem ') || body.startsWith('!chemfig ')) {
+        isChemCommand = true;
+        isLaTeXTrigger = true;
+        
+        // Extract everything after the trigger command
+        const firstSpaceIndex = body.indexOf(' ');
+        latexInput = body.substring(firstSpaceIndex + 1).trim();
+    }
+    // 3. Check for TikZ Command trigger: !tikz
+    else if (body.startsWith('!tikz ')) {
+        isTikzCommand = true;
+        isLaTeXTrigger = true;
+        
+        // Extract everything after the trigger command
+        const firstSpaceIndex = body.indexOf(' ');
+        latexInput = body.substring(firstSpaceIndex + 1).trim();
+    }
+    // 4. Check for explicit TikZ environment trigger
+    else if (body.includes('\\begin{tikzpicture}')) {
+        isTikzCommand = true;
+        isLaTeXTrigger = true;
+        latexInput = body;
+    }
+    // 5. Check for Inline Block trigger: $$ equation $$
     else if (config.bot.autoRenderBlock && body.includes('$$')) {
         // Verify there is a closing $$ as well
         const firstIndex = body.indexOf('$$');
@@ -66,15 +114,26 @@ client.on('message_create', async (msg) => {
 
     // Process the LaTeX if triggered
     if (isLaTeXTrigger) {
-        // Indicate to the user that the bot is processing (optional, typing status)
+        console.log(`⚙️ Processing LaTeX request for trigger...`);
         try {
-            const chat = await msg.getChat();
-            await chat.sendStateTyping();
+            // Safe typing indicator block
+            try {
+                const chat = await msg.getChat();
+                await chat.sendStateTyping();
+            } catch (typingErr) {
+                console.warn('⚠️ Warning: Failed to set typing state:', typingErr.message);
+            }
             
             console.log(`Processing LaTeX request from: ${msg.author || msg.from}`);
             
             let renderResult;
-            if (isCommand) {
+            if (isChemCommand) {
+                // Chemistry mode: Render chemfig diagram using QuickLaTeX
+                renderResult = await renderer.renderChem(latexInput);
+            } else if (isTikzCommand) {
+                // TikZ mode: Render TikZ graphics using QuickLaTeX
+                renderResult = await renderer.renderTikz(latexInput);
+            } else if (isCommand) {
                 // Command mode: Render single block equation directly
                 renderResult = await renderer.render(latexInput, true);
             } else {

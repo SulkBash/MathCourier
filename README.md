@@ -9,6 +9,8 @@ A modern, high-performance WhatsApp bot designed to run in group chats (or direc
 - **Automatic Delimiter Rendering**: Automatically detects messages containing `$$ ... $$` blocks and converts them into rich educational cards preserving the surrounding text.
 - **Explicit Command Triggers**: Support for `!latex <formula>` and `!tex <formula>` commands.
 - **Chemical Equation Support**: Built-in support for rendering chemical formulas via KaTeX `mhchem` extension (e.g., `\ce{H2O}`).
+- **Molecular Structures & Diagrams**: Built-in support for rendering chemical structures using the `chemfig` package via `!chem <formula>`.
+- **TikZ Graphics Support**: Render complex vector graphics and diagrams directly from TikZ code using `!tikz <formula>` or simply by wrapping your code in a `\begin{tikzpicture}` environment.
 - **Robust Web Fallback**: Seamless fallback to external Web APIs (Codecogs) in case local Puppeteer fails, ensuring the bot is 100% resilient.
 - **Persistent Sessions**: Uses `whatsapp-web.js` LocalAuth so you only need to scan the QR code once.
 
@@ -81,9 +83,26 @@ If a message contains text mixed with math equations wrapped in `$$`, the bot wi
   This connects five fundamental constants.
   ```
 
-### 3. Chemical Equations
-Use `\ce{...}` inside your formulas:
+### 3. Chemical Equations (mhchem)
+Use `\ce{...}` inside your math formulas:
 - **Example**:
   ```text
   !latex \ce{CO2 + H2O <=> H2CO3}
   ```
+
+### 4. Molecular Structures (chemfig)
+Use `!chem <chemfig code>` or `!chemfig <chemfig code>` to draw structural molecular diagrams (like carbon chains or benzene rings) using the LaTeX `chemfig` package.
+- **Example**:
+  ```text
+  !chem \chemfig{A-B*6(=-=-=-)}
+  ```
+
+### 5. TikZ Diagrams & Vector Graphics (tikz)
+Render general vector graphics and diagrams using the LaTeX `tikz` package. You can invoke it explicitly with `!tikz <tikz code>` or by enclosing your code in a standard `\begin{tikzpicture} ... \end{tikzpicture}` block.
+- **Example**:
+  ```text
+  !tikz
+  \draw[thick, fill=blue!10] (0,0) circle (1.5);
+  \node at (0,0) {TikZ Works!};
+  ```
+

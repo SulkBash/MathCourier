@@ -66,6 +66,44 @@ async function runTests() {
         console.error(`❌ Unexpected error in Test 3:`, err.message);
     }
 
+    // Test Case 4: Chemical Structure (chemfig)
+    const chemFormula = '\\chemfig{A-B*6(=-=-=-)}'; // Benzene derivative
+    console.log(`\nTest Case 4: Rendering chemfig structure: ${chemFormula}`);
+    try {
+        const result4 = await renderer.renderChem(chemFormula);
+        if (result4.success && result4.data) {
+            const outputPath = path.join(outputDir, 'test_chemfig.png');
+            fs.writeFileSync(outputPath, Buffer.from(result4.data, 'base64'));
+            console.log(`✅ Success! Rendered using: [${result4.source}]`);
+            console.log(`Saved output image to: ${outputPath}`);
+        } else {
+            console.error(`❌ Failed to render chemfig: ${result4.error}`);
+        }
+    } catch (err) {
+        console.error(`❌ Unexpected error in Test 4:`, err.message);
+    }
+
+    // Test Case 5: TikZ Graphics
+    const tikzFormula = `
+\\draw[thick, fill=blue!10] (0,0) circle (1.5);
+\\node[align=center] at (0,0) {TikZ\\\\Works!};
+\\draw[->, red, very thick] (-2,2) -- (-0.2,0.2);
+`;
+    console.log(`\nTest Case 5: Rendering TikZ Graphics: ${tikzFormula.trim()}`);
+    try {
+        const result5 = await renderer.renderTikz(tikzFormula);
+        if (result5.success && result5.data) {
+            const outputPath = path.join(outputDir, 'test_tikz.png');
+            fs.writeFileSync(outputPath, Buffer.from(result5.data, 'base64'));
+            console.log(`✅ Success! Rendered using: [${result5.source}]`);
+            console.log(`Saved output image to: ${outputPath}`);
+        } else {
+            console.error(`❌ Failed to render TikZ: ${result5.error}`);
+        }
+    } catch (err) {
+        console.error(`❌ Unexpected error in Test 5:`, err.message);
+    }
+
     // Clean up
     console.log('\nShutting down renderer...');
     await renderer.close();
