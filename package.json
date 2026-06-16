@@ -8,9 +8,10 @@
     "test": "node test-render.js"
   },
   "dependencies": {
-    "qrcode-terminal": "^0.12.0",
     "katex": "^0.16.9",
+    "mathjs": "^15.2.0",
     "puppeteer": "^21.6.1",
+    "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
   }
 }

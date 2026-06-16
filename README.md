@@ -106,3 +106,8 @@ Render general vector graphics and diagrams using the LaTeX `tikz` package. You 
   \node at (0,0) {TikZ Works!};
   ```
 
+### 6. Function & Equation Plotting (plot)
+Plot mathematical functions or implicit equations dynamically on a custom grid with a premium glowing curve.
+- **Explicit functions**: `!plot sin(x) * cos(x/2)` or `!plot y = x^2`
+- **Implicit equations**: `!plot x^2 + y^2 = 1` or `!plot y^2 = x^3 - x`
+- **Custom domains**: Add range brackets at the end for custom domains/ranges (e.g. `!plot sin(x) [-2*pi, 2*pi] [-1.2, 1.2]`).

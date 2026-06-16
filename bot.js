@@ -2,6 +2,41 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const renderer = require('./renderer');
 const config = require('./config');
+const { create, all } = require('mathjs');
+const math = create(all);
+
+// Define custom function aliases for user convenience
+math.import({
+    // Inverse trigonometric aliases
+    arcsin: math.asin,
+    arccos: math.acos,
+    arctan: math.atan,
+    arccot: math.acot,
+    arcsec: math.asec,
+    arccsc: math.acsc,
+    
+    // Hyperbolic inverse trigonometric aliases
+    arcsinh: math.asinh,
+    arccosh: math.acosh,
+    arctanh: math.atanh,
+    arccoth: math.acoth,
+    arcsech: math.asech,
+    arccsch: math.acsch,
+
+    // Cosecant aliases
+    cosec: math.csc,
+    cosech: math.csch,
+
+    // Natural logarithm alias
+    ln: math.log,
+
+    // Tangent/cotangent shorthand aliases
+    tg: math.tan,
+    ctg: math.cot,
+    arctg: math.atan,
+    arcctg: math.acot
+}, { override: true });
+
 
 // Initialize the WhatsApp Client with LocalAuth for persistent sessions
 const client = new Client({
@@ -65,6 +100,7 @@ client.on('message_create', async (msg) => {
     let isCommand = false;
     let isChemCommand = false;
     let isTikzCommand = false;
+    let isPlotCommand = false;
     let latexInput = '';
 
     // 1. Check for Command trigger: !latex or !tex
@@ -94,13 +130,22 @@ client.on('message_create', async (msg) => {
         const firstSpaceIndex = body.indexOf(' ');
         latexInput = body.substring(firstSpaceIndex + 1).trim();
     }
-    // 4. Check for explicit TikZ environment trigger
+    // 4. Check for Plot Command trigger: !plot
+    else if (body.startsWith('!plot ')) {
+        isPlotCommand = true;
+        isLaTeXTrigger = true;
+        
+        // Extract everything after the trigger command
+        const firstSpaceIndex = body.indexOf(' ');
+        latexInput = body.substring(firstSpaceIndex + 1).trim();
+    }
+    // 5. Check for explicit TikZ environment trigger
     else if (body.includes('\\begin{tikzpicture}')) {
         isTikzCommand = true;
         isLaTeXTrigger = true;
         latexInput = body;
     }
-    // 5. Check for Inline Block trigger: $$ equation $$
+    // 6. Check for Inline Block trigger: $$ equation $$
     else if (config.bot.autoRenderBlock && body.includes('$$')) {
         // Verify there is a closing $$ as well
         const firstIndex = body.indexOf('$$');
@@ -133,6 +178,9 @@ client.on('message_create', async (msg) => {
             } else if (isTikzCommand) {
                 // TikZ mode: Render TikZ graphics using QuickLaTeX
                 renderResult = await renderer.renderTikz(latexInput);
+            } else if (isPlotCommand) {
+                // Plot mode: Render function/equation plot
+                renderResult = await handlePlotCommand(latexInput);
             } else if (isCommand) {
                 // Command mode: Render single block equation directly
                 renderResult = await renderer.render(latexInput, true);
@@ -197,6 +245,59 @@ async function renderMixed(text) {
         success: false,
         error: 'Local mixed rendering unavailable, and could not extract formula for API fallback.'
     };
+}
+
+/**
+ * Helper to handle function and equation plotting commands.
+ * Parses range matches from the input and triggers the renderer.
+ */
+async function handlePlotCommand(input) {
+    let expr = input.trim();
+    
+    // Parse custom domains/ranges like [-5, 5]
+    const rangeMatches = [...expr.matchAll(/\[([^\]]+)\]/g)];
+    
+    let xDomain = null;
+    let yDomain = null;
+    let cleanExpr = expr;
+
+    if (rangeMatches.length > 0) {
+        try {
+            const xRangeParts = rangeMatches[0][1].split(',');
+            const xMinVal = math.evaluate(xRangeParts[0].trim());
+            const xMaxVal = math.evaluate(xRangeParts[1].trim());
+            if (!isNaN(xMinVal) && !isNaN(xMaxVal) && xMinVal < xMaxVal) {
+                xDomain = [xMinVal, xMaxVal];
+            }
+            // Remove the match from the expression
+            cleanExpr = cleanExpr.replace(rangeMatches[0][0], '');
+        } catch (e) {
+            console.warn('Failed to parse X domain constraint:', e.message);
+        }
+    }
+    
+    if (rangeMatches.length > 1) {
+        try {
+            const yRangeParts = rangeMatches[1][1].split(',');
+            const yMinVal = math.evaluate(yRangeParts[0].trim());
+            const yMaxVal = math.evaluate(yRangeParts[1].trim());
+            if (!isNaN(yMinVal) && !isNaN(yMaxVal) && yMinVal < yMaxVal) {
+                yDomain = [yMinVal, yMaxVal];
+            }
+            // Remove the match from the expression
+            cleanExpr = cleanExpr.replace(rangeMatches[1][0], '');
+        } catch (e) {
+            console.warn('Failed to parse Y domain constraint:', e.message);
+        }
+    }
+    
+    cleanExpr = cleanExpr.trim();
+    
+    const customOptions = {};
+    if (xDomain) customOptions.xDomain = xDomain;
+    if (yDomain) customOptions.yDomain = yDomain;
+    
+    return await renderer.renderPlot(cleanExpr, customOptions);
 }
 
 // Start the WhatsApp Bot
