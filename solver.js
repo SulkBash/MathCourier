@@ -31,6 +31,27 @@ integ.toTex = function (node, options) {
     return `\\int_{${lowerTex}}^{${upperTex}} ${innerTex} d${varStr}`;
 };
 
+const originalFactorial = math.factorial;
+const factorial = function (x) {
+    if (typeof x === 'number') {
+        if (x < 0) return math.gamma(x + 1);
+        return originalFactorial(x);
+    }
+    if (x && x.isBigNumber) {
+        if (x.isNegative()) return math.gamma(x.toNumber() + 1);
+        return originalFactorial(x);
+    }
+    if (x && x.isFraction) {
+        const val = x.valueOf();
+        if (val < 0) return math.gamma(val + 1);
+        return originalFactorial(x);
+    }
+    if (x && x.isComplex) {
+        return math.gamma(math.add(x, 1));
+    }
+    return originalFactorial(x);
+};
+
 math.import({
     arcsin: math.asin,
     arccos: math.acos,
@@ -52,7 +73,8 @@ math.import({
     arctg: math.atan,
     arcctg: math.acot,
     deriv,
-    integ
+    integ,
+    factorial
 }, { override: true });
 
 function extractVariables(node) {
@@ -130,11 +152,22 @@ function solveEquation(inputStr) {
             const val = E.evaluate();
             const isTautology = Math.abs(val) < 1e-10;
             let latex = '\\begin{aligned}\n';
-            latex += `\\text{Equation: } & ${parsedEqs[0].str} \\\\\n`;
+            let eqTex = '';
+            try {
+                if (parsedEqs[0].str.includes('=')) {
+                    const parts = parsedEqs[0].str.split('=');
+                    eqTex = `${math.parse(parts[0]).toTex()} = ${math.parse(parts[1]).toTex()}`;
+                } else {
+                    eqTex = `${math.parse(parsedEqs[0].str).toTex()} = 0`;
+                }
+            } catch (e) {
+                eqTex = parsedEqs[0].str;
+            }
+            latex += `${eqTex} \\\\\n`;
             if (isTautology) {
-                latex += '\\text{Result: } & \\text{Tautology (always true)}\n';
+                latex += '\\implies \\text{Tautology (always true)}\n';
             } else {
-                latex += '\\text{Result: } & \\text{Contradiction (no solution)}\n';
+                latex += '\\implies \\text{Contradiction (no solution)}\n';
             }
             latex += '\\end{aligned}';
             return { success: true, latex };
@@ -194,7 +227,7 @@ function solveEquation(inputStr) {
         try {
             const sol = math.lusolve(A, b);
             let latex = '\\begin{aligned}\n';
-            latex += '\\text{System: } & \\begin{cases}\n';
+            latex += '\\begin{cases}\n';
             latex += parsedEqs.map(eq => {
                 try {
                     if (eq.str.includes('=')) {
@@ -206,8 +239,7 @@ function solveEquation(inputStr) {
                     return eq.str;
                 }
             }).join(' \\\\\n') + '\n\\end{cases} \\\\\n';
-            latex += '\\text{Method: } & \\text{Matrix LUSolve} \\\\\n';
-            latex += '\\text{Solution: } & ';
+            latex += '\\implies ';
             const solLines = [];
             for (let i = 0; i < n; i++) {
                 const val = sol[i][0];
@@ -272,9 +304,8 @@ function solveEquation(inputStr) {
         const root = -constTerm / linearCoeff;
         const rootStr = Number(root.toFixed(8)).toString();
         let latex = '\\begin{aligned}\n';
-        latex += `\\text{Equation: } & ${eqTex} \\\\\n`;
-        latex += '\\text{Method: } & \\text{Symbolic (Linear Equation)} \\\\\n';
-        latex += `\\text{Root: } & ${xVar} = ${rootStr}\n`;
+        latex += `${eqTex} \\\\\n`;
+        latex += `\\implies ${xVar} = ${rootStr}\n`;
         latex += '\\end{aligned}';
         return { success: true, latex };
     }
@@ -299,9 +330,8 @@ function solveEquation(inputStr) {
 
     if (polyRoots) {
         let latex = '\\begin{aligned}\n';
-        latex += `\\text{Equation: } & ${eqTex} \\\\\n`;
-        latex += `\\text{Method: } & \\text{Symbolic (Polynomial Degree ${polyDegree})} \\\\\n`;
-        latex += '\\text{Roots: } & ';
+        latex += `${eqTex} \\\\\n`;
+        latex += '\\implies ';
         const rootsStrList = polyRoots.map((r, idx) => {
             let rStr = '';
             if (typeof r === 'number') {
@@ -421,26 +451,9 @@ function solveEquation(inputStr) {
 
     if (foundConv) {
         let latex = '\\begin{aligned}\n';
-        latex += `\\text{Equation: } & ${eqTex} \\\\\n`;
-        latex += '\\text{Method: } & \\text{Numerical (Newton-Raphson)} \\\\\n';
-        latex += `\\text{Root: } & ${xVar} \\approx ${Number(rootVal.toFixed(10)).toString()} \\\\\n`;
-        latex += '\\text{Convergence Steps:} & \\\\\n';
-        latex += '\\begin{array}{c|c|c|c}\n';
-        latex += 'n & x_n & f(x_n) & f\'(x_n) \\\\\n';
-        latex += '\\hline\n';
-
-        const stepsToShow = history.slice(0, 8);
-        latex += stepsToShow.map(h => {
-            return `${h.step} & ${formatVal(h.x)} & ${formatVal(h.fx)} & ${formatVal(h.dfx)}`;
-        }).join(' \\\\\n');
-
-        if (history.length > 8) {
-            latex += ' \\\\\n\\vdots & \\vdots & \\vdots & \\vdots';
-            const last = history[history.length - 1];
-            latex += ` \\\\\n${last.step} & ${formatVal(last.x)} & ${formatVal(last.fx)} & ${formatVal(last.dfx)}`;
-        }
-
-        latex += '\n\\end{array}\n\\end{aligned}';
+        latex += `${eqTex} \\\\\n`;
+        latex += `\\implies ${xVar} \\approx ${Number(rootVal.toFixed(10)).toString()}\n`;
+        latex += '\\end{aligned}';
         return { success: true, latex };
     }
 

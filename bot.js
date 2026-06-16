@@ -36,6 +36,27 @@ integ.toTex = function (node, options) {
     return `\\int_{${lowerTex}}^{${upperTex}} ${innerTex} d${varStr}`;
 };
 
+const originalFactorial = math.factorial;
+const factorial = function (x) {
+    if (typeof x === 'number') {
+        if (x < 0) return math.gamma(x + 1);
+        return originalFactorial(x);
+    }
+    if (x && x.isBigNumber) {
+        if (x.isNegative()) return math.gamma(x.toNumber() + 1);
+        return originalFactorial(x);
+    }
+    if (x && x.isFraction) {
+        const val = x.valueOf();
+        if (val < 0) return math.gamma(val + 1);
+        return originalFactorial(x);
+    }
+    if (x && x.isComplex) {
+        return math.gamma(math.add(x, 1));
+    }
+    return originalFactorial(x);
+};
+
 math.import({
     arcsin: math.asin,
     arccos: math.acos,
@@ -57,7 +78,8 @@ math.import({
     arctg: math.atan,
     arcctg: math.acot,
     deriv,
-    integ
+    integ,
+    factorial
 }, { override: true });
 
 

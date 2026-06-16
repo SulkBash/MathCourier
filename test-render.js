@@ -85,6 +85,9 @@ async function runTests() {
     await runTest('Plot integral of sin(t)', () =>
         renderer.renderPlot('y = integ("sin(t)", "t", 0, x)', { xDomain: [-10, 10], yDomain: [-3, 3] }));
 
+    await runTest('Plot factorial y = x!', () =>
+        renderer.renderPlot('y = x!', { xDomain: [-5, 5], yDomain: [-10, 10] }));
+
     const solver = require('./solver');
     await runTest('Solve quadratic', async () => {
         const res = solver.solveEquation('x^2 - 5x + 6 = 0');
