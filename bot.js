@@ -368,7 +368,7 @@ async function handlePlotCommand(input) {
             const parts = rangeMatches[0][1].split(',');
             const lo = math.evaluate(parts[0].trim());
             const hi = math.evaluate(parts[1].trim());
-            if (!isNaN(lo) && !isNaN(hi) && lo < hi) xDomain = [lo, hi];
+            if (typeof lo === 'number' && typeof hi === 'number' && !isNaN(lo) && !isNaN(hi) && isFinite(lo) && isFinite(hi) && lo < hi) xDomain = [lo, hi];
             expr = expr.replace(rangeMatches[0][0], '');
         } catch (e) {
             console.warn('Failed to parse X domain:', e.message);
@@ -380,7 +380,7 @@ async function handlePlotCommand(input) {
             const parts = rangeMatches[1][1].split(',');
             const lo = math.evaluate(parts[0].trim());
             const hi = math.evaluate(parts[1].trim());
-            if (!isNaN(lo) && !isNaN(hi) && lo < hi) yDomain = [lo, hi];
+            if (typeof lo === 'number' && typeof hi === 'number' && !isNaN(lo) && !isNaN(hi) && isFinite(lo) && isFinite(hi) && lo < hi) yDomain = [lo, hi];
             expr = expr.replace(rangeMatches[1][0], '');
         } catch (e) {
             console.warn('Failed to parse Y domain:', e.message);

@@ -57,6 +57,11 @@ def main():
     if not var_str:
         var_str = "x"
 
+    import re
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', var_str):
+        print(json.dumps({"success": False, "error": "Invalid variable name. Variable must be a simple alphanumeric word."}))
+        return
+
     expr_str = expr_str.replace('^', '**')
     var_sym = sympy.Symbol(var_str)
 

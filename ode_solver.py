@@ -79,7 +79,7 @@ def solve_ode():
 
     # Separate equations and initial conditions
     # IC pattern matches: var(num) = num, var'(num) = num, dy/dx(num) = num
-    ic_pattern = re.compile(r'^([a-zA-Z\d\s\'/()]+)\(([^)]+)\)\s*=\s*(.+)$')
+    ic_pattern = re.compile(r'^([a-zA-Z_][a-zA-Z0-9_]*\'*|d[a-zA-Z0-9_]*/d[a-zA-Z0-9_]*)\(([^)]+)\)\s*=\s*(.+)$')
     equations = []
     ics = []
     for c in clauses:
@@ -134,6 +134,16 @@ def solve_ode():
 
     dep_list = sorted(list(dep_vars))
 
+    # Validate independent and dependent variable names
+    ident_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+    if not ident_pattern.match(ind_var_name):
+        print(json.dumps({"success": False, "error": f"Invalid independent variable name '{ind_var_name}'."}))
+        return
+    for dep in dep_list:
+        if not ident_pattern.match(dep):
+            print(json.dumps({"success": False, "error": f"Invalid dependent variable name '{dep}'."}))
+            return
+
     # Define SymPy symbols
     ind_sym = sympy.Symbol(ind_var_name)
     dep_syms = {}
@@ -169,7 +179,7 @@ def solve_ode():
     for ic_str in ics:
         try:
             norm = normalize_eq_str(ic_str, dep_list, ind_var_name)
-            match = re.match(r'^(.+)\(([^)]+)\)\s*=\s*(.+)$', norm)
+            match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*|diff\([a-zA-Z0-9_,\s]+\))\(([^)]+)\)\s*=\s*(.+)$', norm)
             if match:
                 lhs_part = match.group(1).strip()
                 val_part = match.group(2).strip()

@@ -69,6 +69,11 @@ def main():
         print(json.dumps({"success": False, "error": "No variable to isolate provided."}))
         return
 
+    import re
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', variable_str):
+        print(json.dumps({"success": False, "error": "Invalid variable name. Variable must be a simple alphanumeric word."}))
+        return
+
     # Normalize equation string: replace '^' with '**'
     equation_str = equation_str.replace('^', '**')
 
