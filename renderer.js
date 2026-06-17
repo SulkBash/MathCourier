@@ -705,10 +705,195 @@ async function initialize() {
           });
           ctx.restore();
         }
+      } else if (type === 'multi') {
+        const curveColors = options.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'];
+        
+        data.forEach((plot, idx) => {
+          const color = curveColors[idx % curveColors.length];
+          ctx.save();
+          
+          if (plot.type === 'explicit') {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = options.lineWidth || 3.5;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            
+            ctx.shadowColor = color + '66';
+            ctx.shadowBlur = options.glowBlur || 10;
+            
+            let isDrawing = false;
+            ctx.beginPath();
+            const points = plot.data;
+            for (let i = 0; i < points.length; i++) {
+              const pt = points[i];
+              if (pt.y === null || isNaN(pt.y) || !isFinite(pt.y)) {
+                isDrawing = false;
+                continue;
+              }
+              
+              const sx = toScreenX(pt.x);
+              const sy = toScreenY(pt.y);
+              const oob = sy < -height || sy > height * 2 || sx < -width || sx > width * 2;
+              
+              if (!isDrawing) {
+                if (!oob) {
+                  if (i > 0 && points[i-1].y !== null && !isNaN(points[i-1].y) && isFinite(points[i-1].y)) {
+                    const prev = points[i-1];
+                    ctx.moveTo(toScreenX(prev.x), toScreenY(prev.y));
+                    ctx.lineTo(sx, sy);
+                  } else {
+                    ctx.moveTo(sx, sy);
+                  }
+                  isDrawing = true;
+                }
+              } else {
+                ctx.lineTo(sx, sy);
+                if (oob) isDrawing = false;
+              }
+            }
+            ctx.stroke();
+          } else if (plot.type === 'implicit') {
+            const X = plot.data.X;
+            const Y = plot.data.Y;
+            const V = plot.data.V;
+            const N = X.length;
+            const M = Y.length;
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = options.lineWidth || 3.5;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            
+            ctx.shadowColor = color + '66';
+            ctx.shadowBlur = options.glowBlur || 10;
+            
+            ctx.beginPath();
+            for (let i = 0; i < N - 1; i++) {
+              for (let j = 0; j < M - 1; j++) {
+                const v00 = V[i][j];
+                const v10 = V[i+1][j];
+                const v11 = V[i+1][j+1];
+                const v01 = V[i][j+1];
+                
+                if (isNaN(v00) || isNaN(v10) || isNaN(v11) || isNaN(v01) ||
+                    !isFinite(v00) || !isFinite(v10) || !isFinite(v11) || !isFinite(v01)) {
+                  continue;
+                }
+                
+                const crossings = [];
+                if (v00 * v10 <= 0 && v00 !== v10) {
+                  const t = -v00 / (v10 - v00);
+                  crossings.push({ x: X[i] + t * (X[i+1] - X[i]), y: Y[j] });
+                }
+                if (v10 * v11 <= 0 && v10 !== v11) {
+                  const t = -v10 / (v11 - v10);
+                  crossings.push({ x: X[i+1], y: Y[j] + t * (Y[j+1] - Y[j]) });
+                }
+                if (v01 * v11 <= 0 && v01 !== v11) {
+                  const t = -v01 / (v11 - v01);
+                  crossings.push({ x: X[i] + t * (X[i+1] - X[i]), y: Y[j+1] });
+                }
+                if (v00 * v01 <= 0 && v00 !== v01) {
+                  const t = -v00 / (v01 - v00);
+                  crossings.push({ x: X[i], y: Y[j] + t * (Y[j+1] - Y[j]) });
+                }
+                
+                if (crossings.length === 2) {
+                  ctx.moveTo(toScreenX(crossings[0].x), toScreenY(crossings[0].y));
+                  ctx.lineTo(toScreenX(crossings[1].x), toScreenY(crossings[1].y));
+                } else if (crossings.length === 4) {
+                  ctx.moveTo(toScreenX(crossings[0].x), toScreenY(crossings[0].y));
+                  ctx.lineTo(toScreenX(crossings[1].x), toScreenY(crossings[1].y));
+                  ctx.moveTo(toScreenX(crossings[2].x), toScreenY(crossings[2].y));
+                  ctx.lineTo(toScreenX(crossings[3].x), toScreenY(crossings[3].y));
+                }
+              }
+            }
+            ctx.stroke();
+          } else if (plot.type === 'vector') {
+            const points = plot.data.points;
+            const scale = plot.data.scale;
+            
+            ctx.lineWidth = options.lineWidth || 2;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            
+            points.forEach(pt => {
+              if (isNaN(pt.u) || pt.u === null || isNaN(pt.v) || pt.v === null || !isFinite(pt.u) || !isFinite(pt.v)) {
+                return;
+              }
+              
+              const magnitude = Math.sqrt(pt.u * pt.u + pt.v * pt.v);
+              if (magnitude < 1e-8) return;
+              
+              const sx = toScreenX(pt.x);
+              const sy = toScreenY(pt.y);
+              
+              const ex = toScreenX(pt.x + pt.u * scale);
+              const ey = toScreenY(pt.y + pt.v * scale);
+              
+              ctx.strokeStyle = color;
+              
+              const dx = ex - sx;
+              const dy = ey - sy;
+              const pixelLen = Math.sqrt(dx * dx + dy * dy);
+              const headLen = options.arrowHeadLength || 10;
+              
+              if (pixelLen > headLen) {
+                const angle = Math.atan2(dy, dx);
+                const shaftEndX = ex - headLen * Math.cos(angle);
+                const shaftEndY = ey - headLen * Math.sin(angle);
+                
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(shaftEndX, shaftEndY);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(ex, ey);
+                ctx.lineTo(ex - headLen * Math.cos(angle - Math.PI / 6), ey - headLen * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(ex - headLen * Math.cos(angle + Math.PI / 6), ey - headLen * Math.sin(angle + Math.PI / 6));
+                ctx.closePath();
+                ctx.fillStyle = ctx.strokeStyle;
+                ctx.fill();
+              } else {
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(ex, ey);
+                ctx.stroke();
+              }
+            });
+          }
+          ctx.restore();
+        });
+        
+        // Draw Legend
+        if (data.length > 1) {
+          ctx.save();
+          ctx.font = '14px sans-serif';
+          ctx.textBaseline = 'middle';
+          let legendX = width - 150;
+          let legendY = 25;
+          
+          data.forEach((plot, idx) => {
+            const color = curveColors[idx % curveColors.length];
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(legendX, legendY, 5, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.fillStyle = options.axisLabelColor || 'rgba(248, 250, 252, 0.7)';
+            let label = plot.label || '';
+            if (label.length > 18) label = label.slice(0, 16) + '...';
+            ctx.fillText(label, legendX + 10, legendY);
+            legendY += 20;
+          });
+          ctx.restore();
+        }
       }
       ctx.restore();
     }
-  <\/script>
+  </script>
 </body>
 </html>
 `;
@@ -961,6 +1146,7 @@ function renderTikz(formula) {
         '\\usepackage{xcolor}',
         `\\definecolor{fgcolor}{HTML}{${textHex}}`,
         '\\usepackage{tikz}',
+        '\\usepackage{circuitikz}',
         '\\usetikzlibrary{shapes,arrows,positioning,calc,fit,backgrounds}',
         '\\tikzset{every picture/.style={color=fgcolor}}',
         '\\tikzset{every node/.style={text=fgcolor}}'
@@ -985,6 +1171,268 @@ function preprocessExpr(expr) {
         .replace(/([xXyY])\s*\(/g, '$1*(');
 }
 
+function splitByTopLevelCommas(expr) {
+    const parts = [];
+    let current = '';
+    let parenDepth = 0;
+    let inQuotes = false;
+    let quoteChar = null;
+
+    for (let i = 0; i < expr.length; i++) {
+        const char = expr[i];
+        if (inQuotes) {
+            if (char === '\\') {
+                current += char;
+                if (i + 1 < expr.length) {
+                    current += expr[i + 1];
+                    i++;
+                }
+            } else if (char === quoteChar) {
+                inQuotes = false;
+                current += char;
+            } else {
+                current += char;
+            }
+        } else {
+            if (char === '"' || char === "'") {
+                inQuotes = true;
+                quoteChar = char;
+                current += char;
+            } else if (char === '(' || char === '[' || char === '{') {
+                parenDepth++;
+                current += char;
+            } else if (char === ')' || char === ']' || char === '}') {
+                parenDepth = Math.max(0, parenDepth - 1);
+                current += char;
+            } else if (char === ',' && parenDepth === 0) {
+                parts.push(current.trim());
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+    }
+    if (current.trim()) {
+        parts.push(current.trim());
+    }
+    return parts;
+}
+
+function parseSingleExpression(expr, opts) {
+    let isImplicit = false;
+    let isVector = false;
+    let lhs = '';
+    let rhs = '';
+    let funcName = '';
+    let uExpr = '';
+    let vExpr = '';
+
+    // Check for vector field: F(x,y) = (expr, expr)
+    const outerMatch = expr.match(/^([a-zA-Z])\(x\s*,\s*y\)\s*=\s*\((.*)\)$/);
+    
+    let vectorSplit = null;
+    if (outerMatch) {
+        const inner = outerMatch[2];
+        let depth = 0;
+        for (let i = 0; i < inner.length; i++) {
+            if (inner[i] === '(' || inner[i] === '[' || inner[i] === '{') depth++;
+            else if (inner[i] === ')' || inner[i] === ']' || inner[i] === '}') depth--;
+            else if (inner[i] === ',' && depth === 0) {
+                vectorSplit = [inner.substring(0, i).trim(), inner.substring(i + 1).trim()];
+                break;
+            }
+        }
+    }
+
+    if (outerMatch && vectorSplit) {
+        isVector = true;
+        funcName = outerMatch[1].trim();
+        uExpr = vectorSplit[0];
+        vExpr = vectorSplit[1];
+    } else if (expr.includes('=')) {
+        const eqIdx = expr.indexOf('=');
+        lhs = expr.substring(0, eqIdx).trim();
+        rhs = expr.substring(eqIdx + 1).trim();
+        
+        if (!/^(y|f\(x\))$/i.test(lhs)) isImplicit = true;
+    } else {
+        rhs = expr;
+        lhs = 'y';
+    }
+
+    let type = '';
+    let plotData = null;
+    let latexText = '';
+    let label = '';
+
+    if (isVector) {
+        type = 'vector';
+        let uCompiled = math.compile(preprocessExpr(uExpr));
+        let vCompiled = math.compile(preprocessExpr(vExpr));
+
+        const steps = 16;
+        const [xMin, xMax] = opts.xDomain;
+        const [yMin, yMax] = opts.yDomain;
+        const xStep = (xMax - xMin) / steps;
+        const yStep = (yMax - yMin) / steps;
+
+        const points = [];
+        let maxMag = 0;
+
+        for (let i = 0; i <= steps; i++) {
+            const x = xMin + i * xStep;
+            for (let j = 0; j <= steps; j++) {
+                const y = yMin + j * yStep;
+                try {
+                    let u = toReal(uCompiled.evaluate({ x, y }));
+                    let v = toReal(vCompiled.evaluate({ x, y }));
+                    
+                    if (!isNaN(u) && isFinite(u) && !isNaN(v) && isFinite(v)) {
+                        const mag = Math.sqrt(u * u + v * v);
+                        if (mag > maxMag) maxMag = mag;
+                        points.push({ x, y, u, v, mag });
+                    }
+                } catch (e) {}
+            }
+        }
+
+        plotData = {
+            points: points.map(pt => ({
+                x: pt.x, y: pt.y, u: pt.u, v: pt.v,
+                norm: maxMag > 0 ? pt.mag / maxMag : 0
+            })),
+            scale: maxMag > 0 ? (xStep * 0.9) / maxMag : 0
+        };
+
+        try {
+            const latexU = math.parse(uExpr).toTex();
+            const latexV = math.parse(vExpr).toTex();
+            latexText = `\\vec{${funcName}}(x,y) = \\begin{pmatrix} ${latexU} \\\\ ${latexV} \\end{pmatrix}`;
+        } catch (e) {
+            latexText = `\\vec{${funcName}}(x,y) = \\left( ${uExpr}, ${vExpr} \\right)`;
+        }
+        label = `${funcName}(x,y)`;
+    } else if (!isImplicit) {
+        type = 'explicit';
+        let compiled = math.compile(preprocessExpr(rhs));
+
+        const points = [];
+        const [xMin, xMax] = opts.xDomain;
+        const [yMin, yMax] = opts.yDomain;
+        const steps = 400;
+        const step = (xMax - xMin) / steps;
+
+        function evalAt(x) {
+            try {
+                let val = toReal(compiled.evaluate({ x }));
+                if (typeof val === 'number' && !isNaN(val) && isFinite(val)) return val;
+            } catch (e) {}
+            return null;
+        }
+
+        const maxDepth = 6;
+        const minXDist = (xMax - xMin) / 100000;
+        const yRange = yMax - yMin;
+        const threshY = yRange * 0.01;
+        const nearDomain = (y) => y !== null && y >= yMin - yRange && y <= yMax + yRange;
+
+        function subdivide(x1, y1, x2, y2, depth) {
+            let shouldSplit = false;
+            let yMid = null;
+            const xMid = (x1 + x2) / 2;
+
+            if (depth < maxDepth && Math.abs(x2 - x1) >= minXDist) {
+                yMid = evalAt(xMid);
+                
+                if (y1 === null && y2 === null) {
+                    if (yMid !== null) shouldSplit = true;
+                } else if (y1 === null || y2 === null) {
+                    shouldSplit = true;
+                } else {
+                    const diff = Math.abs(y1 - y2);
+                    if (diff > threshY && (nearDomain(y1) || nearDomain(y2) || nearDomain(yMid))) {
+                        shouldSplit = true;
+                    }
+                }
+            }
+
+            if (shouldSplit) {
+                subdivide(x1, y1, xMid, yMid, depth + 1);
+                subdivide(xMid, yMid, x2, y2, depth + 1);
+            } else {
+                points.push({ x: x2, y: y2 });
+            }
+        }
+
+        const yStart = evalAt(xMin);
+        points.push({ x: xMin, y: yStart });
+
+        for (let i = 0; i < steps; i++) {
+            const x1 = xMin + i * step;
+            const x2 = xMin + (i + 1) * step;
+            const y1 = points[points.length - 1].y;
+            const y2 = evalAt(x2);
+            subdivide(x1, y1, x2, y2, 0);
+        }
+
+        plotData = points;
+
+        try {
+            const texLhs = lhs === 'y' ? 'y' : 'f(x)';
+            const texRhs = math.parse(rhs).toTex();
+            latexText = `${texLhs} = ${texRhs}`;
+        } catch (e) {
+            latexText = `${lhs} = ${rhs}`;
+        }
+        label = expr;
+    } else {
+        type = 'implicit';
+        const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+        let compiled = math.compile(combined);
+
+        const steps = 150;
+        const [xMin, xMax] = opts.xDomain;
+        const [yMin, yMax] = opts.yDomain;
+        const xStep = (xMax - xMin) / steps;
+        const yStep = (yMax - yMin) / steps;
+        
+        const X = [];
+        const Y = [];
+        for (let i = 0; i <= steps; i++) {
+            X.push(xMin + i * xStep);
+            Y.push(yMin + i * yStep);
+        }
+
+        const V = [];
+        for (let i = 0; i <= steps; i++) {
+            const row = [];
+            const x = X[i];
+            for (let j = 0; j <= steps; j++) {
+                const y = Y[j];
+                let val = NaN;
+                try {
+                    let res = toReal(compiled.evaluate({ x, y }));
+                    if (typeof res === 'number' && !isNaN(res) && isFinite(res)) val = res;
+                } catch (e) {
+                    val = NaN;
+                }
+                row.push(val);
+            }
+            V.push(row);
+        }
+        plotData = { X, Y, V };
+
+        try {
+            latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
+        } catch (e) {
+            latexText = `${lhs} = ${rhs}`;
+        }
+        label = expr;
+    }
+
+    return { type, data: plotData, latexText, label };
+}
+
 async function renderPlot(rawExpr, customOptions = {}) {
     if (!isInitialized || !page) {
         return { success: false, error: 'Local renderer is not initialized.' };
@@ -992,7 +1440,6 @@ async function renderPlot(rawExpr, customOptions = {}) {
 
     try {
         const expr = rawExpr.trim();
-        
         const graphStyle = config.style.graph || {};
         const opts = {
             width: graphStyle.width || 600,
@@ -1000,7 +1447,7 @@ async function renderPlot(rawExpr, customOptions = {}) {
             gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.06)',
             axisColor: graphStyle.axisColor || 'rgba(255, 255, 255, 0.3)',
             axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.5)',
-            curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6'],
+            curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
             glowColor: graphStyle.glowColor || 'rgba(6, 182, 212, 0.4)',
             glowBlur: graphStyle.glowBlur || 10,
             lineWidth: graphStyle.lineWidth || 3.5,
@@ -1009,228 +1456,40 @@ async function renderPlot(rawExpr, customOptions = {}) {
             fontFamily: config.style.fontFamily || 'sans-serif'
         };
 
-        let isImplicit = false;
-        let isVector = false;
-        let lhs = '';
-        let rhs = '';
-        let funcName = '';
-        let uExpr = '';
-        let vExpr = '';
-
-        // Check for vector field: F(x,y) = (expr, expr)
-        const outerMatch = expr.match(/^([a-zA-Z])\(x\s*,\s*y\)\s*=\s*\((.*)\)$/);
-        
-        let vectorSplit = null;
-        if (outerMatch) {
-            // Split by top-level comma (skip commas inside nested parens)
-            const inner = outerMatch[2];
-            let depth = 0;
-            for (let i = 0; i < inner.length; i++) {
-                if (inner[i] === '(' || inner[i] === '[' || inner[i] === '{') depth++;
-                else if (inner[i] === ')' || inner[i] === ']' || inner[i] === '}') depth--;
-                else if (inner[i] === ',' && depth === 0) {
-                    vectorSplit = [inner.substring(0, i).trim(), inner.substring(i + 1).trim()];
-                    break;
-                }
-            }
-        }
-
-        if (outerMatch && vectorSplit) {
-            isVector = true;
-            funcName = outerMatch[1].trim();
-            uExpr = vectorSplit[0];
-            vExpr = vectorSplit[1];
-        } else if (expr.includes('=')) {
-            const eqIdx = expr.indexOf('=');
-            lhs = expr.substring(0, eqIdx).trim();
-            rhs = expr.substring(eqIdx + 1).trim();
-            
-            if (!/^(y|f\(x\))$/i.test(lhs)) isImplicit = true;
-        } else {
-            // No '=' means y = <expr>
-            rhs = expr;
-            lhs = 'y';
+        const parts = splitByTopLevelCommas(expr).map(p => p.trim()).filter(Boolean);
+        if (parts.length === 0) {
+            return { success: false, error: 'No expressions to plot.' };
         }
 
         let type = '';
         let plotData = null;
         let latexText = '';
 
-        if (isVector) {
-            type = 'vector';
-            let uCompiled, vCompiled;
+        if (parts.length === 1) {
+            let parsed;
             try {
-                uCompiled = math.compile(preprocessExpr(uExpr));
-                vCompiled = math.compile(preprocessExpr(vExpr));
-            } catch (err) {
-                return { success: false, error: `Parsing error in vector field components: ${err.message}` };
-            }
-
-            const steps = 16;
-            const [xMin, xMax] = opts.xDomain;
-            const [yMin, yMax] = opts.yDomain;
-            const xStep = (xMax - xMin) / steps;
-            const yStep = (yMax - yMin) / steps;
-
-            const points = [];
-            let maxMag = 0;
-
-            for (let i = 0; i <= steps; i++) {
-                const x = xMin + i * xStep;
-                for (let j = 0; j <= steps; j++) {
-                    const y = yMin + j * yStep;
-                    try {
-                        let u = toReal(uCompiled.evaluate({ x, y }));
-                        let v = toReal(vCompiled.evaluate({ x, y }));
-                        
-                        if (!isNaN(u) && isFinite(u) && !isNaN(v) && isFinite(v)) {
-                            const mag = Math.sqrt(u * u + v * v);
-                            if (mag > maxMag) maxMag = mag;
-                            points.push({ x, y, u, v, mag });
-                        }
-                    } catch (e) {}
-                }
-            }
-
-            plotData = {
-                points: points.map(pt => ({
-                    x: pt.x, y: pt.y, u: pt.u, v: pt.v,
-                    norm: maxMag > 0 ? pt.mag / maxMag : 0
-                })),
-                scale: maxMag > 0 ? (xStep * 0.9) / maxMag : 0
-            };
-
-            try {
-                const latexU = math.parse(uExpr).toTex();
-                const latexV = math.parse(vExpr).toTex();
-                latexText = `\\vec{${funcName}}(x,y) = \\begin{pmatrix} ${latexU} \\\\ ${latexV} \\end{pmatrix}`;
-            } catch (e) {
-                latexText = `\\vec{${funcName}}(x,y) = \\left( ${uExpr}, ${vExpr} \\right)`;
-            }
-        } else if (!isImplicit) {
-            type = 'explicit';
-            let compiled;
-            try {
-                compiled = math.compile(preprocessExpr(rhs));
+                parsed = parseSingleExpression(parts[0], opts);
             } catch (err) {
                 return { success: false, error: `Parsing error in expression: ${err.message}` };
             }
-
-            const points = [];
-            const [xMin, xMax] = opts.xDomain;
-            const [yMin, yMax] = opts.yDomain;
-            const steps = 400;
-            const step = (xMax - xMin) / steps;
-
-            function evalAt(x) {
-                try {
-                    let val = toReal(compiled.evaluate({ x }));
-                    if (typeof val === 'number' && !isNaN(val) && isFinite(val)) return val;
-                } catch (e) {}
-                return null;
-            }
-
-            const maxDepth = 6;
-            const minXDist = (xMax - xMin) / 100000;
-            const yRange = yMax - yMin;
-            const threshY = yRange * 0.01;
-            const nearDomain = (y) => y !== null && y >= yMin - yRange && y <= yMax + yRange;
-
-            function subdivide(x1, y1, x2, y2, depth) {
-                let shouldSplit = false;
-                let yMid = null;
-                const xMid = (x1 + x2) / 2;
-
-                if (depth < maxDepth && Math.abs(x2 - x1) >= minXDist) {
-                    yMid = evalAt(xMid);
-                    
-                    if (y1 === null && y2 === null) {
-                        if (yMid !== null) shouldSplit = true;
-                    } else if (y1 === null || y2 === null) {
-                        shouldSplit = true;
-                    } else {
-                        const diff = Math.abs(y1 - y2);
-                        if (diff > threshY && (nearDomain(y1) || nearDomain(y2) || nearDomain(yMid))) {
-                            shouldSplit = true;
-                        }
-                    }
-                }
-
-                if (shouldSplit) {
-                    subdivide(x1, y1, xMid, yMid, depth + 1);
-                    subdivide(xMid, yMid, x2, y2, depth + 1);
-                } else {
-                    points.push({ x: x2, y: y2 });
-                }
-            }
-
-            const yStart = evalAt(xMin);
-            points.push({ x: xMin, y: yStart });
-
-            for (let i = 0; i < steps; i++) {
-                const x1 = xMin + i * step;
-                const x2 = xMin + (i + 1) * step;
-                const y1 = points[points.length - 1].y;
-                const y2 = evalAt(x2);
-                subdivide(x1, y1, x2, y2, 0);
-            }
-
-            plotData = points;
-
-            try {
-                const texLhs = lhs === 'y' ? 'y' : 'f(x)';
-                const texRhs = math.parse(rhs).toTex();
-                latexText = `${texLhs} = ${texRhs}`;
-            } catch (e) {
-                latexText = `${lhs} = ${rhs}`;
-            }
+            type = parsed.type;
+            plotData = parsed.data;
+            latexText = parsed.latexText;
         } else {
-            type = 'implicit';
-            const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
-            let compiled;
-            try {
-                compiled = math.compile(combined);
-            } catch (err) {
-                return { success: false, error: `Parsing error in equation: ${err.message}` };
-            }
-
-            const steps = 150;
-            const [xMin, xMax] = opts.xDomain;
-            const [yMin, yMax] = opts.yDomain;
-            const xStep = (xMax - xMin) / steps;
-            const yStep = (yMax - yMin) / steps;
-            
-            const X = [];
-            const Y = [];
-            for (let i = 0; i <= steps; i++) {
-                X.push(xMin + i * xStep);
-                Y.push(yMin + i * yStep);
-            }
-
-            const V = [];
-            for (let i = 0; i <= steps; i++) {
-                const row = [];
-                const x = X[i];
-                for (let j = 0; j <= steps; j++) {
-                    const y = Y[j];
-                    let val = NaN;
-                    try {
-                        let res = toReal(compiled.evaluate({ x, y }));
-                        if (typeof res === 'number' && !isNaN(res) && isFinite(res)) val = res;
-                    } catch (e) {
-                        val = NaN;
-                    }
-                    row.push(val);
+            type = 'multi';
+            const plots = [];
+            const latexParts = [];
+            for (let i = 0; i < parts.length; i++) {
+                try {
+                    const parsed = parseSingleExpression(parts[i], opts);
+                    plots.push(parsed);
+                    latexParts.push(parsed.latexText);
+                } catch (err) {
+                    return { success: false, error: `Parsing error in expression "${parts[i]}": ${err.message}` };
                 }
-                V.push(row);
             }
-            plotData = { X, Y, V };
-
-            try {
-                latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
-            } catch (e) {
-                latexText = `${lhs} = ${rhs}`;
-            }
+            plotData = plots;
+            latexText = latexParts.join(',\\quad ');
         }
 
         const renderResult = await page.evaluate((lat, t, pData, opt) => {

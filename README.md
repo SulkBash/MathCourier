@@ -73,11 +73,20 @@ connects five fundamental constants.
 !chem \chemfig{A-B*6(=-=-=-)}
 ```
 
-### TikZ diagrams
+### TikZ & Circuit diagrams
 ```
 !tikz
 \draw[thick, fill=blue!10] (0,0) circle (1.5);
 \node at (0,0) {TikZ Works!};
+```
+
+You can also draw circuits using `circuitikz`:
+```
+!tikz
+\draw (0,0) to[R, l=$R$] (2,0)
+      to[C, l=$C$] (2,2)
+      to[L, l=$L$] (0,2)
+      to[V, l=$V$] (0,0);
 ```
 
 Or just send a `\begin{tikzpicture}` block directly.

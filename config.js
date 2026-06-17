@@ -22,7 +22,7 @@ module.exports = {
             gridColor: 'rgba(255, 255, 255, 0.06)',
             axisColor: 'rgba(255, 255, 255, 0.3)',
             axisLabelColor: 'rgba(248, 250, 252, 0.5)',
-            curveColors: ['#06b6d4', '#8b5cf6'],
+            curveColors: ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
             glowColor: 'rgba(6, 182, 212, 0.4)',
             glowBlur: 10,
             lineWidth: 3.5,

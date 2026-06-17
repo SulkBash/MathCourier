@@ -55,8 +55,22 @@ async function runTests() {
 \\draw[->, red, very thick] (-2,2) -- (-0.2,0.2);
 `));
 
+    await runTest('Circuitikz diagram', () =>
+        renderer.renderTikz(`
+\\draw (0,0) to[R, l=$R$] (2,0)
+      to[C, l=$C$] (2,2)
+      to[L, l=$L$] (0,2)
+      to[V, l=$V$] (0,0);
+`));
+
     await runTest('Plot explicit sin*cos', () =>
         renderer.renderPlot('sin(x) * cos(x/2)', { xDomain: [-10, 10], yDomain: [-2, 2] }));
+
+    await runTest('Plot multi explicit curves', () =>
+        renderer.renderPlot('y = sin(x), y = cos(x), y = x/5', { xDomain: [-10, 10], yDomain: [-2, 2] }));
+
+    await runTest('Plot multi mixed explicit and implicit curves', () =>
+        renderer.renderPlot('y = x^2, x^2 + y^2 = 9', { xDomain: [-4, 4], yDomain: [-4, 4] }));
 
     await runTest('Plot implicit circle', () =>
         renderer.renderPlot('x^2 + y^2 = 1', { xDomain: [-1.5, 1.5], yDomain: [-1.5, 1.5] }));
