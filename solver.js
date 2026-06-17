@@ -597,6 +597,13 @@ async function solveOde(inputStr) {
         remainder = remainder.replace(/^(--num|-n)\s+/, '');
     }
 
+    let phaseAxes = null;
+    const phaseMatch = remainder.match(/^(-p|--phase)\s+([a-zA-Z]+),([a-zA-Z]+)\s+/);
+    if (phaseMatch) {
+        phaseAxes = [phaseMatch[2], phaseMatch[3]];
+        remainder = remainder.replace(phaseMatch[0], '');
+    }
+
     // 2. Parse X and Y domains in brackets
     let xDomain = null;
     let yDomain = null;
@@ -631,6 +638,9 @@ async function solveOde(inputStr) {
         x_min: xMin,
         x_max: xMax
     };
+    if (phaseAxes) {
+        payload.plot_axes = phaseAxes;
+    }
 
     const pyScriptPath = path.join(__dirname, 'ode_solver.py');
     const response = await runSubprocess(pyScriptPath, payload);
@@ -639,14 +649,33 @@ async function solveOde(inputStr) {
     }
 
     // If domains were resolved, attach them to the response
-    if (xDomain) {
-        response.xDomain = xDomain;
-    } else if (response.curves && Object.keys(response.curves).length > 0) {
-        // Python calculates points in default range, extract min/max t from curves
-        const firstCurve = Object.values(response.curves)[0];
-        if (firstCurve && firstCurve.length > 0) {
-            const tVals = firstCurve.map(pt => pt.x);
-            response.xDomain = [Math.min(...tVals), Math.max(...tVals)];
+    if (phaseAxes) {
+        if (response.curves && Object.keys(response.curves).length > 0) {
+            const firstCurve = Object.values(response.curves)[0];
+            if (firstCurve && firstCurve.length > 0) {
+                const xValues = firstCurve.map(pt => pt.x).filter(v => v !== null && !isNaN(v) && isFinite(v));
+                if (xValues.length > 0) {
+                    const minVal = Math.min(...xValues);
+                    const maxVal = Math.max(...xValues);
+                    const range = maxVal - minVal;
+                    const pad = Math.max(range * 0.15, 1.0); // 15% padding
+                    response.xDomain = [minVal - pad, maxVal + pad];
+                }
+            }
+        }
+        if (!response.xDomain) {
+            response.xDomain = [-10, 10];
+        }
+    } else {
+        if (xDomain) {
+            response.xDomain = xDomain;
+        } else if (response.curves && Object.keys(response.curves).length > 0) {
+            // Python calculates points in default range, extract min/max t from curves
+            const firstCurve = Object.values(response.curves)[0];
+            if (firstCurve && firstCurve.length > 0) {
+                const tVals = firstCurve.map(pt => pt.x);
+                response.xDomain = [Math.min(...tVals), Math.max(...tVals)];
+            }
         }
     }
 

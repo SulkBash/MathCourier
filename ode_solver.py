@@ -70,6 +70,7 @@ def solve_ode():
     x_min = float(x_min_val) if x_min_val is not None else -10.0
     x_max_val = input_data.get("x_max")
     x_max = float(x_max_val) if x_max_val is not None else 10.0
+    plot_axes = input_data.get("plot_axes")
 
     # Split into clauses
     clauses = split_clauses(text)
@@ -144,6 +145,12 @@ def solve_ode():
             print(json.dumps({"success": False, "error": f"Invalid dependent variable name '{dep}'."}))
             return
 
+    if plot_axes:
+        for var_name in plot_axes:
+            if var_name != ind_var_name and var_name not in dep_list:
+                print(json.dumps({"success": False, "error": f"Variable '{var_name}' in plot axes is not defined in the ODE system."}))
+                return
+
     # Define SymPy symbols
     ind_sym = sympy.Symbol(ind_var_name)
     dep_syms = {}
@@ -190,7 +197,7 @@ def solve_ode():
                 res_expr = parse_expr(res_part, local_dict=local_dict, transformations=transformations)
                 
                 x0_val = float(val_expr.evalf())
-                key = lhs_expr.subs(ind_sym, val_expr)
+                key = lhs_expr.subs(ind_sym, x0_val)
                 ics_dict[key] = res_expr
         except Exception as e:
             print(json.dumps({"success": False, "error": f"Failed to parse initial condition '{ic_str}': {str(e)}"}))
@@ -246,6 +253,7 @@ def solve_ode():
                     symbolic_latex = sympy.latex(sol)
 
                 # Generate points for each solved equation
+                funcs = {}
                 points_generated = True
                 for s in sol_list:
                     if isinstance(s, sympy.Eq):
@@ -255,34 +263,68 @@ def solve_ode():
                         
                         # Find name of function
                         func_name = str(lhs_func.func)
-                        
-                        f_lambdified = sympy.lambdify(ind_sym, rhs_expr, modules=['numpy', 'math'])
-                        
-                        # Generate points
-                        x_vals = np.linspace(x_min, x_max, 400)
-                        pts = []
-                        for xv in x_vals:
-                            try:
-                                yv = f_lambdified(xv)
-                                if isinstance(yv, (complex, np.complex128)):
-                                    yv = yv.real if abs(yv.imag) < 1e-9 else None
-                                yv = float(yv)
-                                if np.isnan(yv) or np.isinf(yv):
-                                    yv = None
-                                pts.append({"x": float(xv), "y": yv})
-                            except Exception:
-                                pts.append({"x": float(xv), "y": None})
-                        
-                        # Verify we got enough points
-                        valid_pts = [p for p in pts if p["y"] is not None]
-                        if len(valid_pts) > 2:
-                            curves[func_name] = pts
-                        else:
-                            points_generated = False
-                            break
+                        funcs[func_name] = sympy.lambdify(ind_sym, rhs_expr, modules=['numpy', 'math'])
                     else:
                         points_generated = False
                         break
+
+                if points_generated:
+                    x_vals = np.linspace(x_min, x_max, 400)
+                    if plot_axes:
+                        x_var_name = plot_axes[0]
+                        y_var_name = plot_axes[1]
+                        
+                        trajectory = []
+                        for xv in x_vals:
+                            try:
+                                # Get x-axis value
+                                if x_var_name == ind_var_name:
+                                    x_val = float(xv)
+                                else:
+                                    x_val = funcs[x_var_name](xv)
+                                    if isinstance(x_val, (complex, np.complex128)):
+                                        x_val = x_val.real if abs(x_val.imag) < 1e-9 else None
+                                    x_val = float(x_val)
+                                
+                                # Get y-axis value
+                                if y_var_name == ind_var_name:
+                                    y_val = float(xv)
+                                else:
+                                    y_val = funcs[y_var_name](xv)
+                                    if isinstance(y_val, (complex, np.complex128)):
+                                        y_val = y_val.real if abs(y_val.imag) < 1e-9 else None
+                                    y_val = float(y_val)
+                                
+                                if x_val is not None and y_val is not None and not np.isnan(x_val) and not np.isinf(x_val) and not np.isnan(y_val) and not np.isinf(y_val):
+                                    trajectory.append({"x": x_val, "y": y_val})
+                            except Exception:
+                                pass
+                        
+                        if len(trajectory) > 2:
+                            curves[f"{x_var_name} vs {y_var_name}"] = trajectory
+                        else:
+                            points_generated = False
+                    else:
+                        for func_name, f_lambdified in funcs.items():
+                            pts = []
+                            for xv in x_vals:
+                                try:
+                                    yv = f_lambdified(xv)
+                                    if isinstance(yv, (complex, np.complex128)):
+                                        yv = yv.real if abs(yv.imag) < 1e-9 else None
+                                    yv = float(yv)
+                                    if np.isnan(yv) or np.isinf(yv):
+                                        yv = None
+                                    pts.append({"x": float(xv), "y": yv})
+                                except Exception:
+                                    pts.append({"x": float(xv), "y": None})
+                            
+                            valid_pts = [p for p in pts if p["y"] is not None]
+                            if len(valid_pts) > 2:
+                                curves[func_name] = pts
+                            else:
+                                points_generated = False
+                                break
 
                 if points_generated and curves:
                     symbolic_success = True
@@ -399,7 +441,7 @@ def solve_ode():
 
         # Direction 1: Forward
         if x_max > x0_val:
-            t_eval = np.linspace(x0_val, x_max, 200)
+            t_eval = np.linspace(x0_val, x_max, 1500)
             sol_f = scipy.integrate.solve_ivp(
                 odefun, (x0_val, x_max), U0_vals, t_eval=t_eval, method='RK45'
             )
@@ -410,7 +452,7 @@ def solve_ode():
 
         # Direction 2: Backward
         if x_min < x0_val:
-            t_eval = np.linspace(x0_val, x_min, 200)
+            t_eval = np.linspace(x0_val, x_min, 1500)
             sol_b = scipy.integrate.solve_ivp(
                 odefun, (x0_val, x_min), U0_vals, t_eval=t_eval, method='RK45'
             )
@@ -427,13 +469,42 @@ def solve_ode():
 
         # Extract coordinates for each dependent variable (derivative order 0)
         curves = {}
-        for name in dep_list:
-            curve_pts = []
-            state_idx = dep_indices[name]
+        if plot_axes:
+            x_var_name = plot_axes[0]
+            y_var_name = plot_axes[1]
+            
+            x_idx = dep_indices.get(x_var_name) if x_var_name in dep_indices else None
+            y_idx = dep_indices.get(y_var_name) if y_var_name in dep_indices else None
+            
+            trajectory = []
             for t in sorted_t:
-                y_val = U_points[t][state_idx]
-                curve_pts.append({"x": t, "y": y_val})
-            curves[name] = curve_pts
+                # Get x value
+                if x_var_name == ind_var_name:
+                    xv = t
+                elif x_idx is not None:
+                    xv = U_points[t][x_idx]
+                else:
+                    xv = 0.0
+                    
+                # Get y value
+                if y_var_name == ind_var_name:
+                    yv = t
+                elif y_idx is not None:
+                    yv = U_points[t][y_idx]
+                else:
+                    yv = 0.0
+                    
+                trajectory.append({"x": xv, "y": yv})
+            
+            curves[f"{x_var_name} vs {y_var_name}"] = trajectory
+        else:
+            for name in dep_list:
+                curve_pts = []
+                state_idx = dep_indices[name]
+                for t in sorted_t:
+                    y_val = U_points[t][state_idx]
+                    curve_pts.append({"x": t, "y": y_val})
+                curves[name] = curve_pts
 
         print(json.dumps({
             "success": True,
