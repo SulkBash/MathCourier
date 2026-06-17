@@ -923,6 +923,11 @@ async function initialize() {
 // Coerce mathjs result to a plain number, returning NaN for complex/invalid values
 function toReal(val) {
     if (val && typeof val === 'object') {
+        if (val.entries && Array.isArray(val.entries)) {
+            val = val.entries[val.entries.length - 1];
+        }
+    }
+    if (val && typeof val === 'object') {
         if (val.isComplex) return Math.abs(val.im) < 1e-10 ? val.re : NaN;
         return val.toNumber ? val.toNumber() : NaN;
     }
@@ -1218,6 +1223,53 @@ function splitByTopLevelCommas(expr) {
     return parts;
 }
 
+function splitByTopLevelSemicolons(expr) {
+    const parts = [];
+    let current = '';
+    let parenDepth = 0;
+    let inQuotes = false;
+    let quoteChar = null;
+
+    for (let i = 0; i < expr.length; i++) {
+        const char = expr[i];
+        if (inQuotes) {
+            if (char === '\\') {
+                current += char;
+                if (i + 1 < expr.length) {
+                    current += expr[i + 1];
+                    i++;
+                }
+            } else if (char === quoteChar) {
+                inQuotes = false;
+                current += char;
+            } else {
+                current += char;
+            }
+        } else {
+            if (char === '"' || char === "'") {
+                inQuotes = true;
+                quoteChar = char;
+                current += char;
+            } else if (char === '(' || char === '[' || char === '{') {
+                parenDepth++;
+                current += char;
+            } else if (char === ')' || char === ']' || char === '}') {
+                parenDepth = Math.max(0, parenDepth - 1);
+                current += char;
+            } else if (char === ';' && parenDepth === 0) {
+                parts.push(current.trim());
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+    }
+    if (current.trim()) {
+        parts.push(current.trim());
+    }
+    return parts;
+}
+
 function parseSingleExpression(expr, opts) {
     let isImplicit = false;
     let isVector = false;
@@ -1227,8 +1279,20 @@ function parseSingleExpression(expr, opts) {
     let uExpr = '';
     let vExpr = '';
 
+    // Split expression by semicolons
+    const parts = splitByTopLevelSemicolons(expr).map(p => p.trim()).filter(Boolean);
+    let helpers = [];
+    let mainStatement = expr;
+    let preprocessedHelpers = '';
+
+    if (parts.length > 1) {
+        helpers = parts.slice(0, parts.length - 1);
+        mainStatement = parts[parts.length - 1];
+        preprocessedHelpers = helpers.map(h => preprocessExpr(h)).join(';\n') + ';\n';
+    }
+
     // Check for vector field: F(x,y) = (expr, expr)
-    const outerMatch = expr.match(/^([a-zA-Z])\(x\s*,\s*y\)\s*=\s*\((.*)\)$/);
+    const outerMatch = mainStatement.match(/^([a-zA-Z])\(x\s*,\s*y\)\s*=\s*\((.*)\)$/);
     
     let vectorSplit = null;
     if (outerMatch) {
@@ -1249,14 +1313,14 @@ function parseSingleExpression(expr, opts) {
         funcName = outerMatch[1].trim();
         uExpr = vectorSplit[0];
         vExpr = vectorSplit[1];
-    } else if (expr.includes('=')) {
-        const eqIdx = expr.indexOf('=');
-        lhs = expr.substring(0, eqIdx).trim();
-        rhs = expr.substring(eqIdx + 1).trim();
+    } else if (mainStatement.includes('=')) {
+        const eqIdx = mainStatement.indexOf('=');
+        lhs = mainStatement.substring(0, eqIdx).trim();
+        rhs = mainStatement.substring(eqIdx + 1).trim();
         
         if (!/^(y|f\(x\))$/i.test(lhs)) isImplicit = true;
     } else {
-        rhs = expr;
+        rhs = mainStatement;
         lhs = 'y';
     }
 
@@ -1267,8 +1331,8 @@ function parseSingleExpression(expr, opts) {
 
     if (isVector) {
         type = 'vector';
-        let uCompiled = math.compile(preprocessExpr(uExpr));
-        let vCompiled = math.compile(preprocessExpr(vExpr));
+        let uCompiled = math.compile(preprocessedHelpers + preprocessExpr(uExpr));
+        let vCompiled = math.compile(preprocessedHelpers + preprocessExpr(vExpr));
 
         const steps = 16;
         const [xMin, xMax] = opts.xDomain;
@@ -1314,7 +1378,7 @@ function parseSingleExpression(expr, opts) {
         label = `${funcName}(x,y)`;
     } else if (!isImplicit) {
         type = 'explicit';
-        let compiled = math.compile(preprocessExpr(rhs));
+        let compiled = math.compile(preprocessedHelpers + preprocessExpr(rhs));
 
         const points = [];
         const [xMin, xMax] = opts.xDomain;
@@ -1384,10 +1448,10 @@ function parseSingleExpression(expr, opts) {
         } catch (e) {
             latexText = `${lhs} = ${rhs}`;
         }
-        label = expr;
+        label = mainStatement;
     } else {
         type = 'implicit';
-        const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+        const combined = preprocessedHelpers + `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
         let compiled = math.compile(combined);
 
         const steps = 150;
@@ -1427,7 +1491,7 @@ function parseSingleExpression(expr, opts) {
         } catch (e) {
             latexText = `${lhs} = ${rhs}`;
         }
-        label = expr;
+        label = mainStatement;
     }
 
     return { type, data: plotData, latexText, label };

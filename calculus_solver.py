@@ -104,7 +104,7 @@ def main():
                 upper_latex = sympy.latex(upper_parsed)
 
                 # Check if it returned an unevaluated Integral
-                if isinstance(result, sympy.Integral):
+                if result.has(sympy.Integral):
                     eval_res = result.evalf()
                     if eval_res.is_number:
                         result_latex = sympy.latex(eval_res.evalf(8))
@@ -122,7 +122,25 @@ def main():
             else:
                 result = sympy.integrate(expr_parsed, var_sym)
                 
-                if isinstance(result, sympy.Integral):
+                if result.has(sympy.Integral):
+                    try:
+                        # Try Taylor series approximation around 0
+                        series_approx = expr_parsed.series(var_sym, 0, 8).removeO()
+                        integrated_series = sympy.integrate(series_approx, var_sym)
+                        
+                        expr_latex = sympy.latex(expr_parsed)
+                        result_latex = sympy.latex(integrated_series)
+                        
+                        latex = "\\begin{aligned}\n"
+                        latex += f"\\int {expr_latex} \\, d{var_str} &\\approx {result_latex} + C \\\\\n"
+                        latex += f"&\\text{{(Taylor series approximation around }}{var_str}=0\\text{{)}}\n"
+                        latex += "\\end{aligned}"
+                        
+                        print(json.dumps({"success": True, "latex": latex}))
+                        return
+                    except Exception:
+                        pass
+                    
                     print(json.dumps({"success": False, "error": "Could not find a symbolic antiderivative for the expression."}))
                     return
                 
