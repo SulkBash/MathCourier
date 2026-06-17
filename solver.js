@@ -1,5 +1,66 @@
 const { create, all } = require('mathjs');
 const math = create(all);
+const { spawn } = require('child_process');
+const path = require('path');
+
+function digamma(x) {
+    if (x <= 0) {
+        if (Math.sin(Math.PI * x) === 0) return NaN;
+        return digamma(1 - x) - Math.PI / Math.tan(Math.PI * x);
+    }
+    let shift = 0;
+    while (x < 8.0) {
+        shift -= 1.0 / x;
+        x += 1.0;
+    }
+    const r = 1.0 / x;
+    const r2 = r * r;
+    let val = Math.log(x) - 0.5 * r;
+    val -= r2 * (1.0 / 12.0 - r2 * (1.0 / 120.0 - r2 * (1.0 / 252.0 - r2 * (1.0 / 240.0))));
+    return val + shift;
+}
+
+function polygamma(n, x) {
+    if (typeof n !== 'number' || typeof x !== 'number') {
+        n = Number(n);
+        x = Number(x);
+    }
+    if (isNaN(n) || isNaN(x)) return NaN;
+    if (n < 0 || !Number.isInteger(n)) return NaN;
+    if (n === 0) return digamma(x);
+    
+    let shift = 0;
+    let tempX = x;
+    const sign = (n % 2 === 0) ? -1 : 1;
+    let fact = 1;
+    for (let i = 2; i <= n; i++) fact *= i;
+    
+    while (tempX < 8.0) {
+        if (tempX === 0) return NaN;
+        shift += sign * fact / Math.pow(tempX, n + 1);
+        tempX += 1.0;
+    }
+    
+    const r = 1.0 / tempX;
+    let leadFact = 1;
+    for (let i = 2; i <= n - 1; i++) leadFact *= i;
+    const leadSign = (n % 2 === 0) ? -1 : 1;
+    let val = leadSign * leadFact * Math.pow(r, n);
+    
+    val += leadSign * fact * 0.5 * Math.pow(r, n + 1);
+    
+    let term1 = fact * (n + 1) / (12.0 * Math.pow(tempX, n + 2));
+    let term2 = fact * (n + 1) * (n + 2) * (n + 3) / (720.0 * Math.pow(tempX, n + 4));
+    let term3 = fact * (n + 1) * (n + 2) * (n + 3) * (n + 4) * (n + 5) / (30240.0 * Math.pow(tempX, n + 6));
+    
+    val += leadSign * (term1 - term2 + term3);
+    return val + shift;
+}
+polygamma.toTex = function (node, options) {
+    const nTex = node.args[0].toTex(options);
+    const xTex = node.args[1].toTex(options);
+    return `\\psi^{(${nTex})}\\left(${xTex}\\right)`;
+};
 
 const deriv = function (expr, varName, val) {
     return math.derivative(expr, varName).evaluate({ [varName]: val });
@@ -74,7 +135,8 @@ math.import({
     arcctg: math.acot,
     deriv,
     integ,
-    factorial
+    factorial,
+    polygamma
 }, { override: true });
 
 function extractVariables(node) {
@@ -460,6 +522,370 @@ function solveEquation(inputStr) {
     return { success: false, error: 'Numerical solver could not converge to a root. Please verify if the equation has real roots.' };
 }
 
+function solveOde(inputStr) {
+    return new Promise((resolve) => {
+        let remainder = inputStr.trim();
+        let mode = 'hybrid';
+
+        // 1. Parse mode flags
+        if (remainder.startsWith('-s ') || remainder.startsWith('--sym ')) {
+            mode = 'sym';
+            remainder = remainder.replace(/^(--sym|-s)\s+/, '');
+        } else if (remainder.startsWith('-n ') || remainder.startsWith('--num ')) {
+            mode = 'num';
+            remainder = remainder.replace(/^(--num|-n)\s+/, '');
+        }
+
+        // 2. Parse X and Y domains in brackets
+        let xDomain = null;
+        let yDomain = null;
+        const rangeMatches = [...remainder.matchAll(/\[([^\]]+)\]/g)];
+        if (rangeMatches.length > 0) {
+            try {
+                const parts = rangeMatches[0][1].split(',');
+                const lo = math.evaluate(parts[0].trim());
+                const hi = math.evaluate(parts[1].trim());
+                if (!isNaN(lo) && !isNaN(hi) && lo < hi) xDomain = [lo, hi];
+                remainder = remainder.replace(rangeMatches[0][0], '');
+            } catch (e) {}
+        }
+        if (rangeMatches.length > 1) {
+            try {
+                const parts = rangeMatches[1][1].split(',');
+                const lo = math.evaluate(parts[0].trim());
+                const hi = math.evaluate(parts[1].trim());
+                if (!isNaN(lo) && !isNaN(hi) && lo < hi) yDomain = [lo, hi];
+                remainder = remainder.replace(rangeMatches[1][0], '');
+            } catch (e) {}
+        }
+
+        remainder = remainder.trim();
+
+        const xMin = xDomain ? xDomain[0] : null;
+        const xMax = xDomain ? xDomain[1] : null;
+
+        const payload = {
+            text: remainder,
+            mode: mode,
+            x_min: xMin,
+            x_max: xMax
+        };
+
+        const pyScriptPath = path.join(__dirname, 'ode_solver.py');
+        const pyProcess = spawn('python', [pyScriptPath]);
+
+        let stdoutData = '';
+        let stderrData = '';
+
+        pyProcess.stdout.on('data', (data) => {
+            stdoutData += data.toString();
+        });
+
+        pyProcess.stderr.on('data', (data) => {
+            stderrData += data.toString();
+        });
+
+        pyProcess.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`Python solver process exited with code ${code}. Stderr: ${stderrData}`);
+                return resolve({ success: false, error: stderrData.trim() || 'Internal error in Python bridge.' });
+            }
+
+            try {
+                const response = JSON.parse(stdoutData.trim());
+                if (!response.success) {
+                    return resolve({ success: false, error: response.error });
+                }
+
+                // If domains were resolved, attach them to the response
+                if (xDomain) {
+                    response.xDomain = xDomain;
+                } else if (response.curves && Object.keys(response.curves).length > 0) {
+                    // Python calculates points in default range, extract min/max t from curves
+                    const firstCurve = Object.values(response.curves)[0];
+                    if (firstCurve && firstCurve.length > 0) {
+                        const tVals = firstCurve.map(pt => pt.x);
+                        response.xDomain = [Math.min(...tVals), Math.max(...tVals)];
+                    }
+                }
+
+                if (yDomain) {
+                    response.yDomain = yDomain;
+                }
+
+                resolve(response);
+            } catch (err) {
+                console.error('Failed to parse Python output:', stdoutData);
+                resolve({ success: false, error: `Failed to parse solver response: ${err.message}` });
+            }
+        });
+
+        pyProcess.stdin.write(JSON.stringify(payload));
+        pyProcess.stdin.end();
+    });
+}
+
+function rearrangeEquation(inputStr) {
+    return new Promise((resolve) => {
+        const remainder = inputStr.trim();
+        const match = remainder.match(/^([\s\S]+?)\bfor\b([\s\S]+)$/i);
+        if (!match) {
+            return resolve({
+                success: false,
+                error: 'Invalid format. Use: !desp <equation> for <variable>\nExample: !desp E = m * c^2 for c'
+            });
+        }
+
+        const equation = match[1].trim();
+        const variable = match[2].trim();
+
+        if (!equation) {
+            return resolve({ success: false, error: 'No equation provided.' });
+        }
+        if (!variable) {
+            return resolve({ success: false, error: 'No target variable provided.' });
+        }
+
+        const payload = {
+            equation: equation,
+            variable: variable
+        };
+
+        const pyScriptPath = path.join(__dirname, 'rearrange_solver.py');
+        const pyProcess = spawn('python', [pyScriptPath]);
+
+        let stdoutData = '';
+        let stderrData = '';
+
+        pyProcess.stdout.on('data', (data) => {
+            stdoutData += data.toString();
+        });
+
+        pyProcess.stderr.on('data', (data) => {
+            stderrData += data.toString();
+        });
+
+        pyProcess.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`Python solver process exited with code ${code}. Stderr: ${stderrData}`);
+                return resolve({ success: false, error: stderrData.trim() || 'Internal error in Python bridge.' });
+            }
+
+            try {
+                const response = JSON.parse(stdoutData.trim());
+                resolve(response);
+            } catch (err) {
+                console.error('Failed to parse Python output:', stdoutData);
+                resolve({ success: false, error: `Failed to parse solver response: ${err.message}` });
+            }
+        });
+
+        pyProcess.stdin.write(JSON.stringify(payload));
+        pyProcess.stdin.end();
+    });
+}
+
+function splitTopLevel(str) {
+    const parts = [];
+    let current = '';
+    let depth = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        if (char === '(' || char === '[' || char === '{') {
+            depth++;
+            current += char;
+        } else if (char === ')' || char === ']' || char === '}') {
+            depth--;
+            current += char;
+        } else if (char === ',' && depth === 0) {
+            parts.push(current.trim());
+            current = '';
+        } else {
+            current += char;
+        }
+    }
+    parts.push(current.trim());
+    return parts.filter(Boolean);
+}
+
+function parseDifferentiationInput(input) {
+    let expr = '';
+    let variable = '';
+
+    input = input.trim();
+
+    // Check comma separation
+    if (input.includes(',')) {
+        const parts = splitTopLevel(input);
+        if (parts.length >= 2) {
+            const potentialVar = parts[parts.length - 1];
+            if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(potentialVar)) {
+                variable = potentialVar;
+                expr = parts.slice(0, parts.length - 1).join(',');
+                return { expr, variable };
+            }
+        }
+    }
+
+    // Space-separated
+    const tokens = input.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+        const potentialVar = tokens[tokens.length - 1];
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(potentialVar)) {
+            variable = potentialVar;
+            expr = tokens.slice(0, tokens.length - 1).join(' ');
+            return { expr, variable };
+        }
+    }
+
+    expr = input;
+    return { expr, variable };
+}
+
+function parseIntegrationInput(input) {
+    let expr = '';
+    let variable = '';
+    let lower = null;
+    let upper = null;
+
+    input = input.trim();
+
+    // Check comma separation first
+    if (input.includes(',')) {
+        const parts = splitTopLevel(input);
+        if (parts.length >= 4) {
+            upper = parts[parts.length - 1];
+            lower = parts[parts.length - 2];
+            variable = parts[parts.length - 3];
+            expr = parts.slice(0, parts.length - 3).join(',');
+            return { expr, variable, lower, upper };
+        } else if (parts.length === 2) {
+            expr = parts[0];
+            variable = parts[1];
+            return { expr, variable, lower, upper };
+        }
+    }
+
+    // Space-separated fallback
+    const tokens = input.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 4) {
+        const potentialVar = tokens[tokens.length - 3];
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(potentialVar)) {
+            upper = tokens[tokens.length - 1];
+            lower = tokens[tokens.length - 2];
+            variable = potentialVar;
+            expr = tokens.slice(0, tokens.length - 3).join(' ');
+            return { expr, variable, lower, upper };
+        }
+    }
+    
+    if (tokens.length >= 2) {
+        const potentialVar = tokens[tokens.length - 1];
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(potentialVar)) {
+            variable = potentialVar;
+            expr = tokens.slice(0, tokens.length - 1).join(' ');
+            return { expr, variable, lower, upper };
+        }
+    }
+
+    expr = input;
+    return { expr, variable, lower, upper };
+}
+
+function runCalculusSubprocess(payload) {
+    return new Promise((resolve) => {
+        const pyScriptPath = path.join(__dirname, 'calculus_solver.py');
+        const pyProcess = spawn('python', [pyScriptPath]);
+
+        let stdoutData = '';
+        let stderrData = '';
+
+        pyProcess.stdout.on('data', (data) => {
+            stdoutData += data.toString();
+        });
+
+        pyProcess.stderr.on('data', (data) => {
+            stderrData += data.toString();
+        });
+
+        pyProcess.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`Python calculus solver process exited with code ${code}. Stderr: ${stderrData}`);
+                return resolve({ success: false, error: stderrData.trim() || 'Internal error in Python bridge.' });
+            }
+
+            try {
+                const response = JSON.parse(stdoutData.trim());
+                resolve(response);
+            } catch (err) {
+                console.error('Failed to parse Python output:', stdoutData);
+                resolve({ success: false, error: `Failed to parse solver response: ${err.message}` });
+            }
+        });
+
+        pyProcess.stdin.write(JSON.stringify(payload));
+        pyProcess.stdin.end();
+    });
+}
+
+function solveDerivative(inputStr) {
+    const parsed = parseDifferentiationInput(inputStr);
+    let exprStr = parsed.expr;
+    let varStr = parsed.variable;
+
+    if (!exprStr) {
+        return Promise.resolve({ success: false, error: 'No expression provided for differentiation.' });
+    }
+
+    try {
+        const node = math.parse(exprStr);
+        let actualVarStr = varStr;
+        if (!actualVarStr) {
+            const vars = extractVariables(node);
+            actualVarStr = vars.length === 1 ? vars[0] : 'x';
+        }
+
+        const derivativeNode = math.derivative(node, actualVarStr);
+        const originalTex = node.toTex();
+        const derivativeTex = derivativeNode.toTex();
+
+        const latex = `\\begin{aligned}\n\\frac{d}{d${actualVarStr}}\\left(${originalTex}\\right) &= ${derivativeTex}\n\\end{aligned}`;
+        return Promise.resolve({ success: true, latex });
+    } catch (err) {
+        console.log(`mathjs derivative failed, falling back to SymPy... Error: ${err.message}`);
+        return runCalculusSubprocess({
+            operation: 'diff',
+            expr: exprStr,
+            variable: varStr
+        });
+    }
+}
+
+function solveIntegral(inputStr) {
+    const parsed = parseIntegrationInput(inputStr);
+    let exprStr = parsed.expr;
+    let varStr = parsed.variable;
+    let lower = parsed.lower;
+    let upper = parsed.upper;
+
+    if (!exprStr) {
+        return Promise.resolve({ success: false, error: 'No expression provided for integration.' });
+    }
+
+    return runCalculusSubprocess({
+        operation: 'int',
+        expr: exprStr,
+        variable: varStr,
+        lower: lower,
+        upper: upper
+    });
+}
+
 module.exports = {
-    solveEquation
+    solveEquation,
+    solveOde,
+    rearrangeEquation,
+    solveDerivative,
+    solveIntegral
 };
+

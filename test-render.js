@@ -88,6 +88,9 @@ async function runTests() {
     await runTest('Plot factorial y = x!', () =>
         renderer.renderPlot('y = x!', { xDomain: [-5, 5], yDomain: [-10, 10] }));
 
+    await runTest('Plot polygamma y = polygamma(0, x)', () =>
+        renderer.renderPlot('y = polygamma(0, x)', { xDomain: [-5, 5], yDomain: [-10, 10] }));
+
     const solver = require('./solver');
     await runTest('Solve quadratic', async () => {
         const res = solver.solveEquation('x^2 - 5x + 6 = 0');

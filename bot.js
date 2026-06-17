@@ -124,6 +124,8 @@ client.on('message_create', async (msg) => {
     if (!msg.body || typeof msg.body !== 'string') return;
 
     const body = msg.body.trim();
+    if (body.startsWith('*LaTeX Render Bot Help Menu*')) return;
+
     if (body.startsWith('!') || body.includes('$$')) {
         const snippet = body.substring(0, 40).replace(/\n/g, ' ');
         console.log(`msg from [${msg.author || msg.from}]: "${snippet}${body.length > 40 ? '...' : ''}"`);
@@ -143,18 +145,24 @@ client.on('message_create', async (msg) => {
             '• *Inline Blocks:* Wrap formulas in `$$` anywhere in your text.',
             '  _Example:_ `The solution to $x^2=4$ is $$x = \\pm 2$$`',
             '',
-            '*2. Chemistry Structures*',
+            '*2. Symbolic Calculus*',
+            '• *Differentiation:* `!diff <expression> [variable]`',
+            '  _Example:_ `!diff x^2 * sin(x)` or `!diff u^3 - u y, u`',
+            '• *Integration:* `!int <expression> [variable] [lower] [upper]`',
+            '  _Example:_ `!int x^2` or `!int sin(x) x 0 pi`',
+            '',
+            '*3. Chemistry Structures*',
             '• *Command:* `!chem <formula>` (or `!chemfig`)',
             '  _Example:_ `!chem \\chemfig{A-B*6(=-=-=-)}`',
             '',
-            '*3. TikZ Diagrams*',
+            '*4. TikZ Diagrams*',
             '• *Command:* `!tikz <tikz code>`',
             '  _Example:_',
             '  `!tikz`',
             '  `\\draw[thick, fill=blue!10] (0,0) circle (1.5);`',
             '  `\\node at (0,0) {Hello!};`',
             '',
-            '*4. Function & Equation Plotting*',
+            '*5. Function & Equation Plotting*',
             '• *Command:* `!plot <expression> [xRange] [yRange]`',
             '  _Plots lines, implicit curves, vector fields, derivatives, and integrals on a square coordinate grid._',
             '',
@@ -175,12 +183,25 @@ client.on('message_create', async (msg) => {
             '  *e) Definite Integrals:*',
             '  • `!plot y = integ("sin(t)", "t", 0, x) [-10, 10] [-3, 3]`',
             '',
-            '*5. Equation Solver*',
+            '*6. Equation Solver*',
             '• *Command:* `!solve <equation(s)>`',
             '  _Solves equations or linear systems (returns a styled card with symbolic roots or numerical convergence steps)._',
             '  • `!solve x^2 - 5x + 6 = 0` (symbolic quadratic)',
             '  • `!solve cos(x) - x = 0` (numerical Newton-Raphson)',
             '  • `!solve x + y = 5; x - y = 1` (linear system)',
+            '',
+            '*7. Differential Equations Solver*',
+            '• *Command:* `!ode [options] <equation(s)>, <initial condition(s)> [xRange] [yRange]`',
+            '  _Solves first-order, higher-order ODEs, and systems of ODEs symbolically or numerically, rendering the trajectory plot._',
+            '  • `!ode dy/dx = -y, y(0) = 1` (default hybrid solving)',
+            '  • `!ode -s y\'\' + y = 0, y(0)=1, y\'(0)=0` (symbolic-only flag)',
+            '  • `!ode -n dx/dt = -y; dy/dt = x, x(0)=1, y(0)=0 [-5, 5]` (numerical-only system)',
+            '',
+            '*8. Symbolic Variable Rearrangement*',
+            '• *Command:* `!desp <equation> for <variable>`',
+            '  _Symbolically rearranges and isolates the target variable in the given equation._',
+            '  • `!desp E = m * c^2 for c` (isolates c)',
+            '  • `!desp PV = n*R*T for T` (isolates T)',
             '',
             '──────────────────────────',
             '*Tip:* Wrap ranges in brackets `[min, max]`. If you specify one range, it defines the X-axis limits. If you specify two, they define the X and Y limits respectively.'
@@ -203,6 +224,10 @@ client.on('message_create', async (msg) => {
     const tikzInput = parseCommand(body, '!tikz');
     const plotInput = parseCommand(body, '!plot');
     const solveInput = parseCommand(body, '!solve');
+    const odeInput = parseCommand(body, '!ode');
+    const despInput = parseCommand(body, '!desp');
+    const diffInput = parseCommand(body, '!diff');
+    const intInput = parseCommand(body, '!int');
 
     if (latexInput) {
         triggered = true; mode = 'latex'; input = latexInput;
@@ -214,6 +239,14 @@ client.on('message_create', async (msg) => {
         triggered = true; mode = 'plot'; input = plotInput;
     } else if (solveInput) {
         triggered = true; mode = 'solve'; input = solveInput;
+    } else if (odeInput) {
+        triggered = true; mode = 'ode'; input = odeInput;
+    } else if (despInput) {
+        triggered = true; mode = 'desp'; input = despInput;
+    } else if (diffInput) {
+        triggered = true; mode = 'diff'; input = diffInput;
+    } else if (intInput) {
+        triggered = true; mode = 'int'; input = intInput;
     } else if (body.includes('\\begin{tikzpicture}')) {
         triggered = true; mode = 'tikz'; input = body;
     } else if (config.bot.autoRenderBlock && body.includes('$$')) {
@@ -259,6 +292,14 @@ client.on('message_create', async (msg) => {
             result = await handlePlotCommand(input);
         } else if (mode === 'solve') {
             result = await handleSolveCommand(input);
+        } else if (mode === 'ode') {
+            result = await handleOdeCommand(input);
+        } else if (mode === 'desp') {
+            result = await handleRearrangeCommand(input);
+        } else if (mode === 'diff') {
+            result = await handleDiffCommand(input);
+        } else if (mode === 'int') {
+            result = await handleIntCommand(input);
         } else if (mode === 'latex') {
             result = await renderer.render(input, true);
         } else {
@@ -361,6 +402,67 @@ async function handleSolveCommand(input) {
         return { success: false, error: solveRes.error };
     }
     return await renderer.render(solveRes.latex, true);
+}
+
+async function handleRearrangeCommand(input) {
+    const rearrangeRes = await solver.rearrangeEquation(input);
+    if (!rearrangeRes.success) {
+        return { success: false, error: rearrangeRes.error };
+    }
+    return await renderer.render(rearrangeRes.latex, true);
+}
+
+async function handleDiffCommand(input) {
+    const diffRes = await solver.solveDerivative(input);
+    if (!diffRes.success) {
+        return { success: false, error: diffRes.error };
+    }
+    return await renderer.render(diffRes.latex, true);
+}
+
+async function handleIntCommand(input) {
+    const intRes = await solver.solveIntegral(input);
+    if (!intRes.success) {
+        return { success: false, error: intRes.error };
+    }
+    return await renderer.render(intRes.latex, true);
+}
+
+async function handleOdeCommand(input) {
+    const odeRes = await solver.solveOde(input);
+    if (!odeRes.success) {
+        return { success: false, error: odeRes.error };
+    }
+
+    const latexText = odeRes.has_symbolic ? odeRes.symbolic_latex : odeRes.ode_latex;
+
+    // Determine Y domain if not explicitly provided
+    let yDomain = odeRes.yDomain;
+    if (!yDomain) {
+        let yValues = [];
+        Object.values(odeRes.curves).forEach(points => {
+            points.forEach(pt => {
+                if (pt.y !== null && !isNaN(pt.y) && isFinite(pt.y)) {
+                    yValues.push(pt.y);
+                }
+            });
+        });
+
+        if (yValues.length > 0) {
+            const minVal = Math.min(...yValues);
+            const maxVal = Math.max(...yValues);
+            const range = maxVal - minVal;
+            const pad = Math.max(range * 0.15, 1.0); // 15% padding
+            yDomain = [minVal - pad, maxVal + pad];
+        } else {
+            yDomain = [-10, 10];
+        }
+    }
+
+    return await renderer.renderOde(latexText, odeRes.curves, {
+        xDomain: odeRes.xDomain,
+        yDomain: yDomain
+    });
 }
 
 console.log('Starting LaTeX Render Bot...');

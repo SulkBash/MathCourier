@@ -35,6 +35,65 @@ function validateInputLength(formula) {
     return null;
 }
 
+function digamma(x) {
+    if (x <= 0) {
+        if (Math.sin(Math.PI * x) === 0) return NaN;
+        return digamma(1 - x) - Math.PI / Math.tan(Math.PI * x);
+    }
+    let shift = 0;
+    while (x < 8.0) {
+        shift -= 1.0 / x;
+        x += 1.0;
+    }
+    const r = 1.0 / x;
+    const r2 = r * r;
+    let val = Math.log(x) - 0.5 * r;
+    val -= r2 * (1.0 / 12.0 - r2 * (1.0 / 120.0 - r2 * (1.0 / 252.0 - r2 * (1.0 / 240.0))));
+    return val + shift;
+}
+
+function polygamma(n, x) {
+    if (typeof n !== 'number' || typeof x !== 'number') {
+        n = Number(n);
+        x = Number(x);
+    }
+    if (isNaN(n) || isNaN(x)) return NaN;
+    if (n < 0 || !Number.isInteger(n)) return NaN;
+    if (n === 0) return digamma(x);
+    
+    let shift = 0;
+    let tempX = x;
+    const sign = (n % 2 === 0) ? -1 : 1;
+    let fact = 1;
+    for (let i = 2; i <= n; i++) fact *= i;
+    
+    while (tempX < 8.0) {
+        if (tempX === 0) return NaN;
+        shift += sign * fact / Math.pow(tempX, n + 1);
+        tempX += 1.0;
+    }
+    
+    const r = 1.0 / tempX;
+    let leadFact = 1;
+    for (let i = 2; i <= n - 1; i++) leadFact *= i;
+    const leadSign = (n % 2 === 0) ? -1 : 1;
+    let val = leadSign * leadFact * Math.pow(r, n);
+    
+    val += leadSign * fact * 0.5 * Math.pow(r, n + 1);
+    
+    let term1 = fact * (n + 1) / (12.0 * Math.pow(tempX, n + 2));
+    let term2 = fact * (n + 1) * (n + 2) * (n + 3) / (720.0 * Math.pow(tempX, n + 4));
+    let term3 = fact * (n + 1) * (n + 2) * (n + 3) * (n + 4) * (n + 5) / (30240.0 * Math.pow(tempX, n + 6));
+    
+    val += leadSign * (term1 - term2 + term3);
+    return val + shift;
+}
+polygamma.toTex = function (node, options) {
+    const nTex = node.args[0].toTex(options);
+    const xTex = node.args[1].toTex(options);
+    return `\\psi^{(${nTex})}\\left(${xTex}\\right)`;
+};
+
 const deriv = function(expr, varName, val) {
     return math.derivative(expr, varName).evaluate({ [varName]: val });
 };
@@ -108,7 +167,8 @@ math.import({
     arcctg: math.acot,
     deriv,
     integ,
-    factorial
+    factorial,
+    polygamma
 }, { override: true });
 
 
@@ -574,6 +634,77 @@ async function initialize() {
           }
         });
         ctx.restore();
+      } else if (type === 'ode_curves') {
+        const curveKeys = Object.keys(data);
+        const curveColors = options.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'];
+        
+        curveKeys.forEach((key, idx) => {
+          const points = data[key];
+          const color = curveColors[idx % curveColors.length];
+          
+          ctx.save();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = options.lineWidth || 3.5;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          
+          ctx.shadowColor = color + '66';
+          ctx.shadowBlur = options.glowBlur || 10;
+          
+          let isDrawing = false;
+          ctx.beginPath();
+          for (let i = 0; i < points.length; i++) {
+            const pt = points[i];
+            if (pt.y === null || isNaN(pt.y) || !isFinite(pt.y)) {
+              isDrawing = false;
+              continue;
+            }
+            
+            const sx = toScreenX(pt.x);
+            const sy = toScreenY(pt.y);
+            const oob = sy < -height || sy > height * 2 || sx < -width || sx > width * 2;
+            
+            if (!isDrawing) {
+              if (!oob) {
+                if (i > 0 && points[i-1].y !== null && !isNaN(points[i-1].y) && isFinite(points[i-1].y)) {
+                  const prev = points[i-1];
+                  ctx.moveTo(toScreenX(prev.x), toScreenY(prev.y));
+                  ctx.lineTo(sx, sy);
+                } else {
+                  ctx.moveTo(sx, sy);
+                }
+                isDrawing = true;
+              }
+            } else {
+              ctx.lineTo(sx, sy);
+              if (oob) isDrawing = false;
+            }
+          }
+          ctx.stroke();
+          ctx.restore();
+        });
+        
+        // Draw Legend
+        if (curveKeys.length > 1) {
+          ctx.save();
+          ctx.font = '14px sans-serif';
+          ctx.textBaseline = 'middle';
+          let legendX = width - 90;
+          let legendY = 25;
+          
+          curveKeys.forEach((key, idx) => {
+            const color = curveColors[idx % curveColors.length];
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(legendX, legendY, 5, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.fillStyle = options.axisLabelColor || 'rgba(248, 250, 252, 0.7)';
+            ctx.fillText(key, legendX + 10, legendY);
+            legendY += 20;
+          });
+          ctx.restore();
+        }
       }
       ctx.restore();
     }
@@ -1126,12 +1257,59 @@ async function renderPlot(rawExpr, customOptions = {}) {
     }
 }
 
+async function renderOde(latexText, curves, customOptions = {}) {
+    if (!isInitialized || !page) {
+        return { success: false, error: 'Local renderer is not initialized.' };
+    }
+
+    try {
+        const graphStyle = config.style.graph || {};
+        const opts = {
+            width: graphStyle.width || 600,
+            height: graphStyle.height || 450,
+            gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.06)',
+            axisColor: graphStyle.axisColor || 'rgba(255, 255, 255, 0.3)',
+            axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.5)',
+            curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
+            glowColor: graphStyle.glowColor || 'rgba(6, 182, 212, 0.4)',
+            glowBlur: graphStyle.glowBlur || 10,
+            lineWidth: graphStyle.lineWidth || 3.5,
+            xDomain: customOptions.xDomain || graphStyle.defaultXDomain || [-10, 10],
+            yDomain: customOptions.yDomain || graphStyle.defaultYDomain || [-10, 10],
+            fontFamily: config.style.fontFamily || 'sans-serif'
+        };
+
+        const renderResult = await page.evaluate((lat, t, pData, opt) => {
+            return window.renderGraph(lat, t, pData, opt);
+        }, latexText, 'ode_curves', curves, opts);
+
+        if (!renderResult.success) return { success: false, error: renderResult.error };
+
+        const card = await page.$('#card');
+        if (!card) return { success: false, error: 'Card element not found in DOM.' };
+
+        const buf = await card.screenshot({ type: 'png', omitBackground: true });
+
+        await page.evaluate(() => {
+            const canvas = document.getElementById('graph-canvas');
+            if (canvas) canvas.remove();
+        });
+
+        return { success: true, data: buf.toString('base64'), source: 'local-ode' };
+
+    } catch (err) {
+        console.error('Error during ODE plot rendering:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
 module.exports = {
     initialize,
     render,
     renderChem,
     renderTikz,
     renderPlot,
+    renderOde,
     close,
     isLocalReady: () => isInitialized,
     isRateLimited,
