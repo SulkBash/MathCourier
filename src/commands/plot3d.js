@@ -5,21 +5,27 @@ async function handlePlot3dCommand(input) {
     let expr = input.trim();
     let isAnimated = false;
     let animationMode = 'swing';
+    let isFlux = true;
 
     const animationFlags = [
         { flag: '-a360', mode: 'orbit' },
-        { flag: '--orbit', mode: 'orbit' },
-        { flag: '--spin', mode: 'orbit' },
-        { flag: '-a', mode: 'swing' },
-        { flag: '--animate', mode: 'swing' }
+        { flag: '-a', mode: 'swing' }
     ];
 
-    for (const { flag, mode } of animationFlags) {
-        if (expr === flag || expr.startsWith(flag + ' ')) {
-            isAnimated = true;
-            animationMode = mode;
-            expr = expr.slice(flag.length).trim();
-            break;
+    let flagMatched = true;
+
+    while (flagMatched) {
+        flagMatched = false;
+        expr = expr.trim();
+
+        for (const { flag, mode } of animationFlags) {
+            if (expr === flag || expr.startsWith(flag + ' ')) {
+                isAnimated = true;
+                animationMode = mode;
+                expr = expr.slice(flag.length).trim();
+                flagMatched = true;
+                break;
+            }
         }
     }
 
@@ -74,7 +80,7 @@ async function handlePlot3dCommand(input) {
 
     expr = expr.trim();
 
-    const opts = { isAnimated, animationMode };
+    const opts = { isAnimated, animationMode, isFlux };
     if (xDomain) opts.xDomain = xDomain;
     if (yDomain) opts.yDomain = yDomain;
     if (zDomain) opts.zDomain = zDomain;

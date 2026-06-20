@@ -301,6 +301,218 @@ function sampleVectorField3d(components, opts) {
     };
 }
 
+function sampleFluxLines3d(components, opts) {
+    const [xExpr, yExpr, zExpr] = components;
+    const xCompiled = math.compile(preprocessExpr(xExpr));
+    const yCompiled = math.compile(preprocessExpr(yExpr));
+    const zCompiled = math.compile(preprocessExpr(zExpr));
+
+    const [xMin, xMax] = opts.xDomain;
+    const [yMin, yMax] = opts.yDomain;
+    const [zMin, zMax] = opts.zDomain;
+
+    const evalVectorField = (x, y, z) => {
+        try {
+            const u = toReal(xCompiled.evaluate({ x, y, z }));
+            const v = toReal(yCompiled.evaluate({ x, y, z }));
+            const w = toReal(zCompiled.evaluate({ x, y, z }));
+            if (isNaN(u) || !isFinite(u) || isNaN(v) || !isFinite(v) || isNaN(w) || !isFinite(w)) {
+                return null;
+            }
+            const mag = Math.sqrt(u * u + v * v + w * w);
+            return { u, v, w, mag };
+        } catch (err) {
+            return null;
+        }
+    };
+
+    // Generate 180 random seed points uniformly distributed in the domain
+    const seeds = [];
+    const numSeeds = 180;
+    for (let i = 0; i < numSeeds; i++) {
+        seeds.push({
+            x: xMin + Math.random() * (xMax - xMin),
+            y: yMin + Math.random() * (yMax - yMin),
+            z: zMin + Math.random() * (zMax - zMin)
+        });
+    }
+
+    const linesX = [];
+    const linesY = [];
+    const linesZ = [];
+    const colors = [];
+
+    const coneX = [];
+    const coneY = [];
+    const coneZ = [];
+    const coneU = [];
+    const coneV = [];
+    const coneW = [];
+
+    // Calculate dynamic step size based on domain diagonal size
+    const diag = Math.sqrt((xMax - xMin) ** 2 + (yMax - yMin) ** 2 + (zMax - zMin) ** 2);
+    const h = 0.015 * diag;
+    const maxSteps = 80;
+
+    // Small boundary margin of 10% to let lines exit nicely
+    const xMargin = (xMax - xMin) * 0.1;
+    const yMargin = (yMax - yMin) * 0.1;
+    const zMargin = (zMax - zMin) * 0.1;
+
+    const xBoundMin = xMin - xMargin;
+    const xBoundMax = xMax + xMargin;
+    const yBoundMin = yMin - yMargin;
+    const yBoundMax = yMax + yMargin;
+    const zBoundMin = zMin - zMargin;
+    const zBoundMax = zMax + zMargin;
+
+    let globalMaxMag = 0;
+
+    for (const seed of seeds) {
+        // Trace forward (dir = 1) and backward (dir = -1) from the seed
+        for (const dir of [1, -1]) {
+            let p = { ...seed };
+            const pathX = [p.x];
+            const pathY = [p.y];
+            const pathZ = [p.z];
+            const pathMags = [];
+
+            const initVal = evalVectorField(p.x, p.y, p.z);
+            if (!initVal || initVal.mag <= ZERO_TOLERANCE) continue;
+            pathMags.push(initVal.mag);
+            globalMaxMag = Math.max(globalMaxMag, initVal.mag);
+
+            for (let step = 0; step < maxSteps; step++) {
+                const current = evalVectorField(p.x, p.y, p.z);
+                if (!current || current.mag <= ZERO_TOLERANCE) break;
+
+                // RK4 integration
+                const u_norm = current.u / current.mag;
+                const v_norm = current.v / current.mag;
+                const w_norm = current.w / current.mag;
+
+                const k1x = u_norm;
+                const k1y = v_norm;
+                const k1z = w_norm;
+
+                const p2 = {
+                    x: p.x + dir * (h / 2) * k1x,
+                    y: p.y + dir * (h / 2) * k1y,
+                    z: p.z + dir * (h / 2) * k1z
+                };
+                const val2 = evalVectorField(p2.x, p2.y, p2.z);
+                if (!val2 || val2.mag <= ZERO_TOLERANCE) break;
+                const k2x = val2.u / val2.mag;
+                const k2y = val2.v / val2.mag;
+                const k2z = val2.w / val2.mag;
+
+                const p3 = {
+                    x: p.x + dir * (h / 2) * k2x,
+                    y: p.y + dir * (h / 2) * k2y,
+                    z: p.z + dir * (h / 2) * k2z
+                };
+                const val3 = evalVectorField(p3.x, p3.y, p3.z);
+                if (!val3 || val3.mag <= ZERO_TOLERANCE) break;
+                const k3x = val3.u / val3.mag;
+                const k3y = val3.v / val3.mag;
+                const k3z = val3.w / val3.mag;
+
+                const p4 = {
+                    x: p.x + dir * h * k3x,
+                    y: p.y + dir * h * k3y,
+                    z: p.z + dir * h * k3z
+                };
+                const val4 = evalVectorField(p4.x, p4.y, p4.z);
+                if (!val4 || val4.mag <= ZERO_TOLERANCE) break;
+                const k4x = val4.u / val4.mag;
+                const k4y = val4.v / val4.mag;
+                const k4z = val4.w / val4.mag;
+
+                p.x += dir * (h / 6) * (k1x + 2 * k2x + 2 * k3x + k4x);
+                p.y += dir * (h / 6) * (k1y + 2 * k2y + 2 * k3y + k4y);
+                p.z += dir * (h / 6) * (k1z + 2 * k2z + 2 * k3z + k4z);
+
+                if (p.x < xBoundMin || p.x > xBoundMax ||
+                    p.y < yBoundMin || p.y > yBoundMax ||
+                    p.z < zBoundMin || p.z > zBoundMax) {
+                    break;
+                }
+
+                // Check if we are trapped or oscillating (new point is very close to point from 2 steps ago)
+                if (pathX.length >= 2) {
+                    const prev2X = pathX[pathX.length - 2];
+                    const prev2Y = pathY[pathY.length - 2];
+                    const prev2Z = pathZ[pathZ.length - 2];
+                    const distSq = (p.x - prev2X) ** 2 + (p.y - prev2Y) ** 2 + (p.z - prev2Z) ** 2;
+                    if (distSq < (h * 0.5) ** 2) {
+                        break;
+                    }
+                }
+
+                pathX.push(p.x);
+                pathY.push(p.y);
+                pathZ.push(p.z);
+                pathMags.push(current.mag);
+                globalMaxMag = Math.max(globalMaxMag, current.mag);
+            }
+
+            if (pathX.length > 1) {
+                if (dir === -1) {
+                    pathX.reverse();
+                    pathY.reverse();
+                    pathZ.reverse();
+                    pathMags.reverse();
+                }
+
+                linesX.push(...pathX, null);
+                linesY.push(...pathY, null);
+                linesZ.push(...pathZ, null);
+                colors.push(...pathMags, null);
+
+                // Add an arrowhead cone in the middle of each streamline (if reasonably long)
+                if (pathX.length > 6) {
+                    const midIdx = Math.floor(pathX.length / 2);
+                    const px = pathX[midIdx];
+                    const py = pathY[midIdx];
+                    const pz = pathZ[midIdx];
+
+                    const val = evalVectorField(px, py, pz);
+                    if (val && val.mag > ZERO_TOLERANCE) {
+                        coneX.push(px);
+                        coneY.push(py);
+                        coneZ.push(pz);
+                        coneU.push(val.u / val.mag);
+                        coneV.push(val.v / val.mag);
+                        coneW.push(val.w / val.mag);
+                    }
+                }
+            }
+        }
+    }
+
+    if (linesX.length === 0) {
+        return null;
+    }
+
+    const normColors = colors.map(val => {
+        if (val === null) return null;
+        return globalMaxMag > ZERO_TOLERANCE ? val / globalMaxMag : 0;
+    });
+
+    return {
+        x: linesX,
+        y: linesY,
+        z: linesZ,
+        color: normColors,
+        coneX,
+        coneY,
+        coneZ,
+        coneU,
+        coneV,
+        coneW
+    };
+}
+
 function nodeContainsSymbol(node, symbolName) {
     let found = false;
     node.traverse((child) => {
@@ -547,7 +759,8 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         const isParametric = bareTuple && !isBareVectorField && !namedVectorField;
 
         if (namedVectorField || isBareVectorField) {
-            type = 'vector3d';
+            const isFlux = customOptions.isFlux || false;
+            type = isFlux ? 'flux3d' : 'vector3d';
             const fieldName = namedVectorField ? namedVectorField.name : 'F';
             const components = namedVectorField ? namedVectorField.components : bareTuple;
 
@@ -555,9 +768,9 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 opts.zDomain = [...opts.xDomain];
             }
 
-            plotData = sampleVectorField3d(components, opts);
+            plotData = isFlux ? sampleFluxLines3d(components, opts) : sampleVectorField3d(components, opts);
             if (!plotData) {
-                return { success: false, error: 'No valid real vectors were computed for this field. Check if the field is defined on the given domains.' };
+                return { success: false, error: isFlux ? 'No valid flux lines could be computed. Check if the field is defined on the given domains.' : 'No valid real vectors were computed for this field. Check if the field is defined on the given domains.' };
             }
 
             try {

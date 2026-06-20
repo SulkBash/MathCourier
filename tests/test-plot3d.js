@@ -104,12 +104,12 @@ async function runTests() {
         }
     ]);
 
-    await runTest('3D Static Vector Field Explicit', () =>
+    await runTest('3D Static Vector Field Streamlines Default', () =>
         handlePlot3dCommand('F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
     );
 
-    await runTest('3D Static Vector Field Implicit', () =>
-        handlePlot3dCommand('(-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
+    await runTest('3D Animated Vector Field Streamlines Default', () =>
+        handlePlot3dCommand('-a F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
     );
 
     console.log('\nShutting down renderer...');

@@ -27,7 +27,8 @@ module.exports = {
             glowBlur: 10,
             lineWidth: 3.5,
             defaultXDomain: [-10, 10],
-            defaultYDomain: [-10, 10]
+            defaultYDomain: [-10, 10],
+            streamlineConeColor: '#ffd700'
         }
     },
 

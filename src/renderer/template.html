@@ -845,6 +845,53 @@
             color: options.curveColors ? options.curveColors[0] : '#06b6d4'
           }
         };
+      } else if (type === 'flux3d') {
+        const dx = Math.abs((options.xDomain && options.xDomain[1] - options.xDomain[0]) || 8);
+        const dy = Math.abs((options.yDomain && options.yDomain[1] - options.yDomain[0]) || 8);
+        const dz = Math.abs((options.zDomain && options.zDomain[1] - options.zDomain[0]) || 8);
+        const avgSpan = (dx + dy + dz) / 3;
+        const sizeRef = avgSpan * 0.08; // 8% of coordinate box span for arrowhead size
+
+        const renderConfig = getRenderConfig();
+        const style = renderConfig.style || {};
+        const graph = style.graph || {};
+        const coneColor = graph.streamlineConeColor || '#ffd700';
+
+        trace = [
+          {
+            type: 'scatter3d',
+            mode: 'lines',
+            x: data.x,
+            y: data.y,
+            z: data.z,
+            line: {
+              width: options.lineWidth || 4,
+              color: data.color,
+              colorscale: options.colorscale || 'Viridis',
+              showscale: false,
+              cmin: 0,
+              cmax: 1
+            }
+          },
+          {
+            type: 'cone',
+            x: data.coneX,
+            y: data.coneY,
+            z: data.coneZ,
+            u: data.coneU,
+            v: data.coneV,
+            w: data.coneW,
+            colorscale: [[0, coneColor], [1, coneColor]],
+            cmin: 0,
+            cmax: 1,
+            showscale: false,
+            sizemode: 'absolute',
+            sizeref: sizeRef,
+            anchor: 'center',
+            opacity: 1.0,
+            hoverinfo: 'skip'
+          }
+        ];
       } else if (type === 'vector3d') {
         trace = {
           type: 'cone',
@@ -905,7 +952,8 @@
         }
       };
 
-      return Plotly.newPlot(container, [trace], layout, { displayModeBar: false });
+      const traces = Array.isArray(trace) ? trace : [trace];
+      return Plotly.newPlot(container, traces, layout, { displayModeBar: false });
     }
   </script>
 </body>

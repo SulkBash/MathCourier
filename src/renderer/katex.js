@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const config = require('../../config');
+const { pathToFileURL } = require('url');
 
 let browser = null;
 let page = null;
@@ -11,7 +12,7 @@ let templateUrl = null;
 let isInitialized = false;
 
 function buildTemplateUrl(filePath) {
-    return 'file:///' + filePath.replace(/\\/g, '/');
+    return pathToFileURL(filePath).toString();
 }
 
 async function openRenderPage(browserInstance) {
