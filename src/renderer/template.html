@@ -777,6 +777,21 @@
             color: options.curveColors ? options.curveColors[0] : '#06b6d4'
           }
         };
+      } else if (type === 'vector3d') {
+        trace = {
+          type: 'cone',
+          x: data.x,
+          y: data.y,
+          z: data.z,
+          u: data.u,
+          v: data.v,
+          w: data.w,
+          colorscale: options.colorscale || 'Viridis',
+          showscale: false,
+          anchor: 'tail',
+          opacity: 0.9,
+          hoverinfo: 'skip'
+        };
       } else {
         throw new Error('Unknown 3D plot type: ' + type);
       }
@@ -789,6 +804,7 @@
         plot_bgcolor: 'transparent',
         showlegend: false,
         scene: {
+          aspectmode: type === 'vector3d' ? 'cube' : 'auto',
           xaxis: {
             gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
             color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',

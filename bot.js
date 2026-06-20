@@ -10,6 +10,10 @@ const handleRearrangeCommand = require('./src/commands/desp');
 const handleDiffCommand = require('./src/commands/diff');
 const handleIntCommand = require('./src/commands/int');
 const handleOdeCommand = require('./src/commands/ode');
+const handleGradCommand = require('./src/commands/grad');
+const handleLapCommand = require('./src/commands/lap');
+const handleDivCommand = require('./src/commands/div');
+const handleCurlCommand = require('./src/commands/curl');
 const handleLatexCommand = require('./src/commands/latex');
 const handleChemCommand = require('./src/commands/chem');
 const handleTikzCommand = require('./src/commands/tikz');
@@ -73,7 +77,7 @@ client.on('message_create', async (msg) => {
     }
 
     let triggered = false;
-    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'solve' | 'mixed'
+    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'solve' | 'grad' | 'lap' | 'div' | 'curl' | 'mixed'
     let input = '';
 
     const latexInput = parseCommand(body, '!latex') || parseCommand(body, '!tex');
@@ -86,6 +90,10 @@ client.on('message_create', async (msg) => {
     const despInput = parseCommand(body, '!desp');
     const diffInput = parseCommand(body, '!diff');
     const intInput = parseCommand(body, '!int');
+    const gradInput = parseCommand(body, '!grad');
+    const lapInput = parseCommand(body, '!lap');
+    const divInput = parseCommand(body, '!div');
+    const curlInput = parseCommand(body, '!curl');
 
     if (latexInput) {
         triggered = true; mode = 'latex'; input = latexInput;
@@ -107,6 +115,14 @@ client.on('message_create', async (msg) => {
         triggered = true; mode = 'diff'; input = diffInput;
     } else if (intInput) {
         triggered = true; mode = 'int'; input = intInput;
+    } else if (gradInput) {
+        triggered = true; mode = 'grad'; input = gradInput;
+    } else if (lapInput) {
+        triggered = true; mode = 'lap'; input = lapInput;
+    } else if (divInput) {
+        triggered = true; mode = 'div'; input = divInput;
+    } else if (curlInput) {
+        triggered = true; mode = 'curl'; input = curlInput;
     } else if (body.includes('\\begin{tikzpicture}')) {
         triggered = true; mode = 'tikz'; input = body;
     } else if (config.bot.autoRenderBlock && body.includes('$$')) {
@@ -162,6 +178,14 @@ client.on('message_create', async (msg) => {
             result = await handleDiffCommand(input);
         } else if (mode === 'int') {
             result = await handleIntCommand(input);
+        } else if (mode === 'grad') {
+            result = await handleGradCommand(input);
+        } else if (mode === 'lap') {
+            result = await handleLapCommand(input);
+        } else if (mode === 'div') {
+            result = await handleDivCommand(input);
+        } else if (mode === 'curl') {
+            result = await handleCurlCommand(input);
         } else if (mode === 'latex') {
             result = await handleLatexCommand(input);
         } else {

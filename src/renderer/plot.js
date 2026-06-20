@@ -19,12 +19,62 @@ function toReal(val) {
 // Insert implicit multiplication between adjacent x/y variables for mathjs
 function preprocessExpr(expr) {
     if (!expr) return '';
-    return expr
-        .replace(/([xX])\s*([yY])/g, '$1*$2')
-        .replace(/([yY])\s*([xX])/g, '$1*$2')
-        .replace(/([xX])\s*([xX])/g, '$1*$2')
-        .replace(/([yY])\s*([yY])/g, '$1*$2')
-        .replace(/([xXyY])\s*\(/g, '$1*(');
+
+    const symbols = new Set(['x', 'y']);
+    const isIdentifierChar = (char) => /[A-Za-z0-9_]/.test(char);
+    let result = '';
+    let inQuotes = false;
+    let quoteChar = null;
+
+    for (let i = 0; i < expr.length; i++) {
+        const char = expr[i];
+
+        if (inQuotes) {
+            result += char;
+            if (char === '\\' && i + 1 < expr.length) {
+                result += expr[i + 1];
+                i++;
+            } else if (char === quoteChar) {
+                inQuotes = false;
+                quoteChar = null;
+            }
+            continue;
+        }
+
+        if (char === '"' || char === '\'') {
+            inQuotes = true;
+            quoteChar = char;
+            result += char;
+            continue;
+        }
+
+        result += char;
+
+        if (!symbols.has(char.toLowerCase())) {
+            continue;
+        }
+
+        const prevChar = i > 0 ? expr[i - 1] : '';
+        if (prevChar && isIdentifierChar(prevChar)) {
+            continue;
+        }
+
+        let nextIndex = i + 1;
+        while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
+            nextIndex++;
+        }
+
+        if (nextIndex >= expr.length) {
+            continue;
+        }
+
+        const nextChar = expr[nextIndex];
+        if (symbols.has(nextChar.toLowerCase()) || nextChar === '(') {
+            result += '*';
+        }
+    }
+
+    return result;
 }
 
 function splitByTopLevelCommas(expr) {
@@ -121,12 +171,53 @@ function splitByTopLevelSemicolons(expr) {
     return parts;
 }
 
+function parseVectorTuple(expr, expectedDimension = null) {
+    const trimmed = String(expr || '').trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    const hasParens = trimmed.startsWith('(') && trimmed.endsWith(')');
+    const hasBrackets = trimmed.startsWith('[') && trimmed.endsWith(']');
+    if (!hasParens && !hasBrackets) {
+        return null;
+    }
+
+    const components = splitByTopLevelCommas(trimmed.slice(1, -1))
+        .map((component) => component.trim())
+        .filter(Boolean);
+
+    if (expectedDimension !== null && components.length !== expectedDimension) {
+        return null;
+    }
+
+    return components;
+}
+
+function parseNamedVectorField(expr) {
+    const match = expr.match(/^([A-Za-z][A-Za-z0-9_]*)\(\s*x\s*,\s*y\s*\)\s*=\s*(.+)$/);
+    if (!match) {
+        return null;
+    }
+
+    const components = parseVectorTuple(match[2], 2);
+    if (!components) {
+        return null;
+    }
+
+    return {
+        name: match[1],
+        components
+    };
+}
+
 function parseSingleExpression(expr, opts) {
     let isImplicit = false;
     let isVector = false;
     let lhs = '';
     let rhs = '';
-    let funcName = '';
+    let funcName = 'F';
+    let hasExplicitVectorName = false;
     let uExpr = '';
     let vExpr = '';
 
@@ -142,28 +233,17 @@ function parseSingleExpression(expr, opts) {
         preprocessedHelpers = helpers.map(h => preprocessExpr(h)).join(';\n') + ';\n';
     }
 
-    // Check for vector field: F(x,y) = (expr, expr)
-    const outerMatch = mainStatement.match(/^([a-zA-Z])\(x\s*,\s*y\)\s*=\s*\((.*)\)$/);
-    
-    let vectorSplit = null;
-    if (outerMatch) {
-        const inner = outerMatch[2];
-        let depth = 0;
-        for (let i = 0; i < inner.length; i++) {
-            if (inner[i] === '(' || inner[i] === '[' || inner[i] === '{') depth++;
-            else if (inner[i] === ')' || inner[i] === ']' || inner[i] === '}') depth--;
-            else if (inner[i] === ',' && depth === 0) {
-                vectorSplit = [inner.substring(0, i).trim(), inner.substring(i + 1).trim()];
-                break;
-            }
-        }
-    }
+    const namedVectorField = parseNamedVectorField(mainStatement);
+    const implicitVectorField = namedVectorField ? null : parseVectorTuple(mainStatement, 2);
 
-    if (outerMatch && vectorSplit) {
+    if (namedVectorField) {
         isVector = true;
-        funcName = outerMatch[1].trim();
-        uExpr = vectorSplit[0];
-        vExpr = vectorSplit[1];
+        hasExplicitVectorName = true;
+        funcName = namedVectorField.name;
+        [uExpr, vExpr] = namedVectorField.components;
+    } else if (implicitVectorField) {
+        isVector = true;
+        [uExpr, vExpr] = implicitVectorField;
     } else if (mainStatement.includes('=')) {
         const eqIdx = mainStatement.indexOf('=');
         lhs = mainStatement.substring(0, eqIdx).trim();
@@ -226,7 +306,7 @@ function parseSingleExpression(expr, opts) {
         } catch (e) {
             latexText = `\\vec{${funcName}}(x,y) = \\left( ${uExpr}, ${vExpr} \\right)`;
         }
-        label = `${funcName}(x,y)`;
+        label = hasExplicitVectorName ? `${funcName}(x,y)` : mainStatement;
     } else if (!isImplicit) {
         type = 'explicit';
         let compiled = math.compile(preprocessedHelpers + preprocessExpr(rhs));

@@ -20,7 +20,15 @@ const testCases = [
     { type: 'int', input: 'x^2 + y, x' }, // parameters
     { type: 'int', input: 'x * y, x, y' }, // Double indefinite
     { type: 'int', input: 'x^2 + y^2, x, 0, 1, y, 0, 2' }, // Double definite
-    { type: 'int', input: 'x * y * z, x, 0, 1, y, 0, 1, z, 0, 1' } // Triple definite
+    { type: 'int', input: 'x * y * z, x, 0, 1, y, 0, 1, z, 0, 1' }, // Triple definite
+
+    // 3. Vector / multivariable field integrals
+    { type: 'int', input: 'line (-y, x) path (cos(t), sin(t)) [0, 2*pi]' },
+    { type: 'int', input: 'line x^2 + y^2 path (cos(t), sin(t)) [0, 2*pi]' },
+    { type: 'int', input: 'line exp(sin(x^2)) path (t, 0) [0, 1]' }, // Numeric fallback
+    { type: 'int', input: 'surface (0, 0, z) surface (sin(u)*cos(v), sin(u)*sin(v), cos(u)) [0, pi] [0, 2*pi]' },
+    { type: 'int', input: 'surface 1 surface (u, v, 0) [0, 1] [0, 1]' },
+    { type: 'int', input: 'volume x*y*z [0, 1] [0, 2] [0, 3]' }
 ];
 
 async function runTests() {

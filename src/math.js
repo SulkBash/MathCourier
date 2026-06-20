@@ -61,6 +61,372 @@ polygamma.toTex = function (node, options) {
     return `\\psi^{(${nTex})}\\left(${xTex}\\right)`;
 };
 
+function splitTopLevel(text, delimiter = ',') {
+    const parts = [];
+    let current = '';
+    let depth = 0;
+    let inQuotes = false;
+    let quoteChar = null;
+
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+
+        if (inQuotes) {
+            current += char;
+            if (char === '\\' && i + 1 < text.length) {
+                current += text[i + 1];
+                i++;
+            } else if (char === quoteChar) {
+                inQuotes = false;
+                quoteChar = null;
+            }
+            continue;
+        }
+
+        if (char === '"' || char === '\'') {
+            inQuotes = true;
+            quoteChar = char;
+            current += char;
+            continue;
+        }
+
+        if (char === '(' || char === '[' || char === '{') {
+            depth++;
+            current += char;
+            continue;
+        }
+
+        if (char === ')' || char === ']' || char === '}') {
+            depth = Math.max(0, depth - 1);
+            current += char;
+            continue;
+        }
+
+        if (char === delimiter && depth === 0) {
+            const part = current.trim();
+            if (part) {
+                parts.push(part);
+            }
+            current = '';
+            continue;
+        }
+
+        current += char;
+    }
+
+    const tail = current.trim();
+    if (tail) {
+        parts.push(tail);
+    }
+
+    return parts;
+}
+
+function cloneScope(scope) {
+    const localScope = new Map();
+    if (scope && typeof scope.forEach === 'function') {
+        scope.forEach((value, key) => {
+            localScope.set(key, value);
+        });
+    } else if (scope && typeof scope === 'object') {
+        Object.keys(scope).forEach((key) => {
+            localScope.set(key, scope[key]);
+        });
+    }
+    return localScope;
+}
+
+function normalizeNumericValue(value) {
+    if (typeof value === 'number') {
+        return value;
+    }
+    if (value && typeof value === 'object') {
+        if (value.isComplex) {
+            if (Math.abs(value.im) < 1e-10) {
+                return value.re;
+            }
+            return NaN;
+        }
+        if (typeof value.toNumber === 'function') {
+            return value.toNumber();
+        }
+        if (typeof value.valueOf === 'function') {
+            const primitive = value.valueOf();
+            if (typeof primitive === 'number') {
+                return primitive;
+            }
+        }
+    }
+    return Number(value);
+}
+
+function getRawExpressionSource(node) {
+    if (node && typeof node.value === 'string') {
+        return node.value;
+    }
+    return node.toString();
+}
+
+function formatExpressionTex(source) {
+    try {
+        return math.parse(source).toTex();
+    } catch (err) {
+        return source;
+    }
+}
+
+function parseVectorSource(source) {
+    const trimmed = String(source || '').trim();
+    if (!trimmed) {
+        throw new Error('Vector field expression cannot be empty.');
+    }
+
+    let inner = trimmed;
+    if (
+        (trimmed.startsWith('(') && trimmed.endsWith(')')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+        inner = trimmed.slice(1, -1).trim();
+    }
+
+    const components = splitTopLevel(inner);
+    if (components.length < 2 || components.length > 3) {
+        throw new Error('Vector inline helpers only support 2D or 3D fields.');
+    }
+
+    return components;
+}
+
+function formatVectorTex(source) {
+    try {
+        const components = parseVectorSource(source);
+        return `\\left\\langle ${components.map((component) => formatExpressionTex(component)).join(', ')} \\right\\rangle`;
+    } catch (err) {
+        return source;
+    }
+}
+
+function parseInlineBindings(functionName, args, scope) {
+    if (args.length < 2 || args.length > 4) {
+        throw new Error(`${functionName} expects an expression followed by 1 to 3 coordinate symbols.`);
+    }
+
+    const exprSource = String(getRawExpressionSource(args[0] || '')).trim();
+    if (!exprSource) {
+        throw new Error(`${functionName} requires a non-empty expression.`);
+    }
+
+    const localScope = cloneScope(scope);
+    const symbolNodes = args.slice(1);
+    const varNames = symbolNodes.map((node) => {
+        if (!node || !node.isSymbolNode) {
+            throw new Error(`${functionName} expects coordinate symbols like x, y, or z after the expression.`);
+        }
+        return node.name;
+    });
+
+    if (new Set(varNames).size !== varNames.length) {
+        throw new Error(`${functionName} coordinate symbols must be unique.`);
+    }
+
+    symbolNodes.forEach((node) => {
+        localScope.set(node.name, node.compile().evaluate(scope));
+    });
+
+    return { exprSource, varNames, localScope };
+}
+
+const vectorInlineCache = new Map();
+
+function getCachedVectorInline(key, builder) {
+    if (!vectorInlineCache.has(key)) {
+        vectorInlineCache.set(key, builder());
+    }
+    return vectorInlineCache.get(key);
+}
+
+function buildGradientData(exprSource, varNames) {
+    return getCachedVectorInline(`grad|${exprSource}|${varNames.join(',')}`, () => {
+        const exprNode = math.parse(exprSource);
+        const nodes = varNames.map((name) => math.simplify(math.derivative(exprNode, name)));
+        return {
+            nodes,
+            compiled: nodes.map((node) => node.compile())
+        };
+    });
+}
+
+function buildLaplacianData(exprSource, varNames) {
+    return getCachedVectorInline(`lap|${exprSource}|${varNames.join(',')}`, () => {
+        const exprNode = math.parse(exprSource);
+        const secondDerivativeNodes = varNames.map((name) => {
+            const firstDerivative = math.derivative(exprNode, name);
+            return math.simplify(math.derivative(firstDerivative, name));
+        });
+        const node = math.simplify(secondDerivativeNodes.map((entry) => `(${entry.toString()})`).join(' + '));
+        return {
+            node,
+            compiled: node.compile()
+        };
+    });
+}
+
+function buildDivergenceData(fieldSource, varNames) {
+    return getCachedVectorInline(`div|${fieldSource}|${varNames.join(',')}`, () => {
+        const components = parseVectorSource(fieldSource);
+        if (components.length !== varNames.length) {
+            throw new Error(`Divergence expects ${varNames.length} vector component(s) for ${varNames.join(', ')}.`);
+        }
+
+        const derivativeNodes = components.map((component, index) => {
+            const componentNode = math.parse(component);
+            return math.simplify(math.derivative(componentNode, varNames[index]));
+        });
+        const node = math.simplify(derivativeNodes.map((entry) => `(${entry.toString()})`).join(' + '));
+        return {
+            node,
+            compiled: node.compile(),
+            dimension: components.length
+        };
+    });
+}
+
+function buildCurlData(fieldSource, varNames) {
+    return getCachedVectorInline(`curl|${fieldSource}|${varNames.join(',')}`, () => {
+        const components = parseVectorSource(fieldSource);
+        if (components.length !== varNames.length) {
+            throw new Error(`Curl expects ${components.length} coordinate symbol(s) for this vector field.`);
+        }
+
+        const nodes = components.map((component) => math.parse(component));
+
+        if (components.length === 2) {
+            const scalarNode = math.simplify(
+                `(${math.derivative(nodes[1], varNames[0]).toString()}) - (${math.derivative(nodes[0], varNames[1]).toString()})`
+            );
+            return {
+                dimension: 2,
+                scalarNode,
+                compiled: scalarNode.compile()
+            };
+        }
+
+        const curlNodes = [
+            math.simplify(`(${math.derivative(nodes[2], varNames[1]).toString()}) - (${math.derivative(nodes[1], varNames[2]).toString()})`),
+            math.simplify(`(${math.derivative(nodes[0], varNames[2]).toString()}) - (${math.derivative(nodes[2], varNames[0]).toString()})`),
+            math.simplify(`(${math.derivative(nodes[1], varNames[0]).toString()}) - (${math.derivative(nodes[0], varNames[1]).toString()})`)
+        ];
+
+        return {
+            dimension: 3,
+            nodes: curlNodes,
+            compiled: curlNodes.map((node) => node.compile())
+        };
+    });
+}
+
+function evaluateCompiledScalar(compiled, scope) {
+    return normalizeNumericValue(compiled.evaluate(scope));
+}
+
+function evaluateCompiledVector(compiledEntries, scope) {
+    return compiledEntries.map((compiled) => normalizeNumericValue(compiled.evaluate(scope)));
+}
+
+const grad = function (args, math, scope) {
+    const { exprSource, varNames, localScope } = parseInlineBindings('grad', args, scope);
+    const gradientData = buildGradientData(exprSource, varNames);
+    return evaluateCompiledVector(gradientData.compiled, localScope);
+};
+grad.rawArgs = true;
+grad.toTex = function (node, options) {
+    const exprTex = formatExpressionTex(getRawExpressionSource(node.args[0]));
+    return `\\nabla\\left(${exprTex}\\right)`;
+};
+
+function makeGradientComponentHelper(componentIndex, label) {
+    const helper = function (args, math, scope) {
+        const { exprSource, varNames, localScope } = parseInlineBindings(label, args, scope);
+        if (componentIndex >= varNames.length) {
+            throw new Error(`${label} requires at least ${componentIndex + 1} coordinate symbols.`);
+        }
+        const gradientData = buildGradientData(exprSource, varNames);
+        return evaluateCompiledScalar(gradientData.compiled[componentIndex], localScope);
+    };
+    helper.rawArgs = true;
+    helper.toTex = function (node, options) {
+        const exprTex = formatExpressionTex(getRawExpressionSource(node.args[0]));
+        const varNode = node.args[componentIndex + 1];
+        const varTex = varNode ? varNode.toTex(options) : `x_${componentIndex + 1}`;
+        return `\\frac{\\partial}{\\partial ${varTex}}\\left(${exprTex}\\right)`;
+    };
+    return helper;
+}
+
+const gradx = makeGradientComponentHelper(0, 'gradx');
+const grady = makeGradientComponentHelper(1, 'grady');
+const gradz = makeGradientComponentHelper(2, 'gradz');
+
+const lap = function (args, math, scope) {
+    const { exprSource, varNames, localScope } = parseInlineBindings('lap', args, scope);
+    const laplacianData = buildLaplacianData(exprSource, varNames);
+    return evaluateCompiledScalar(laplacianData.compiled, localScope);
+};
+lap.rawArgs = true;
+lap.toTex = function (node, options) {
+    const exprTex = formatExpressionTex(getRawExpressionSource(node.args[0]));
+    return `\\nabla^{2}\\left(${exprTex}\\right)`;
+};
+
+const div = function (args, math, scope) {
+    const { exprSource, varNames, localScope } = parseInlineBindings('div', args, scope);
+    const divergenceData = buildDivergenceData(exprSource, varNames);
+    return evaluateCompiledScalar(divergenceData.compiled, localScope);
+};
+div.rawArgs = true;
+div.toTex = function (node, options) {
+    const fieldTex = formatVectorTex(getRawExpressionSource(node.args[0]));
+    return `\\nabla \\cdot ${fieldTex}`;
+};
+
+const curl = function (args, math, scope) {
+    const { exprSource, varNames, localScope } = parseInlineBindings('curl', args, scope);
+    const curlData = buildCurlData(exprSource, varNames);
+    if (curlData.dimension === 2) {
+        return evaluateCompiledScalar(curlData.compiled, localScope);
+    }
+    return evaluateCompiledVector(curlData.compiled, localScope);
+};
+curl.rawArgs = true;
+curl.toTex = function (node, options) {
+    const fieldTex = formatVectorTex(getRawExpressionSource(node.args[0]));
+    return `\\nabla \\times ${fieldTex}`;
+};
+
+function makeCurlComponentHelper(componentIndex, label) {
+    const helper = function (args, math, scope) {
+        const { exprSource, varNames, localScope } = parseInlineBindings(label, args, scope);
+        const curlData = buildCurlData(exprSource, varNames);
+
+        if (curlData.dimension !== 3) {
+            throw new Error(`${label} only applies to 3D vector fields.`);
+        }
+
+        return evaluateCompiledScalar(curlData.compiled[componentIndex], localScope);
+    };
+    helper.rawArgs = true;
+    helper.toTex = function (node, options) {
+        const fieldTex = formatVectorTex(getRawExpressionSource(node.args[0]));
+        const basis = ['x', 'y', 'z'][componentIndex];
+        return `\\left(\\nabla \\times ${fieldTex}\\right)_{${basis}}`;
+    };
+    return helper;
+}
+
+const curlx = makeCurlComponentHelper(0, 'curlx');
+const curly = makeCurlComponentHelper(1, 'curly');
+const curlz = makeCurlComponentHelper(2, 'curlz');
+
 const deriv = function (args, math, scope) {
     const exprStr = args[0].compile().evaluate(scope);
     const varName = args[1].compile().evaluate(scope);
@@ -175,6 +541,16 @@ math.import({
     ctg: math.cot,
     arctg: math.atan,
     arcctg: math.acot,
+    grad,
+    gradx,
+    grady,
+    gradz,
+    div,
+    curl,
+    curlx,
+    curly,
+    curlz,
+    lap,
     deriv,
     integ,
     factorial,

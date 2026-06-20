@@ -90,6 +90,9 @@ async function runTests() {
     await runTest('Plot vector field', () =>
         renderer.renderPlot('v(x,y)=(sin(x)/xy,cos(y)/xy)', { xDomain: [-2, 2], yDomain: [-2, 2] }));
 
+    await runTest('Plot implicit vector field', () =>
+        renderer.renderPlot('(-y, x)', { xDomain: [-5, 5], yDomain: [-5, 5] }));
+
     await runTest('Plot ln(x)', () =>
         renderer.renderPlot('y = ln(x)', { xDomain: [-10, 10], yDomain: [-10, 10] }));
 
@@ -98,6 +101,24 @@ async function runTests() {
 
     await runTest('Plot integral of sin(t)', () =>
         renderer.renderPlot('y = integ("sin(t)", "t", 0, x)', { xDomain: [-10, 10], yDomain: [-3, 3] }));
+
+    await runTest('Plot laplacian of x^3', () =>
+        renderer.renderPlot('y = lap("x^3", x)', { xDomain: [-3, 3], yDomain: [-20, 20] }));
+
+    await runTest('Plot gradient field of x^2 + y^2', () =>
+        renderer.renderPlot(
+            'v(x,y) = (gradx("x^2 + y^2", x, y), grady("x^2 + y^2", x, y))',
+            { xDomain: [-3, 3], yDomain: [-3, 3] }
+        ));
+
+    await runTest('Plot implicit gradient field of x^2 + y^2', () =>
+        renderer.renderPlot(
+            '(gradx("x^2 + y^2", x, y), grady("x^2 + y^2", x, y))',
+            { xDomain: [-3, 3], yDomain: [-3, 3] }
+        ));
+
+    await runTest('Plot3d laplacian surface', () =>
+        renderer.renderPlot3d('z = lap("x^2 + y^2", x, y)', { xDomain: [-3, 3], yDomain: [-3, 3], zDomain: [0, 8] }));
 
     await runTest('Plot factorial y = x!', () =>
         renderer.renderPlot('y = x!', { xDomain: [-5, 5], yDomain: [-10, 10] }));

@@ -24,10 +24,187 @@ function toReal(val) {
 // Preprocess expression to insert implicit multiplications for x/y
 function preprocessExpr(expr) {
     if (!expr) return '';
-    return expr
-        .replace(/([xXyYzZ])\s*([xXyYzZ])/g, '$1*$2')
-        .replace(/([xXyYzZ])\s*([xXyYzZ])/g, '$1*$2')
-        .replace(/([xXyYzZ])\s*\(/g, '$1*(');
+
+    const symbols = new Set(['x', 'y', 'z']);
+    const isIdentifierChar = (char) => /[A-Za-z0-9_]/.test(char);
+    let result = '';
+    let inQuotes = false;
+    let quoteChar = null;
+
+    for (let i = 0; i < expr.length; i++) {
+        const char = expr[i];
+
+        if (inQuotes) {
+            result += char;
+            if (char === '\\' && i + 1 < expr.length) {
+                result += expr[i + 1];
+                i++;
+            } else if (char === quoteChar) {
+                inQuotes = false;
+                quoteChar = null;
+            }
+            continue;
+        }
+
+        if (char === '"' || char === '\'') {
+            inQuotes = true;
+            quoteChar = char;
+            result += char;
+            continue;
+        }
+
+        result += char;
+
+        if (!symbols.has(char.toLowerCase())) {
+            continue;
+        }
+
+        const prevChar = i > 0 ? expr[i - 1] : '';
+        if (prevChar && isIdentifierChar(prevChar)) {
+            continue;
+        }
+
+        let nextIndex = i + 1;
+        while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
+            nextIndex++;
+        }
+
+        if (nextIndex >= expr.length) {
+            continue;
+        }
+
+        const nextChar = expr[nextIndex];
+        if (symbols.has(nextChar.toLowerCase()) || nextChar === '(') {
+            result += '*';
+        }
+    }
+
+    return result;
+}
+
+function parseVectorTuple(expr, expectedDimension = null) {
+    const trimmed = String(expr || '').trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    const hasParens = trimmed.startsWith('(') && trimmed.endsWith(')');
+    const hasBrackets = trimmed.startsWith('[') && trimmed.endsWith(']');
+    if (!hasParens && !hasBrackets) {
+        return null;
+    }
+
+    const components = splitByTopLevelCommas(trimmed.slice(1, -1))
+        .map((component) => component.trim())
+        .filter(Boolean);
+
+    if (expectedDimension !== null && components.length !== expectedDimension) {
+        return null;
+    }
+
+    return components;
+}
+
+function parseNamedVectorField(expr) {
+    const match = expr.match(/^([A-Za-z][A-Za-z0-9_]*)\(\s*x\s*,\s*y\s*,\s*z\s*\)\s*=\s*(.+)$/);
+    if (!match) {
+        return null;
+    }
+
+    const components = parseVectorTuple(match[2], 3);
+    if (!components) {
+        return null;
+    }
+
+    return {
+        name: match[1],
+        components
+    };
+}
+
+function expressionUsesAnySymbol(expr, symbolNames) {
+    try {
+        const symbolSet = new Set(symbolNames);
+        let found = false;
+        math.parse(preprocessExpr(expr)).traverse((child) => {
+            if (child && child.isSymbolNode && symbolSet.has(child.name)) {
+                found = true;
+            }
+        });
+        return found;
+    } catch (err) {
+        return false;
+    }
+}
+
+function shouldTreatBareTupleAsVector(components, hasCustomYDomain, hasCustomZDomain) {
+    if (hasCustomYDomain || hasCustomZDomain) {
+        return true;
+    }
+
+    return components.some((component) => expressionUsesAnySymbol(component, ['x', 'y', 'z']));
+}
+
+function sampleVectorField3d(components, opts) {
+    const [xExpr, yExpr, zExpr] = components;
+    const xCompiled = math.compile(preprocessExpr(xExpr));
+    const yCompiled = math.compile(preprocessExpr(yExpr));
+    const zCompiled = math.compile(preprocessExpr(zExpr));
+
+    const [xMin, xMax] = opts.xDomain;
+    const [yMin, yMax] = opts.yDomain;
+    const [zMin, zMax] = opts.zDomain;
+
+    const steps = 5;
+    const xStep = (xMax - xMin) / steps;
+    const yStep = (yMax - yMin) / steps;
+    const zStep = (zMax - zMin) / steps;
+
+    const points = [];
+    let maxMag = 0;
+
+    for (let i = 0; i <= steps; i++) {
+        const x = xMin + i * xStep;
+        for (let j = 0; j <= steps; j++) {
+            const y = yMin + j * yStep;
+            for (let k = 0; k <= steps; k++) {
+                const z = zMin + k * zStep;
+                try {
+                    const u = toReal(xCompiled.evaluate({ x, y, z }));
+                    const v = toReal(yCompiled.evaluate({ x, y, z }));
+                    const w = toReal(zCompiled.evaluate({ x, y, z }));
+                    if (!isNaN(u) && isFinite(u) && !isNaN(v) && isFinite(v) && !isNaN(w) && isFinite(w)) {
+                        const mag = Math.sqrt(u * u + v * v + w * w);
+                        if (mag > ZERO_TOLERANCE) {
+                            maxMag = Math.max(maxMag, mag);
+                            points.push({ x, y, z, u, v, w, mag });
+                        }
+                    }
+                } catch (err) {}
+            }
+        }
+    }
+
+    if (points.length === 0 || maxMag <= ZERO_TOLERANCE) {
+        return null;
+    }
+
+    const minSpacing = Math.min(
+        Math.abs(xStep) || Infinity,
+        Math.abs(yStep) || Infinity,
+        Math.abs(zStep) || Infinity
+    );
+    const safeSpacing = Number.isFinite(minSpacing) && minSpacing > ZERO_TOLERANCE ? minSpacing : 1;
+    const scale = (safeSpacing * 0.75) / maxMag;
+
+    return {
+        x: points.map((point) => point.x),
+        y: points.map((point) => point.y),
+        z: points.map((point) => point.z),
+        u: points.map((point) => point.u * scale),
+        v: points.map((point) => point.v * scale),
+        w: points.map((point) => point.w * scale)
+    };
 }
 
 function nodeContainsSymbol(node, symbolName) {
@@ -189,6 +366,8 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
     const expr = rawExpr.trim();
     const graphStyle = config.style.graph || {};
     const hasCustomXDomain = Array.isArray(customOptions.xDomain);
+    const hasCustomYDomain = Array.isArray(customOptions.yDomain);
+    const hasCustomZDomain = Array.isArray(customOptions.zDomain);
     const opts = {
         width: graphStyle.width || 600,
         height: graphStyle.height || 450,
@@ -208,21 +387,37 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         let plotData = null;
         let latexText = '';
 
-        // Check if expression is a 3D parametric curve (x(t), y(t), z(t))
-        let isParametric = false;
-        let parametricExprs = null;
-        if (expr.startsWith('(') && expr.endsWith(')')) {
-            const inner = expr.slice(1, -1).trim();
-            const components = splitByTopLevelCommas(inner);
-            if (components.length === 3) {
-                isParametric = true;
-                parametricExprs = components;
-            }
-        }
+        const namedVectorField = parseNamedVectorField(expr);
+        const bareTuple = namedVectorField ? null : parseVectorTuple(expr, 3);
+        const isBareVectorField = bareTuple && shouldTreatBareTupleAsVector(bareTuple, hasCustomYDomain, hasCustomZDomain);
+        const isParametric = bareTuple && !isBareVectorField && !namedVectorField;
 
-        if (isParametric) {
+        if (namedVectorField || isBareVectorField) {
+            type = 'vector3d';
+            const fieldName = namedVectorField ? namedVectorField.name : 'F';
+            const components = namedVectorField ? namedVectorField.components : bareTuple;
+
+            if (!opts.zDomain) {
+                opts.zDomain = [...opts.xDomain];
+            }
+
+            plotData = sampleVectorField3d(components, opts);
+            if (!plotData) {
+                return { success: false, error: 'No valid real vectors were computed for this field. Check if the field is defined on the given domains.' };
+            }
+
+            try {
+                const [uExpr, vExpr, wExpr] = components;
+                const texU = math.parse(uExpr).toTex();
+                const texV = math.parse(vExpr).toTex();
+                const texW = math.parse(wExpr).toTex();
+                latexText = `\\vec{${fieldName}}(x,y,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+            } catch (e) {
+                latexText = `\\vec{${fieldName}}(x,y,z) = \\left( ${components.join(', ')} \\right)`;
+            }
+        } else if (isParametric) {
             type = 'curve';
-            const [xExpr, yExpr, zExpr] = parametricExprs.map(e => e.trim());
+            const [xExpr, yExpr, zExpr] = bareTuple.map(e => e.trim());
             const xCompiled = math.compile(preprocessExpr(xExpr));
             const yCompiled = math.compile(preprocessExpr(yExpr));
             const zCompiled = math.compile(preprocessExpr(zExpr));

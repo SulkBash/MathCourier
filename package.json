@@ -5,7 +5,8 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node tests/test-render.js"
+    "test": "node tests/test-render.js",
+    "test:vector": "node tests/test-vector.js"
   },
   "dependencies": {
     "katex": "^0.16.9",

@@ -61,6 +61,14 @@ async function runTests() {
         handlePlot3dCommand('-a z = sin(x) * cos(y) [-3, 3] [-3, 3]')
     );
 
+    await runTest('3D Static Vector Field Explicit', () =>
+        handlePlot3dCommand('F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
+    );
+
+    await runTest('3D Static Vector Field Implicit', () =>
+        handlePlot3dCommand('(-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
+    );
+
     console.log('\nShutting down renderer...');
     await renderer.close();
     console.log('--- DONE ---');
