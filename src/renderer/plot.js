@@ -451,8 +451,8 @@ function parseSingleExpression(expr, opts) {
             return null;
         }
 
-        const maxDepth = 6;
-        const minXDist = (xMax - xMin) / 100000;
+        const maxDepth = 12;
+        const minXDist = (xMax - xMin) / 1000000;
         const yRange = yMax - yMin;
         const threshY = yRange * 0.01;
         const nearDomain = (y) => y !== null && y >= yMin - yRange && y <= yMax + yRange;
@@ -674,6 +674,89 @@ async function renderPlot(rawExpr, customOptions = {}) {
                 const totalFrames = 20;
                 const frameBuffers = [];
 
+                let traceMin = null;
+                let traceMax = null;
+
+                if (isTracingMode) {
+                    if (tracingVar === 'x') {
+                        traceMin = xDomain[0];
+                        traceMax = xDomain[1];
+                    } else if (tracingVar === 'y') {
+                        traceMin = yDomain[0];
+                        traceMax = yDomain[1];
+                    } else if (tracingVar === 't' || tracingVar === 'theta') {
+                        traceMin = parameterDomain[0];
+                        traceMax = parameterDomain[1];
+                    }
+
+                    // Pre-evaluate to find the actual active bounds of the curve
+                    const staticOpts = {
+                        xDomain,
+                        yDomain,
+                        parameterDomain
+                    };
+
+                    let parsedPlots = [];
+                    for (const part of parts) {
+                        try {
+                            const parsed = parseSingleExpression(part, staticOpts);
+                            parsedPlots.push(parsed);
+                        } catch (e) {}
+                    }
+
+                    let minValid = Infinity;
+                    let maxValid = -Infinity;
+                    let foundValid = false;
+
+                    for (const plot of parsedPlots) {
+                        if (plot.type === 'explicit' || plot.type === 'parametric' || plot.type === 'polar') {
+                            const dataArray = Array.isArray(plot.data) ? plot.data : [];
+                            for (const pt of dataArray) {
+                                if (pt && pt.y !== null && !isNaN(pt.y) && isFinite(pt.y) &&
+                                    pt.x !== null && !isNaN(pt.x) && isFinite(pt.x)) {
+                                    
+                                    let val = null;
+                                    if (tracingVar === 'x') val = pt.x;
+                                    else if (tracingVar === 'y') val = pt.y;
+
+                                    if (val !== null) {
+                                        if (val < minValid) minValid = val;
+                                        if (val > maxValid) maxValid = val;
+                                        foundValid = true;
+                                    }
+                                }
+                            }
+                        } else if (plot.type === 'vector') {
+                            const pts = (plot.data && plot.data.points) || [];
+                            for (const pt of pts) {
+                                const val = tracingVar === 'x' ? pt.x : pt.y;
+                                if (val < minValid) minValid = val;
+                                if (val > maxValid) maxValid = val;
+                                foundValid = true;
+                            }
+                        } else if (plot.type === 'implicit') {
+                            const X = (plot.data && plot.data.X) || [];
+                            const Y = (plot.data && plot.data.Y) || [];
+                            const V = (plot.data && plot.data.V) || [];
+                            for (let i = 0; i < X.length; i++) {
+                                for (let j = 0; j < Y.length; j++) {
+                                    if (V[i] && !isNaN(V[i][j]) && isFinite(V[i][j])) {
+                                        const val = tracingVar === 'x' ? X[i] : Y[j];
+                                        if (val < minValid) minValid = val;
+                                        if (val > maxValid) maxValid = val;
+                                        foundValid = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (foundValid && minValid < maxValid) {
+                        traceMin = minValid;
+                        traceMax = maxValid;
+                    }
+                }
+
                 for (let f = 0; f < totalFrames; f++) {
                     const progress = (f + 1) / totalFrames; // 5% to 100%
 
@@ -695,13 +778,7 @@ async function renderPlot(rawExpr, customOptions = {}) {
 
                     if (isTracingMode) {
                         opts.tracingVar = tracingVar;
-                        if (tracingVar === 'x') {
-                            opts.tracingLimit = xDomain[0] + progress * (xDomain[1] - xDomain[0]);
-                        } else if (tracingVar === 'y') {
-                            opts.tracingLimit = yDomain[0] + progress * (yDomain[1] - yDomain[0]);
-                        } else if (tracingVar === 't' || tracingVar === 'theta') {
-                            opts.tracingLimit = parameterDomain[0] + progress * (parameterDomain[1] - parameterDomain[0]);
-                        }
+                        opts.tracingLimit = traceMin + progress * (traceMax - traceMin);
                     } else {
                         const paramVal = paramDomain[0] + progress * (paramDomain[1] - paramDomain[0]);
                         opts.evalScope = { [animVar]: paramVal };
