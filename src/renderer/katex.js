@@ -7,7 +7,27 @@ const config = require('../../config');
 let browser = null;
 let page = null;
 let templatePath = null;
+let templateUrl = null;
 let isInitialized = false;
+
+function buildTemplateUrl(filePath) {
+    return 'file:///' + filePath.replace(/\\/g, '/');
+}
+
+async function openRenderPage(browserInstance) {
+    if (!templateUrl) {
+        throw new Error('Renderer template URL is not initialized.');
+    }
+
+    const renderPage = await browserInstance.newPage();
+    try {
+        await renderPage.goto(templateUrl, { waitUntil: 'load' });
+        return renderPage;
+    } catch (err) {
+        try { await renderPage.close(); } catch (closeErr) { }
+        throw err;
+    }
+}
 
 function downloadPlotly(destPath) {
     return new Promise((resolve, reject) => {
@@ -82,12 +102,10 @@ async function initialize() {
         // Write the temp template inside katex/dist so relative font paths resolve naturally
         templatePath = path.join(katexDir, 'render_temp.html');
         fs.writeFileSync(templatePath, templateHtml, 'utf8');
+        templateUrl = buildTemplateUrl(templatePath);
 
         browser = await puppeteer.launch(config.puppeteer.launchArgs);
-        page = await browser.newPage();
-        
-        const fileUrl = 'file:///' + templatePath.replace(/\\/g, '/');
-        await page.goto(fileUrl);
+        page = await openRenderPage(browser);
         
         isInitialized = true;
         console.log('LaTeX Renderer initialized successfully.');
@@ -95,6 +113,7 @@ async function initialize() {
         console.error('Failed to initialize local Puppeteer renderer:', err.message);
         console.log('Renderer will operate in Fallback API Mode.');
         isInitialized = false;
+        templateUrl = null;
         
         if (browser) {
             try { await browser.close(); } catch (e) {}
@@ -102,6 +121,14 @@ async function initialize() {
             page = null;
         }
     }
+}
+
+async function createRenderPage() {
+    if (!isInitialized || !browser) {
+        throw new Error('Local renderer is not initialized.');
+    }
+
+    return openRenderPage(browser);
 }
 
 async function renderLocal(formula, isBlock = true) {
@@ -137,6 +164,7 @@ async function close() {
         browser = null;
         page = null;
         isInitialized = false;
+        templateUrl = null;
         
         if (templatePath && fs.existsSync(templatePath)) {
             try { fs.unlinkSync(templatePath); } catch (e) {}
@@ -151,5 +179,6 @@ module.exports = {
     close,
     isInitialized: () => isInitialized,
     getPage: () => page,
-    getBrowser: () => browser
+    getBrowser: () => browser,
+    createRenderPage
 };

@@ -18,6 +18,7 @@ const handleLatexCommand = require('./src/commands/latex');
 const handleChemCommand = require('./src/commands/chem');
 const handleTikzCommand = require('./src/commands/tikz');
 const helpText = require('./src/commands/help');
+const READY_WATCHDOG_MS = 45000;
 
 const client = new Client({
     authStrategy: new LocalAuth(),
@@ -27,22 +28,81 @@ const client = new Client({
     }
 });
 
+let readyWatchdog = null;
+let isShuttingDown = false;
+
+function clearReadyWatchdog() {
+    if (readyWatchdog) {
+        clearTimeout(readyWatchdog);
+        readyWatchdog = null;
+    }
+}
+
+function armReadyWatchdog() {
+    clearReadyWatchdog();
+    readyWatchdog = setTimeout(() => {
+        console.warn(`Still waiting for WhatsApp to become ready after ${READY_WATCHDOG_MS / 1000}s.`);
+        console.warn('If this keeps happening, close any stale bot/Chromium process using .wwebjs_auth\\session and restart the bot.');
+    }, READY_WATCHDOG_MS);
+
+    if (typeof readyWatchdog.unref === 'function') {
+        readyWatchdog.unref();
+    }
+}
+
+async function shutdown(signal, exitCode = 0) {
+    if (isShuttingDown) {
+        return;
+    }
+
+    isShuttingDown = true;
+    clearReadyWatchdog();
+    console.log(`Shutting down bot (${signal})...`);
+
+    await Promise.allSettled([
+        client.destroy(),
+        renderer.close()
+    ]);
+
+    process.exit(exitCode);
+}
+
 client.on('qr', (qr) => {
     console.log('\n--- SCAN THIS QR CODE WITH WHATSAPP LINKED DEVICES ---');
     qrcode.generate(qr, { small: true });
     console.log('-------------------------------------------------------\n');
 });
 
-client.on('authenticated', () => console.log('Authenticated.'));
-client.on('auth_failure', (msg) => console.error('Auth failure:', msg));
+client.on('authenticated', () => {
+    console.log('Authenticated.');
+    armReadyWatchdog();
+});
+client.on('auth_failure', (msg) => {
+    clearReadyWatchdog();
+    console.error('Auth failure:', msg);
+});
 client.on('change_state', (state) => console.log(`Connection state: ${state}`));
-client.on('disconnected', (reason) => console.error('Disconnected:', reason));
+client.on('loading_screen', (percent, message) => {
+    console.log(`Loading screen: ${percent}% ${message}`);
+});
+client.on('disconnected', (reason) => {
+    clearReadyWatchdog();
+    console.error('Disconnected:', reason);
+});
+client.on('remote_session_saved', () => {
+    console.log('Remote session saved.');
+});
 
 client.on('ready', async () => {
+    clearReadyWatchdog();
     console.log(`\n==================================================`);
     console.log(`Bot "${config.bot.name}" is now connected and ready!`);
     console.log(`==================================================\n`);
-    await renderer.initialize();
+    try {
+        await renderer.initialize();
+    } catch (err) {
+        console.error('Renderer initialization failed:', err);
+    }
 });
 
 /**
@@ -56,7 +116,7 @@ function parseCommand(body, prefix) {
     return null;
 }
 
-client.on('message_create', async (msg) => {
+async function handleCommandMessage(msg) {
     if (!msg.body || typeof msg.body !== 'string') return;
 
     const body = msg.body.trim();
@@ -211,6 +271,19 @@ client.on('message_create', async (msg) => {
             console.error('Failed to send error reply:', replyErr);
         }
     }
+}
+
+// `message` is the canonical incoming-message event.
+client.on('message', handleCommandMessage);
+
+// Keep `message_create` only for commands sent by the current account
+// (for example, tests from your phone or another linked device).
+client.on('message_create', async (msg) => {
+    if (!msg.fromMe) {
+        return;
+    }
+
+    await handleCommandMessage(msg);
 });
 
 /**
@@ -246,5 +319,44 @@ async function renderMixed(text) {
 
 console.log('Starting LaTeX Render Bot...');
 client.initialize().catch(err => {
-    console.error('Failed to initialize WhatsApp client:', err);
+    clearReadyWatchdog();
+
+    if (/browser is already running/i.test(err.message)) {
+        console.error('Failed to initialize WhatsApp client: the WhatsApp session is already in use by another bot or stale Chromium process.');
+        console.error('Close the other instance, or end the leftover Chrome process that is holding ".wwebjs_auth\\session", then restart.');
+    } else {
+        console.error('Failed to initialize WhatsApp client:', err);
+    }
+
+    process.exitCode = 1;
+});
+
+process.on('SIGINT', () => {
+    shutdown('SIGINT').catch((err) => {
+        console.error('Shutdown failed:', err);
+        process.exit(1);
+    });
+});
+
+process.on('SIGTERM', () => {
+    shutdown('SIGTERM').catch((err) => {
+        console.error('Shutdown failed:', err);
+        process.exit(1);
+    });
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection:', reason);
+    shutdown('unhandledRejection', 1).catch((err) => {
+        console.error('Shutdown failed:', err);
+        process.exit(1);
+    });
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+    shutdown('uncaughtException', 1).catch((shutdownErr) => {
+        console.error('Shutdown failed:', shutdownErr);
+        process.exit(1);
+    });
 });

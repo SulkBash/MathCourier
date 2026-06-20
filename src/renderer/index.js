@@ -60,7 +60,9 @@ async function renderPlotWrapped(rawExpr, customOptions) {
 }
 
 async function renderPlot3dWrapped(rawExpr, customOptions) {
-    return renderWithLock(() => renderPlot3d(rawExpr, customOptions));
+    // 3D renders use isolated Puppeteer pages, so they can safely run
+    // outside the shared singleton-page lock used by the other renderers.
+    return renderPlot3d(rawExpr, customOptions);
 }
 
 async function renderOdeWrapped(latexText, curves, customOptions) {

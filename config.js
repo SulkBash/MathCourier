@@ -36,7 +36,14 @@ module.exports = {
         autoRenderBlock: true,
         errorPrefix: '⚠️ *LaTeX Error:* ',
         useFallback: true,
-        fallbackEngine: 'codecogs'
+        fallbackEngine: 'codecogs',
+        plot3dMaxConcurrency: 3,
+        plot3dAnimationFrames: 24,
+        plot3dAnimationFps: 8,
+        plot3dAnimationBaseAngleDegrees: 45,
+        plot3dAnimationSwingDegrees: 30,
+        plot3dAnimationCameraRadius: 1.6,
+        plot3dAnimationCameraHeight: 1.1
     },
 
     puppeteer: {

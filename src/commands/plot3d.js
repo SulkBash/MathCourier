@@ -4,14 +4,23 @@ const renderer = require('../renderer');
 async function handlePlot3dCommand(input) {
     let expr = input.trim();
     let isAnimated = false;
+    let animationMode = 'swing';
 
-    // Check for animation flag -a
-    if (expr.startsWith('-a ')) {
-        isAnimated = true;
-        expr = expr.slice(3).trim();
-    } else if (expr.startsWith('-a') && (expr[2] === undefined || /\s/.test(expr[2]))) {
-        isAnimated = true;
-        expr = expr.slice(2).trim();
+    const animationFlags = [
+        { flag: '-a360', mode: 'orbit' },
+        { flag: '--orbit', mode: 'orbit' },
+        { flag: '--spin', mode: 'orbit' },
+        { flag: '-a', mode: 'swing' },
+        { flag: '--animate', mode: 'swing' }
+    ];
+
+    for (const { flag, mode } of animationFlags) {
+        if (expr === flag || expr.startsWith(flag + ' ')) {
+            isAnimated = true;
+            animationMode = mode;
+            expr = expr.slice(flag.length).trim();
+            break;
+        }
     }
 
     const rangeMatches = [...expr.matchAll(/\[([^\]]+)\]/g)];
@@ -65,7 +74,7 @@ async function handlePlot3dCommand(input) {
 
     expr = expr.trim();
 
-    const opts = { isAnimated };
+    const opts = { isAnimated, animationMode };
     if (xDomain) opts.xDomain = xDomain;
     if (yDomain) opts.yDomain = yDomain;
     if (zDomain) opts.zDomain = zDomain;

@@ -4,8 +4,89 @@ const katexModule = require('./katex');
 const { splitByTopLevelCommas } = require('./plot');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const ZERO_TOLERANCE = 1e-9;
+const MAX_CONCURRENT_PLOT3D = Math.max(1, Number(config.bot?.plot3dMaxConcurrency) || 3);
+const DEFAULT_ANIMATION_FRAMES = Math.max(6, Number(config.bot?.plot3dAnimationFrames) || 12);
+const DEFAULT_ANIMATION_FPS = Math.max(4, Number(config.bot?.plot3dAnimationFps) || 10);
+const DEFAULT_ANIMATION_BASE_ANGLE_DEGREES = Number(config.bot?.plot3dAnimationBaseAngleDegrees) || 45;
+const DEFAULT_ANIMATION_SWING_DEGREES = Math.max(5, Math.min(44, Number(config.bot?.plot3dAnimationSwingDegrees) || 30));
+const DEFAULT_ANIMATION_CAMERA_RADIUS = Math.max(0.8, Number(config.bot?.plot3dAnimationCameraRadius) || 1.6);
+const DEFAULT_ANIMATION_CAMERA_HEIGHT = Math.max(0.4, Number(config.bot?.plot3dAnimationCameraHeight) || 1.1);
+
+let activePlot3dJobs = 0;
+const plot3dWaitQueue = [];
+
+function createPlot3dRelease() {
+    let released = false;
+
+    return () => {
+        if (released) {
+            return;
+        }
+        released = true;
+
+        const next = plot3dWaitQueue.shift();
+        if (next) {
+            next(createPlot3dRelease());
+            return;
+        }
+
+        activePlot3dJobs = Math.max(0, activePlot3dJobs - 1);
+    };
+}
+
+async function acquirePlot3dSlot() {
+    if (activePlot3dJobs < MAX_CONCURRENT_PLOT3D) {
+        activePlot3dJobs += 1;
+        return createPlot3dRelease();
+    }
+
+    return new Promise((resolve) => {
+        plot3dWaitQueue.push(resolve);
+    });
+}
+
+function degreesToRadians(degrees) {
+    return (degrees * Math.PI) / 180;
+}
+
+function buildCameraForAngle(theta) {
+    return {
+        eye: {
+            x: DEFAULT_ANIMATION_CAMERA_RADIUS * Math.cos(theta),
+            y: DEFAULT_ANIMATION_CAMERA_RADIUS * Math.sin(theta),
+            z: DEFAULT_ANIMATION_CAMERA_HEIGHT
+        },
+        up: { x: 0, y: 0, z: 1 },
+        center: { x: 0, y: 0, z: 0 }
+    };
+}
+
+function buildDefaultCamera() {
+    return buildCameraForAngle(degreesToRadians(DEFAULT_ANIMATION_BASE_ANGLE_DEGREES));
+}
+
+function buildSwingCamera(progress) {
+    const baseTheta = degreesToRadians(DEFAULT_ANIMATION_BASE_ANGLE_DEGREES);
+    const swingTheta = degreesToRadians(DEFAULT_ANIMATION_SWING_DEGREES);
+    const theta = baseTheta + swingTheta * Math.sin((2 * Math.PI * progress) - (Math.PI / 2));
+    return buildCameraForAngle(theta);
+}
+
+function buildOrbitCamera(progress) {
+    const baseTheta = degreesToRadians(DEFAULT_ANIMATION_BASE_ANGLE_DEGREES);
+    return buildCameraForAngle(baseTheta + (2 * Math.PI * progress));
+}
+
+function buildAnimationCamera(progress, mode = 'swing') {
+    if (mode === 'orbit') {
+        return buildOrbitCamera(progress);
+    }
+
+    return buildSwingCamera(progress);
+}
 
 // Coerce mathjs result to a plain number
 function toReal(val) {
@@ -341,40 +422,96 @@ function buildExplicitSurfaceFromLinearZ(combinedExpr, opts) {
     };
 }
 
-// Compile frame sequence into an H.264 MP4 using ffmpeg
-function compileVideo(framesPattern, outputPath, fps = 15) {
+function buildTempVideoPath() {
+    const suffix = `${process.pid}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    return path.join(os.tmpdir(), `plot3d_rotation_${suffix}.mp4`);
+}
+
+// Compile in-memory JPEG frames into an H.264 MP4 using ffmpeg.
+function compileVideo(frameBuffers, fps = DEFAULT_ANIMATION_FPS) {
     return new Promise((resolve, reject) => {
+        const outputPath = buildTempVideoPath();
         const ffmpeg = spawn('ffmpeg', [
             '-y',
+            '-loglevel', 'error',
+            '-f', 'image2pipe',
             '-framerate', String(fps),
-            '-i', framesPattern,
+            '-vcodec', 'mjpeg',
+            '-i', 'pipe:0',
+            '-an',
             '-c:v', 'libx264',
+            '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
             outputPath
         ]);
 
         let stderr = '';
+        let settled = false;
+
+        const cleanupOutput = () => {
+            if (fs.existsSync(outputPath)) {
+                try {
+                    fs.unlinkSync(outputPath);
+                } catch (err) { }
+            }
+        };
+
+        const fail = (err) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanupOutput();
+            reject(err);
+        };
+
         ffmpeg.stderr.on('data', (data) => {
             stderr += data.toString();
         });
 
-        ffmpeg.on('close', (code) => {
-            if (code === 0) {
-                resolve();
-            } else {
-                reject(new Error(`ffmpeg exited with code ${code}. Stderr: ${stderr}`));
+        ffmpeg.on('error', fail);
+        ffmpeg.stdin.on('error', (err) => {
+            if (err.code !== 'EPIPE') {
+                fail(err);
             }
         });
+
+        ffmpeg.on('close', (code) => {
+            if (settled) {
+                return;
+            }
+
+            if (code !== 0) {
+                fail(new Error(`ffmpeg exited with code ${code}. Stderr: ${stderr || 'No stderr output.'}`));
+                return;
+            }
+
+            try {
+                const videoBuf = fs.readFileSync(outputPath);
+                cleanupOutput();
+                settled = true;
+                resolve(videoBuf);
+            } catch (err) {
+                fail(err);
+            }
+        });
+
+        for (const frameBuffer of frameBuffers) {
+            ffmpeg.stdin.write(frameBuffer);
+        }
+        ffmpeg.stdin.end();
     });
 }
 
 async function renderPlot3d(rawExpr, customOptions = {}) {
-    const isInitialized = katexModule.isInitialized();
-    const page = katexModule.getPage();
-    if (!isInitialized || !page) {
+    if (!katexModule.isInitialized()) {
         return { success: false, error: 'Local renderer is not initialized.' };
     }
+
+    const releasePlot3dSlot = await acquirePlot3dSlot();
+    let page = null;
 
     const expr = rawExpr.trim();
     const graphStyle = config.style.graph || {};
@@ -392,10 +529,14 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         xDomain: customOptions.xDomain || graphStyle.defaultXDomain || [-10, 10],
         yDomain: customOptions.yDomain || graphStyle.defaultYDomain || [-10, 10],
         zDomain: customOptions.zDomain || null,
-        isAnimated: customOptions.isAnimated || false
+        isAnimated: customOptions.isAnimated || false,
+        animationMode: customOptions.animationMode || 'swing',
+        camera: buildDefaultCamera()
     };
 
     try {
+        page = await katexModule.createRenderPage();
+
         let type = '';
         let plotData = null;
         let latexText = '';
@@ -764,66 +905,30 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             return { success: false, error: 'Card element not found in DOM.' };
         }
 
-        // Clean up Plotly helper from DOM after completion
-        const cleanupPlotly = async () => {
-            await page.evaluate(() => {
-                const plotlyGraph = document.getElementById('plotly-graph');
-                if (plotlyGraph) plotlyGraph.remove();
-            });
-        };
-
         if (opts.isAnimated) {
-            // Build orbit camera sequence
-            const tempDirName = `plot3d_temp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-            const tempDirPath = path.join(__dirname, '..', '..', tempDirName);
-            fs.mkdirSync(tempDirPath, { recursive: true });
-
-            const originalViewport = page.viewport();
-            const box = await card.boundingBox();
-            if (box) {
-                await page.setViewport({
-                    width: Math.ceil(box.width),
-                    height: Math.ceil(box.height),
-                    deviceScaleFactor: 1
-                });
-            }
-
-            const resetViewport = async () => {
-                if (originalViewport) {
-                    await page.setViewport(originalViewport);
-                }
-            };
-
-            const totalFrames = 18;
-            const R = 1.6;
+            const totalFrames = DEFAULT_ANIMATION_FRAMES;
+            const frameBuffers = [];
 
             for (let f = 0; f < totalFrames; f++) {
-                const theta = (2 * Math.PI * f) / totalFrames;
-                const eye = {
-                    x: R * Math.cos(theta),
-                    y: R * Math.sin(theta),
-                    z: 1.1
-                };
+                const progress = opts.animationMode === 'orbit'
+                    ? f / totalFrames
+                    : (totalFrames === 1 ? 0 : f / (totalFrames - 1));
+                const camera = buildAnimationCamera(progress, opts.animationMode);
 
-                await page.evaluate((e) => {
-                    return Plotly.relayout('plotly-graph', { 'scene.camera.eye': e });
-                }, eye);
+                await page.evaluate((nextCamera) => {
+                    return Plotly.relayout('plotly-graph', { 'scene.camera': nextCamera }).then(() => {
+                        return new Promise((resolve) => {
+                            requestAnimationFrame(() => requestAnimationFrame(resolve));
+                        });
+                    });
+                }, camera);
 
-                const framePath = path.join(tempDirPath, `frame_${String(f).padStart(3, '0')}.jpg`);
-                const buf = await page.screenshot({ type: 'jpeg', quality: 90 });
-                fs.writeFileSync(framePath, buf);
+                const buf = await card.screenshot({ type: 'jpeg', quality: 85 });
+                frameBuffers.push(buf);
             }
 
-            const mp4Path = path.join(tempDirPath, 'rotation.mp4');
-
             try {
-                await compileVideo(path.join(tempDirPath, 'frame_%03d.jpg'), mp4Path, 12);
-                const videoBuf = fs.readFileSync(mp4Path);
-
-                // Cleanup temp folder & reset page state
-                fs.rmSync(tempDirPath, { recursive: true, force: true });
-                await cleanupPlotly();
-                await resetViewport();
+                const videoBuf = await compileVideo(frameBuffers, DEFAULT_ANIMATION_FPS);
 
                 return {
                     success: true,
@@ -837,18 +942,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 console.warn('Failed to compile video with ffmpeg:', ffmpegErr.message);
 
                 // Graceful fallback: return the first frame as static JPEG
-                const firstFramePath = path.join(tempDirPath, 'frame_000.jpg');
-                let fallbackBuf = null;
-                if (fs.existsSync(firstFramePath)) {
-                    fallbackBuf = fs.readFileSync(firstFramePath);
-                } else {
-                    fallbackBuf = await page.screenshot({ type: 'jpeg', quality: 90 });
-                }
-
-                // Cleanup temp folder & reset page state
-                fs.rmSync(tempDirPath, { recursive: true, force: true });
-                await cleanupPlotly();
-                await resetViewport();
+                const fallbackBuf = frameBuffers[0] || await card.screenshot({ type: 'jpeg', quality: 85 });
 
                 return {
                     success: true,
@@ -861,7 +955,6 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         } else {
             // Render static screenshot
             const buf = await card.screenshot({ type: 'png', omitBackground: true });
-            await cleanupPlotly();
 
             return {
                 success: true,
@@ -875,6 +968,14 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
     } catch (err) {
         console.error('Error during 3D plotting:', err);
         return { success: false, error: err.message };
+    } finally {
+        if (page) {
+            try {
+                await page.close();
+            } catch (closeErr) { }
+        }
+
+        releasePlot3dSlot();
     }
 }
 
