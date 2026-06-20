@@ -117,8 +117,49 @@ async function runTests() {
             { xDomain: [-3, 3], yDomain: [-3, 3] }
         ));
 
+    await runTest('Plot parametric Lissajous curve', () =>
+        renderer.renderPlot('(cos(3*t), sin(2*t))', { domains: [[0, 2*Math.PI]] }));
+
+    await runTest('Plot polar cardioid', () =>
+        renderer.renderPlot('r = 2 * (1 - cos(theta))', { domains: [[0, 2*Math.PI]] }));
+
+    await runTest('Plot polar rose', () =>
+        renderer.renderPlot('r = sin(4*theta)', { domains: [[0, 2*Math.PI]] }));
+
+    await runTest('Plot implicit polar lemniscate', () =>
+        renderer.renderPlot('r^2 = 9 * cos(2*theta)', { domains: [[-4, 4], [-4, 4]] }));
+
+    await runTest('Plot multi-plot overlay parametric and polar', () =>
+        renderer.renderPlot('(cos(t), sin(t)), r = 1.5', { domains: [[0, 2*Math.PI]] }));
+
+    const handlePlotCommand = require('../src/commands/plot');
+    await runTest('Plot command handle parametric Lissajous', () =>
+        handlePlotCommand('(cos(3*t), sin(2*t)) [0, 2*pi]'));
+
+    await runTest('Plot command handle implicit polar lemniscate', () =>
+        handlePlotCommand('r^2 = 9 * cos(2*theta) [-4, 4] [-4, 4]'));
+
     await runTest('Plot3d laplacian surface', () =>
         renderer.renderPlot3d('z = lap("x^2 + y^2", x, y)', { xDomain: [-3, 3], yDomain: [-3, 3], zDomain: [0, 8] }));
+
+    const handlePlot3dCommand = require('../src/commands/plot3d');
+    await runTest('Plot3d parametric torus surface', () =>
+        handlePlot3dCommand('(cos(u)*(2 + cos(v)), sin(u)*(2 + cos(v)), sin(v)) [0, 2*pi] [0, 2*pi]'));
+
+    await runTest('Plot3d explicit cylindrical surface (cylinder)', () =>
+        handlePlot3dCommand('r = 3 [-5, 5]'));
+
+    await runTest('Plot3d explicit spherical surface (bumpy sphere)', () =>
+        handlePlot3dCommand('r = 2 + 0.5 * sin(6*theta) * sin(6*phi)'));
+
+    await runTest('Plot3d implicit spherical surface (lemniscate)', () =>
+        handlePlot3dCommand('r^2 = 4 * cos(2*theta)'));
+
+    await runTest('Plot3d cylindrical vector field', () =>
+        handlePlot3dCommand('F(r, theta, z) = (0, r, 0.2) [1, 5] [0, 2*pi] [-2, 2]'));
+
+    await runTest('Plot3d spherical vector field', () =>
+        handlePlot3dCommand('F(r, theta, phi) = (1/r^2, 0, 0) [1, 4]'));
 
     await runTest('Plot factorial y = x!', () =>
         renderer.renderPlot('y = x!', { xDomain: [-5, 5], yDomain: [-10, 10] }));

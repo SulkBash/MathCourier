@@ -15,12 +15,11 @@ function toReal(val) {
     }
     return typeof val === 'number' ? val : NaN;
 }
-
-// Insert implicit multiplication between adjacent x/y variables for mathjs
+// Insert implicit multiplication between adjacent x/y/t variables for mathjs
 function preprocessExpr(expr) {
     if (!expr) return '';
 
-    const symbols = new Set(['x', 'y']);
+    const symbols = new Set(['x', 'y', 't']);
     const isIdentifierChar = (char) => /[A-Za-z0-9_]/.test(char);
     let result = '';
     let inQuotes = false;
@@ -247,25 +246,51 @@ function parseSingleExpression(expr, opts) {
     }
 
     const namedVectorField = parseNamedVectorField(mainStatement);
-    const implicitVectorField = namedVectorField ? null : parseVectorTuple(mainStatement, 2);
+    const vectorOrParametricTuple = namedVectorField ? null : parseVectorTuple(mainStatement, 2);
+
+    let isParametric = false;
+    let parametricTuple = null;
+
+    if (vectorOrParametricTuple && vectorOrParametricTuple.some(comp => /\bt\b/i.test(comp))) {
+        isParametric = true;
+        parametricTuple = vectorOrParametricTuple;
+    }
+
+    let isExplicitPolar = false;
+    let isPolar = false;
 
     if (namedVectorField) {
         isVector = true;
         hasExplicitVectorName = true;
         funcName = namedVectorField.name;
         [uExpr, vExpr] = namedVectorField.components;
-    } else if (implicitVectorField) {
+    } else if (vectorOrParametricTuple && !isParametric) {
         isVector = true;
-        [uExpr, vExpr] = implicitVectorField;
+        [uExpr, vExpr] = vectorOrParametricTuple;
     } else if (mainStatement.includes('=')) {
         const eqIdx = mainStatement.indexOf('=');
         lhs = mainStatement.substring(0, eqIdx).trim();
         rhs = mainStatement.substring(eqIdx + 1).trim();
         
-        if (!/^(y|f\(x\))$/i.test(lhs)) isImplicit = true;
+        if (lhs.toLowerCase() === 'r') {
+            isPolar = true;
+            isExplicitPolar = true;
+        } else if (/\br\b/i.test(mainStatement) || /\btheta\b/i.test(mainStatement)) {
+            isPolar = true;
+            isImplicit = true;
+        } else if (!/^(y|f\(x\))$/i.test(lhs)) {
+            isImplicit = true;
+        }
     } else {
-        rhs = mainStatement;
-        lhs = 'y';
+        if (/\btheta\b/i.test(mainStatement)) {
+            isPolar = true;
+            isExplicitPolar = true;
+            lhs = 'r';
+            rhs = mainStatement;
+        } else {
+            rhs = mainStatement;
+            lhs = 'y';
+        }
     }
 
     let type = '';
@@ -320,6 +345,75 @@ function parseSingleExpression(expr, opts) {
             latexText = `\\vec{${funcName}}(x,y) = \\left( ${uExpr}, ${vExpr} \\right)`;
         }
         label = hasExplicitVectorName ? `${funcName}(x,y)` : mainStatement;
+    } else if (isParametric) {
+        type = 'parametric';
+        const [xExpr, yExpr] = parametricTuple;
+        const xCompiled = math.compile(preprocessedHelpers + preprocessExpr(xExpr));
+        const yCompiled = math.compile(preprocessedHelpers + preprocessExpr(yExpr));
+
+        const points = [];
+        const [tMin, tMax] = opts.parameterDomain || [0, 2 * Math.PI];
+        const steps = 500;
+        const step = (tMax - tMin) / steps;
+
+        for (let i = 0; i <= steps; i++) {
+            const t = tMin + i * step;
+            try {
+                const xVal = toReal(xCompiled.evaluate({ t }));
+                const yVal = toReal(yCompiled.evaluate({ t }));
+                if (typeof xVal === 'number' && !isNaN(xVal) && isFinite(xVal) &&
+                    typeof yVal === 'number' && !isNaN(yVal) && isFinite(yVal)) {
+                    points.push({ x: xVal, y: yVal });
+                } else {
+                    points.push({ x: null, y: null });
+                }
+            } catch (e) {
+                points.push({ x: null, y: null });
+            }
+        }
+
+        plotData = points;
+        try {
+            const latexX = math.parse(xExpr).toTex();
+            const latexY = math.parse(yExpr).toTex();
+            latexText = `\\left( ${latexX},\\ ${latexY} \\right)`;
+        } catch (e) {
+            latexText = `\\left( ${xExpr},\\ ${yExpr} \\right)`;
+        }
+        label = mainStatement;
+    } else if (isExplicitPolar) {
+        type = 'polar';
+        const rCompiled = math.compile(preprocessedHelpers + preprocessExpr(rhs));
+
+        const points = [];
+        const [thetaMin, thetaMax] = opts.parameterDomain || [0, 2 * Math.PI];
+        const steps = 500;
+        const step = (thetaMax - thetaMin) / steps;
+
+        for (let i = 0; i <= steps; i++) {
+            const theta = thetaMin + i * step;
+            try {
+                const rVal = toReal(rCompiled.evaluate({ theta }));
+                if (typeof rVal === 'number' && !isNaN(rVal) && isFinite(rVal)) {
+                    const xVal = rVal * Math.cos(theta);
+                    const yVal = rVal * Math.sin(theta);
+                    points.push({ x: xVal, y: yVal });
+                } else {
+                    points.push({ x: null, y: null });
+                }
+            } catch (e) {
+                points.push({ x: null, y: null });
+            }
+        }
+
+        plotData = points;
+        try {
+            const latexR = math.parse(rhs).toTex();
+            latexText = `r = ${latexR}`;
+        } catch (e) {
+            latexText = `r = ${rhs}`;
+        }
+        label = mainStatement;
     } else if (!isImplicit) {
         type = 'explicit';
         let compiled = math.compile(preprocessedHelpers + preprocessExpr(rhs));
@@ -419,7 +513,9 @@ function parseSingleExpression(expr, opts) {
                 const y = Y[j];
                 let val = NaN;
                 try {
-                    let res = toReal(compiled.evaluate({ x, y }));
+                    const r = Math.sqrt(x * x + y * y);
+                    const theta = Math.atan2(y, x);
+                    let res = toReal(compiled.evaluate({ x, y, r, theta }));
                     if (typeof res === 'number' && !isNaN(res) && isFinite(res)) val = res;
                 } catch (e) {
                     val = NaN;
@@ -450,7 +546,44 @@ async function renderPlot(rawExpr, customOptions = {}) {
 
     try {
         const expr = rawExpr.trim();
+        const parts = splitByTopLevelCommas(expr).map(p => p.trim()).filter(Boolean);
+        if (parts.length === 0) {
+            return { success: false, error: 'No expressions to plot.' };
+        }
+
+        // Detection helper for parametric and polar
+        let isParametricOrPolar = false;
+        for (const part of parts) {
+            const trimmed = part.toLowerCase();
+            const tuple = parseVectorTuple(part, 2);
+            const isParametric = tuple && tuple.some(comp => /\bt\b/i.test(comp));
+            const isPolar = trimmed.startsWith('r=') || trimmed.includes('r =') || /\btheta\b/i.test(trimmed);
+            if (isParametric || isPolar) {
+                isParametricOrPolar = true;
+                break;
+            }
+        }
+
+        const domains = customOptions.domains || [];
+        let xDomain, yDomain, parameterDomain;
         const graphStyle = config.style.graph || {};
+
+        if (isParametricOrPolar) {
+            parameterDomain = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
+            xDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultXDomain || [-10, 10]);
+            if (domains.length >= 3) {
+                yDomain = domains[2];
+            } else if (domains.length === 2) {
+                yDomain = domains[1];
+            } else {
+                yDomain = graphStyle.defaultYDomain || [-10, 10];
+            }
+        } else {
+            parameterDomain = null;
+            xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
+            yDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultYDomain || [-10, 10]);
+        }
+
         const opts = {
             width: graphStyle.width || 600,
             height: graphStyle.height || 450,
@@ -461,15 +594,11 @@ async function renderPlot(rawExpr, customOptions = {}) {
             glowColor: graphStyle.glowColor || 'rgba(6, 182, 212, 0.4)',
             glowBlur: graphStyle.glowBlur || 10,
             lineWidth: graphStyle.lineWidth || 3.5,
-            xDomain: customOptions.xDomain || graphStyle.defaultXDomain || [-10, 10],
-            yDomain: customOptions.yDomain || graphStyle.defaultYDomain || [-10, 10],
+            xDomain,
+            yDomain,
+            parameterDomain,
             fontFamily: config.style.fontFamily || 'sans-serif'
         };
-
-        const parts = splitByTopLevelCommas(expr).map(p => p.trim()).filter(Boolean);
-        if (parts.length === 0) {
-            return { success: false, error: 'No expressions to plot.' };
-        }
 
         let type = '';
         let plotData = null;

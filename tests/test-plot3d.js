@@ -93,6 +93,18 @@ async function runTests() {
         handlePlot3dCommand('-a360 x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
     );
 
+    await runTest('3D Animated Swing X Axis Sphere', () =>
+        handlePlot3dCommand('-ax x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+    );
+
+    await runTest('3D Animated Orbit Y Axis 180 Degrees Sphere', () =>
+        handlePlot3dCommand('-ay180 x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+    );
+
+    await runTest('3D Animated Orbit Z Axis 360 Degrees Sphere', () =>
+        handlePlot3dCommand('-az360 x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+    );
+
     await runParallelTests('3D Parallel Animated Requests', [
         {
             name: 'surface',

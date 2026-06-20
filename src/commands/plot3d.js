@@ -4,13 +4,10 @@ const renderer = require('../renderer');
 async function handlePlot3dCommand(input) {
     let expr = input.trim();
     let isAnimated = false;
+    let animationAxis = 'z';
     let animationMode = 'swing';
+    let animationAngle = null;
     let isFlux = true;
-
-    const animationFlags = [
-        { flag: '-a360', mode: 'orbit' },
-        { flag: '-a', mode: 'swing' }
-    ];
 
     let flagMatched = true;
 
@@ -18,72 +15,49 @@ async function handlePlot3dCommand(input) {
         flagMatched = false;
         expr = expr.trim();
 
-        for (const { flag, mode } of animationFlags) {
-            if (expr === flag || expr.startsWith(flag + ' ')) {
-                isAnimated = true;
-                animationMode = mode;
-                expr = expr.slice(flag.length).trim();
-                flagMatched = true;
-                break;
+        const match = expr.match(/^-a(x|y|z)?(\d+)?(?=\s|$)/i);
+        if (match) {
+            isAnimated = true;
+            const axis = match[1] ? match[1].toLowerCase() : 'z';
+            const angleStr = match[2];
+
+            animationAxis = axis;
+            if (angleStr) {
+                animationMode = 'orbit';
+                animationAngle = parseInt(angleStr, 10);
+            } else {
+                animationMode = 'swing';
+                animationAngle = null;
             }
+
+            expr = expr.slice(match[0].length).trim();
+            flagMatched = true;
         }
     }
 
     const rangeMatches = [...expr.matchAll(/\[([^\]]+)\]/g)];
+    const domains = [];
 
-    let xDomain = null;
-    let yDomain = null;
-    let zDomain = null;
-
-    // Up to 3 domains: [xMin, xMax], [yMin, yMax], [zMin, zMax]
-    if (rangeMatches.length > 0) {
+    for (const match of rangeMatches) {
         try {
-            const parts = rangeMatches[0][1].split(',');
+            const parts = match[1].split(',');
             const lo = math.evaluate(parts[0].trim());
             const hi = math.evaluate(parts[1].trim());
             if (typeof lo === 'number' && typeof hi === 'number' && !isNaN(lo) && !isNaN(hi) && isFinite(lo) && isFinite(hi) && lo < hi) {
-                xDomain = [lo, hi];
+                domains.push([lo, hi]);
             }
-            expr = expr.replace(rangeMatches[0][0], '');
+            expr = expr.replace(match[0], '');
         } catch (e) {
-            console.warn('Failed to parse domain 1:', e.message);
-        }
-    }
-
-    if (rangeMatches.length > 1) {
-        try {
-            const parts = rangeMatches[1][1].split(',');
-            const lo = math.evaluate(parts[0].trim());
-            const hi = math.evaluate(parts[1].trim());
-            if (typeof lo === 'number' && typeof hi === 'number' && !isNaN(lo) && !isNaN(hi) && isFinite(lo) && isFinite(hi) && lo < hi) {
-                yDomain = [lo, hi];
-            }
-            expr = expr.replace(rangeMatches[1][0], '');
-        } catch (e) {
-            console.warn('Failed to parse domain 2:', e.message);
-        }
-    }
-
-    if (rangeMatches.length > 2) {
-        try {
-            const parts = rangeMatches[2][1].split(',');
-            const lo = math.evaluate(parts[0].trim());
-            const hi = math.evaluate(parts[1].trim());
-            if (typeof lo === 'number' && typeof hi === 'number' && !isNaN(lo) && !isNaN(hi) && isFinite(lo) && isFinite(hi) && lo < hi) {
-                zDomain = [lo, hi];
-            }
-            expr = expr.replace(rangeMatches[2][0], '');
-        } catch (e) {
-            console.warn('Failed to parse domain 3:', e.message);
+            console.warn('Failed to parse domain:', e.message);
         }
     }
 
     expr = expr.trim();
 
-    const opts = { isAnimated, animationMode, isFlux };
-    if (xDomain) opts.xDomain = xDomain;
-    if (yDomain) opts.yDomain = yDomain;
-    if (zDomain) opts.zDomain = zDomain;
+    const opts = { isAnimated, animationMode, animationAxis, animationAngle, isFlux };
+    if (domains.length > 0) {
+        opts.domains = domains;
+    }
 
     return await renderer.renderPlot3d(expr, opts);
 }

@@ -52,6 +52,46 @@ function degreesToRadians(degrees) {
     return (degrees * Math.PI) / 180;
 }
 
+function rotateX(point, angle) {
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    return {
+        x: point.x,
+        y: point.y * cosA - point.z * sinA,
+        z: point.y * sinA + point.z * cosA
+    };
+}
+
+function rotateY(point, angle) {
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    return {
+        x: point.x * cosA + point.z * sinA,
+        y: point.y,
+        z: -point.x * sinA + point.z * cosA
+    };
+}
+
+function rotateZ(point, angle) {
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    return {
+        x: point.x * cosA - point.y * sinA,
+        y: point.x * sinA + point.y * cosA,
+        z: point.z
+    };
+}
+
+function rotateAroundAxis(point, axis, angle) {
+    if (axis === 'x') {
+        return rotateX(point, angle);
+    } else if (axis === 'y') {
+        return rotateY(point, angle);
+    } else {
+        return rotateZ(point, angle);
+    }
+}
+
 function buildCameraForAngle(theta) {
     return {
         eye: {
@@ -68,24 +108,51 @@ function buildDefaultCamera() {
     return buildCameraForAngle(degreesToRadians(DEFAULT_ANIMATION_BASE_ANGLE_DEGREES));
 }
 
-function buildSwingCamera(progress) {
+function buildSwingCamera(progress, axis = 'z', customAngle = null) {
     const baseTheta = degreesToRadians(DEFAULT_ANIMATION_BASE_ANGLE_DEGREES);
-    const swingTheta = degreesToRadians(DEFAULT_ANIMATION_SWING_DEGREES);
-    const theta = baseTheta + swingTheta * Math.sin((2 * Math.PI * progress) - (Math.PI / 2));
-    return buildCameraForAngle(theta);
+    const eye_0 = {
+        x: DEFAULT_ANIMATION_CAMERA_RADIUS * Math.cos(baseTheta),
+        y: DEFAULT_ANIMATION_CAMERA_RADIUS * Math.sin(baseTheta),
+        z: DEFAULT_ANIMATION_CAMERA_HEIGHT
+    };
+    const up_0 = { x: 0, y: 0, z: 1 };
+
+    const swingAngle = customAngle !== null ? customAngle : DEFAULT_ANIMATION_SWING_DEGREES;
+    const swingTheta = degreesToRadians(swingAngle);
+    const alpha = swingTheta * Math.sin((2 * Math.PI * progress) - (Math.PI / 2));
+
+    return {
+        eye: rotateAroundAxis(eye_0, axis, alpha),
+        up: rotateAroundAxis(up_0, axis, alpha),
+        center: { x: 0, y: 0, z: 0 }
+    };
 }
 
-function buildOrbitCamera(progress) {
+function buildOrbitCamera(progress, axis = 'z', customAngle = null) {
     const baseTheta = degreesToRadians(DEFAULT_ANIMATION_BASE_ANGLE_DEGREES);
-    return buildCameraForAngle(baseTheta + (2 * Math.PI * progress));
+    const eye_0 = {
+        x: DEFAULT_ANIMATION_CAMERA_RADIUS * Math.cos(baseTheta),
+        y: DEFAULT_ANIMATION_CAMERA_RADIUS * Math.sin(baseTheta),
+        z: DEFAULT_ANIMATION_CAMERA_HEIGHT
+    };
+    const up_0 = { x: 0, y: 0, z: 1 };
+
+    const maxAngleRad = customAngle !== null ? degreesToRadians(customAngle) : degreesToRadians(360);
+    const alpha = maxAngleRad * progress;
+
+    return {
+        eye: rotateAroundAxis(eye_0, axis, alpha),
+        up: rotateAroundAxis(up_0, axis, alpha),
+        center: { x: 0, y: 0, z: 0 }
+    };
 }
 
-function buildAnimationCamera(progress, mode = 'swing') {
+function buildAnimationCamera(progress, mode = 'swing', axis = 'z', customAngle = null) {
     if (mode === 'orbit') {
-        return buildOrbitCamera(progress);
+        return buildOrbitCamera(progress, axis, customAngle);
     }
 
-    return buildSwingCamera(progress);
+    return buildSwingCamera(progress, axis, customAngle);
 }
 
 // Coerce mathjs result to a plain number
@@ -102,11 +169,11 @@ function toReal(val) {
     return typeof val === 'number' ? val : NaN;
 }
 
-// Preprocess expression to insert implicit multiplications for x/y
+// Preprocess expression to insert implicit multiplications for variables
 function preprocessExpr(expr) {
     if (!expr) return '';
 
-    const symbols = new Set(['x', 'y', 'z']);
+    const symbols = new Set(['x', 'y', 'z', 'u', 'v', 't']);
     const isIdentifierChar = (char) => /[A-Za-z0-9_]/.test(char);
     let result = '';
     let inQuotes = false;
@@ -200,18 +267,19 @@ function parseVectorTuple(expr, expectedDimension = null) {
 }
 
 function parseNamedVectorField(expr) {
-    const match = expr.match(/^([A-Za-z][A-Za-z0-9_]*)\(\s*x\s*,\s*y\s*,\s*z\s*\)\s*=\s*(.+)$/);
+    const match = expr.match(/^([A-Za-z][A-Za-z0-9_]*)\(\s*([a-zA-Z0-9_, ]+)\s*\)\s*=\s*(.+)$/);
     if (!match) {
         return null;
     }
 
-    const components = parseVectorTuple(match[2], 3);
+    const components = parseVectorTuple(match[3], 3);
     if (!components) {
         return null;
     }
 
     return {
         name: match[1],
+        vars: match[2].split(',').map(v => v.trim().toLowerCase()),
         components
     };
 }
@@ -231,15 +299,46 @@ function expressionUsesAnySymbol(expr, symbolNames) {
     }
 }
 
-function shouldTreatBareTupleAsVector(components, hasCustomYDomain, hasCustomZDomain) {
-    if (hasCustomYDomain || hasCustomZDomain) {
+function shouldTreatBareTupleAsVector(components, domainsCount) {
+    const hasUV = components.some(c => expressionUsesAnySymbol(c, ['u', 'v']));
+    if (hasUV) return false;
+    if (domainsCount >= 2) {
         return true;
     }
-
-    return components.some((component) => expressionUsesAnySymbol(component, ['x', 'y', 'z']));
+    return components.some((component) => expressionUsesAnySymbol(component, ['x', 'y', 'z', 'r', 'theta', 'phi']));
 }
 
-function sampleVectorField3d(components, opts) {
+function getCoordinateSystem(expr, components = null) {
+    const exprStr = expr.toLowerCase();
+    const compsStr = components ? components.join(' ').toLowerCase() : '';
+    
+    const namedMatch = expr.match(/^([A-Za-z][A-Za-z0-9_]*)\(\s*([a-zA-Z0-9_, ]+)\s*\)\s*=\s*(.+)$/);
+    if (namedMatch) {
+        const vars = namedMatch[2].split(',').map(v => v.trim().toLowerCase());
+        if (vars.includes('phi') || (vars.includes('theta') && vars.includes('phi'))) {
+            return 'spherical';
+        }
+        if (vars.includes('r') && vars.includes('theta') && vars.includes('z')) {
+            return 'cylindrical';
+        }
+    }
+    
+    const testStr = exprStr + ' ' + compsStr;
+    if (/\bphi\b/i.test(testStr)) {
+        return 'spherical';
+    }
+    // If it contains theta and has no z, default to spherical (like polar coordinates)
+    if (/\btheta\b/i.test(testStr) && !/\bz\b/i.test(testStr)) {
+        return 'spherical';
+    }
+    if (/\br\b/i.test(testStr) || /\btheta\b/i.test(testStr)) {
+        return 'cylindrical';
+    }
+    
+    return 'cartesian';
+}
+
+function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
     const [xExpr, yExpr, zExpr] = components;
     const xCompiled = math.compile(preprocessExpr(xExpr));
     const yCompiled = math.compile(preprocessExpr(yExpr));
@@ -264,14 +363,39 @@ function sampleVectorField3d(components, opts) {
             for (let k = 0; k <= steps; k++) {
                 const z = zMin + k * zStep;
                 try {
-                    const u = toReal(xCompiled.evaluate({ x, y, z }));
-                    const v = toReal(yCompiled.evaluate({ x, y, z }));
-                    const w = toReal(zCompiled.evaluate({ x, y, z }));
-                    if (!isNaN(u) && isFinite(u) && !isNaN(v) && isFinite(v) && !isNaN(w) && isFinite(w)) {
-                        const mag = Math.sqrt(u * u + v * v + w * w);
+                    let uVal, vVal, wVal;
+                    if (coordSystem === 'cylindrical') {
+                        const r = Math.sqrt(x*x + y*y);
+                        const theta = Math.atan2(y, x);
+                        const Fr = toReal(xCompiled.evaluate({ r, theta, z }));
+                        const Ftheta = toReal(yCompiled.evaluate({ r, theta, z }));
+                        const Fz = toReal(zCompiled.evaluate({ r, theta, z }));
+                        
+                        uVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
+                        vVal = Fr * Math.sin(theta) + Ftheta * Math.cos(theta);
+                        wVal = Fz;
+                    } else if (coordSystem === 'spherical') {
+                        const r = Math.sqrt(x*x + y*y + z*z);
+                        const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
+                        const phi = Math.atan2(y, x);
+                        const Fr = toReal(xCompiled.evaluate({ r, theta, phi }));
+                        const Ftheta = toReal(yCompiled.evaluate({ r, theta, phi }));
+                        const Fphi = toReal(zCompiled.evaluate({ r, theta, phi }));
+                        
+                        uVal = Fr * Math.sin(theta) * Math.cos(phi) + Ftheta * Math.cos(theta) * Math.cos(phi) - Fphi * Math.sin(phi);
+                        vVal = Fr * Math.sin(theta) * Math.sin(phi) + Ftheta * Math.cos(theta) * Math.sin(phi) + Fphi * Math.cos(phi);
+                        wVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
+                    } else {
+                        uVal = toReal(xCompiled.evaluate({ x, y, z }));
+                        vVal = toReal(yCompiled.evaluate({ x, y, z }));
+                        wVal = toReal(zCompiled.evaluate({ x, y, z }));
+                    }
+
+                    if (!isNaN(uVal) && isFinite(uVal) && !isNaN(vVal) && isFinite(vVal) && !isNaN(wVal) && isFinite(wVal)) {
+                        const mag = Math.sqrt(uVal * uVal + vVal * vVal + wVal * wVal);
                         if (mag > ZERO_TOLERANCE) {
                             maxMag = Math.max(maxMag, mag);
-                            points.push({ x, y, z, u, v, w, mag });
+                            points.push({ x, y, z, u: uVal, v: vVal, w: wVal, mag });
                         }
                     }
                 } catch (err) { }
@@ -301,7 +425,7 @@ function sampleVectorField3d(components, opts) {
     };
 }
 
-function sampleFluxLines3d(components, opts) {
+function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
     const [xExpr, yExpr, zExpr] = components;
     const xCompiled = math.compile(preprocessExpr(xExpr));
     const yCompiled = math.compile(preprocessExpr(yExpr));
@@ -313,14 +437,39 @@ function sampleFluxLines3d(components, opts) {
 
     const evalVectorField = (x, y, z) => {
         try {
-            const u = toReal(xCompiled.evaluate({ x, y, z }));
-            const v = toReal(yCompiled.evaluate({ x, y, z }));
-            const w = toReal(zCompiled.evaluate({ x, y, z }));
-            if (isNaN(u) || !isFinite(u) || isNaN(v) || !isFinite(v) || isNaN(w) || !isFinite(w)) {
+            let uVal, vVal, wVal;
+            if (coordSystem === 'cylindrical') {
+                const r = Math.sqrt(x*x + y*y);
+                const theta = Math.atan2(y, x);
+                const Fr = toReal(xCompiled.evaluate({ r, theta, z }));
+                const Ftheta = toReal(yCompiled.evaluate({ r, theta, z }));
+                const Fz = toReal(zCompiled.evaluate({ r, theta, z }));
+                
+                uVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
+                vVal = Fr * Math.sin(theta) + Ftheta * Math.cos(theta);
+                wVal = Fz;
+            } else if (coordSystem === 'spherical') {
+                const r = Math.sqrt(x*x + y*y + z*z);
+                const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
+                const phi = Math.atan2(y, x);
+                const Fr = toReal(xCompiled.evaluate({ r, theta, phi }));
+                const Ftheta = toReal(yCompiled.evaluate({ r, theta, phi }));
+                const Fphi = toReal(zCompiled.evaluate({ r, theta, phi }));
+                
+                uVal = Fr * Math.sin(theta) * Math.cos(phi) + Ftheta * Math.cos(theta) * Math.cos(phi) - Fphi * Math.sin(phi);
+                vVal = Fr * Math.sin(theta) * Math.sin(phi) + Ftheta * Math.cos(theta) * Math.sin(phi) + Fphi * Math.cos(phi);
+                wVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
+            } else {
+                uVal = toReal(xCompiled.evaluate({ x, y, z }));
+                vVal = toReal(yCompiled.evaluate({ x, y, z }));
+                wVal = toReal(zCompiled.evaluate({ x, y, z }));
+            }
+
+            if (isNaN(uVal) || !isFinite(uVal) || isNaN(vVal) || !isFinite(vVal) || isNaN(wVal) || !isFinite(wVal)) {
                 return null;
             }
-            const mag = Math.sqrt(u * u + v * v + w * w);
-            return { u, v, w, mag };
+            const mag = Math.sqrt(uVal * uVal + vVal * vVal + wVal * wVal);
+            return { u: uVal, v: vVal, w: wVal, mag };
         } catch (err) {
             return null;
         }
@@ -348,6 +497,7 @@ function sampleFluxLines3d(components, opts) {
     const coneU = [];
     const coneV = [];
     const coneW = [];
+    const coneMags = [];
 
     // Calculate dynamic step size based on domain diagonal size
     const diag = Math.sqrt((xMax - xMin) ** 2 + (yMax - yMin) ** 2 + (zMax - zMin) ** 2);
@@ -484,6 +634,7 @@ function sampleFluxLines3d(components, opts) {
                         coneU.push(val.u / val.mag);
                         coneV.push(val.v / val.mag);
                         coneW.push(val.w / val.mag);
+                        coneMags.push(val.mag);
                     }
                 }
             }
@@ -499,6 +650,16 @@ function sampleFluxLines3d(components, opts) {
         return globalMaxMag > ZERO_TOLERANCE ? val / globalMaxMag : 0;
     });
 
+    const scaledConeU = [];
+    const scaledConeV = [];
+    const scaledConeW = [];
+    for (let i = 0; i < coneX.length; i++) {
+        const factor = globalMaxMag > ZERO_TOLERANCE ? coneMags[i] / globalMaxMag : 0;
+        scaledConeU.push(coneU[i] * factor);
+        scaledConeV.push(coneV[i] * factor);
+        scaledConeW.push(coneW[i] * factor);
+    }
+
     return {
         x: linesX,
         y: linesY,
@@ -507,9 +668,9 @@ function sampleFluxLines3d(components, opts) {
         coneX,
         coneY,
         coneZ,
-        coneU,
-        coneV,
-        coneW
+        coneU: scaledConeU,
+        coneV: scaledConeV,
+        coneW: scaledConeW
     };
 }
 
@@ -727,9 +888,61 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
     const expr = rawExpr.trim();
     const graphStyle = config.style.graph || {};
-    const hasCustomXDomain = Array.isArray(customOptions.xDomain);
-    const hasCustomYDomain = Array.isArray(customOptions.yDomain);
-    const hasCustomZDomain = Array.isArray(customOptions.zDomain);
+    const domains = customOptions.domains || [];
+    const domainsCount = domains.length;
+
+    const namedVectorField = parseNamedVectorField(expr);
+    const bareTuple = namedVectorField ? null : parseVectorTuple(expr, 3);
+    const coordSystem = getCoordinateSystem(expr, namedVectorField ? namedVectorField.components : bareTuple);
+
+    const isBareVectorField = bareTuple && shouldTreatBareTupleAsVector(bareTuple, domainsCount);
+    const isVectorField = namedVectorField || isBareVectorField;
+
+    const hasUV = bareTuple && bareTuple.some(c => expressionUsesAnySymbol(c, ['u', 'v']));
+    const isParametricSurface = bareTuple && hasUV && !isVectorField;
+    const isParametricCurve = bareTuple && !hasUV && !isVectorField;
+
+    let isExplicitPolarSurface = false;
+    let lhsVal = '';
+    let rhsVal = '';
+    if (expr.includes('=')) {
+        const eqIdx = expr.indexOf('=');
+        lhsVal = expr.substring(0, eqIdx).trim();
+        rhsVal = expr.substring(eqIdx + 1).trim();
+        if (lhsVal.toLowerCase() === 'r') {
+            isExplicitPolarSurface = true;
+        }
+    }
+
+    let xDomain, yDomain, zDomain;
+    let parameterDomain1 = null;
+    let parameterDomain2 = null;
+
+    if (isVectorField) {
+        xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
+        yDomain = domains.length >= 2 ? domains[1] : [...xDomain];
+        zDomain = domains.length >= 3 ? domains[2] : [...xDomain];
+    } else if (isParametricSurface || isExplicitPolarSurface) {
+        const defaultU = coordSystem === 'spherical' ? [0, Math.PI] : [0, 2 * Math.PI];
+        const defaultV = coordSystem === 'spherical' ? [0, 2 * Math.PI] : (coordSystem === 'cylindrical' ? [-5, 5] : [0, 2 * Math.PI]);
+        
+        parameterDomain1 = domains.length >= 1 ? domains[0] : defaultU;
+        parameterDomain2 = domains.length >= 2 ? domains[1] : defaultV;
+        
+        xDomain = domains.length >= 3 ? domains[2] : (graphStyle.defaultXDomain || [-10, 10]);
+        yDomain = domains.length >= 4 ? domains[3] : [...xDomain];
+        zDomain = domains.length >= 5 ? domains[4] : [...xDomain];
+    } else if (isParametricCurve) {
+        parameterDomain1 = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
+        xDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultXDomain || [-10, 10]);
+        yDomain = domains.length >= 3 ? domains[2] : [...xDomain];
+        zDomain = domains.length >= 4 ? domains[3] : [...xDomain];
+    } else {
+        xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
+        yDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultYDomain || [-10, 10]);
+        zDomain = domains.length >= 3 ? domains[2] : null;
+    }
+
     const opts = {
         width: graphStyle.width || 600,
         height: graphStyle.height || 450,
@@ -738,11 +951,13 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
         curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
         lineWidth: graphStyle.lineWidth || 6,
-        xDomain: customOptions.xDomain || graphStyle.defaultXDomain || [-10, 10],
-        yDomain: customOptions.yDomain || graphStyle.defaultYDomain || [-10, 10],
-        zDomain: customOptions.zDomain || null,
+        xDomain,
+        yDomain,
+        zDomain,
         isAnimated: customOptions.isAnimated || false,
         animationMode: customOptions.animationMode || 'swing',
+        animationAxis: customOptions.animationAxis || 'z',
+        animationAngle: customOptions.animationAngle || null,
         camera: buildDefaultCamera()
     };
 
@@ -753,12 +968,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         let plotData = null;
         let latexText = '';
 
-        const namedVectorField = parseNamedVectorField(expr);
-        const bareTuple = namedVectorField ? null : parseVectorTuple(expr, 3);
-        const isBareVectorField = bareTuple && shouldTreatBareTupleAsVector(bareTuple, hasCustomYDomain, hasCustomZDomain);
-        const isParametric = bareTuple && !isBareVectorField && !namedVectorField;
-
-        if (namedVectorField || isBareVectorField) {
+        if (isVectorField) {
             const isFlux = customOptions.isFlux || false;
             type = isFlux ? 'flux3d' : 'vector3d';
             const fieldName = namedVectorField ? namedVectorField.name : 'F';
@@ -768,7 +978,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 opts.zDomain = [...opts.xDomain];
             }
 
-            plotData = isFlux ? sampleFluxLines3d(components, opts) : sampleVectorField3d(components, opts);
+            plotData = isFlux ? sampleFluxLines3d(components, opts, coordSystem) : sampleVectorField3d(components, opts, coordSystem);
             if (!plotData) {
                 return { success: false, error: isFlux ? 'No valid flux lines could be computed. Check if the field is defined on the given domains.' : 'No valid real vectors were computed for this field. Check if the field is defined on the given domains.' };
             }
@@ -778,21 +988,195 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 const texU = math.parse(uExpr).toTex();
                 const texV = math.parse(vExpr).toTex();
                 const texW = math.parse(wExpr).toTex();
-                latexText = `\\vec{${fieldName}}(x,y,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                if (coordSystem === 'cylindrical') {
+                    latexText = `\\vec{${fieldName}}(r,\\theta,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                } else if (coordSystem === 'spherical') {
+                    latexText = `\\vec{${fieldName}}(r,\\theta,\\phi) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                } else {
+                    latexText = `\\vec{${fieldName}}(x,y,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                }
             } catch (e) {
-                latexText = `\\vec{${fieldName}}(x,y,z) = \\left( ${components.join(', ')} \\right)`;
+                latexText = `\\vec{${fieldName}} = \\left( ${components.join(', ')} \\right)`;
             }
-        } else if (isParametric) {
+        } else if (isParametricSurface) {
+            type = 'surface';
+            const [xExpr, yExpr, zExpr] = bareTuple.map(e => e.trim());
+            const xCompiled = math.compile(preprocessExpr(xExpr));
+            const yCompiled = math.compile(preprocessExpr(yExpr));
+            const zCompiled = math.compile(preprocessExpr(zExpr));
+
+            const [uMin, uMax] = parameterDomain1;
+            const [vMin, vMax] = parameterDomain2;
+
+            const gridSteps = 40;
+            const uStep = (uMax - uMin) / gridSteps;
+            const vStep = (vMax - vMin) / gridSteps;
+
+            const xGrid = [];
+            const yGrid = [];
+            const zGrid = [];
+
+            for (let j = 0; j <= gridSteps; j++) {
+                const v = vMin + j * vStep;
+                const rowX = [];
+                const rowY = [];
+                const rowZ = [];
+                for (let i = 0; i <= gridSteps; i++) {
+                    const u = uMin + i * uStep;
+                    try {
+                        const xVal = toReal(xCompiled.evaluate({ u, v }));
+                        const yVal = toReal(yCompiled.evaluate({ u, v }));
+                        const zVal = toReal(zCompiled.evaluate({ u, v }));
+                        if (!isNaN(xVal) && isFinite(xVal) && !isNaN(yVal) && isFinite(yVal) && !isNaN(zVal) && isFinite(zVal)) {
+                            rowX.push(xVal);
+                            rowY.push(yVal);
+                            rowZ.push(zVal);
+                        } else {
+                            rowX.push(null);
+                            rowY.push(null);
+                            rowZ.push(null);
+                        }
+                    } catch (e) {
+                        rowX.push(null);
+                        rowY.push(null);
+                        rowZ.push(null);
+                    }
+                }
+                xGrid.push(rowX);
+                yGrid.push(rowY);
+                zGrid.push(rowZ);
+            }
+
+            plotData = { x: xGrid, y: yGrid, z: zGrid };
+
+            const flatX = xGrid.flat().filter(x => x !== null);
+            const flatY = yGrid.flat().filter(y => y !== null);
+            const flatZ = zGrid.flat().filter(z => z !== null);
+
+            if (flatX.length === 0) {
+                return { success: false, error: 'No valid real numbers were computed for this surface.' };
+            }
+
+            const getBounds = (arr, fallback) => {
+                if (arr.length === 0) return fallback;
+                const min = Math.min(...arr);
+                const max = Math.max(...arr);
+                const margin = (max - min) * 0.1 || 0.5;
+                return [min - margin, max + margin];
+            };
+
+            if (!domains[2]) opts.xDomain = getBounds(flatX, [-5, 5]);
+            if (!domains[3]) opts.yDomain = getBounds(flatY, [-5, 5]);
+            if (!domains[4] && !opts.zDomain) opts.zDomain = getBounds(flatZ, [-5, 5]);
+
+            try {
+                const texX = math.parse(xExpr).toTex();
+                const texY = math.parse(yExpr).toTex();
+                const texZ = math.parse(zExpr).toTex();
+                latexText = `\\vec{r}(u,v) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
+            } catch (e) {
+                latexText = `\\vec{r}(u,v) = \\left( ${xExpr},\\ ${yExpr},\\ ${zExpr} \\right)`;
+            }
+
+        } else if (isExplicitPolarSurface) {
+            type = 'surface';
+            const rCompiled = math.compile(preprocessExpr(rhsVal));
+
+            const [uMin, uMax] = parameterDomain1;
+            const [vMin, vMax] = parameterDomain2;
+
+            const gridSteps = 40;
+            const uStep = (uMax - uMin) / gridSteps;
+            const vStep = (vMax - vMin) / gridSteps;
+
+            const xGrid = [];
+            const yGrid = [];
+            const zGrid = [];
+
+            for (let j = 0; j <= gridSteps; j++) {
+                const v = vMin + j * vStep;
+                const rowX = [];
+                const rowY = [];
+                const rowZ = [];
+                for (let i = 0; i <= gridSteps; i++) {
+                    const u = uMin + i * uStep;
+                    try {
+                        let rVal;
+                        let xVal, yVal, zVal;
+
+                        if (coordSystem === 'spherical') {
+                            rVal = toReal(rCompiled.evaluate({ theta: u, phi: v }));
+                            if (!isNaN(rVal) && isFinite(rVal)) {
+                                xVal = rVal * Math.sin(u) * Math.cos(v);
+                                yVal = rVal * Math.sin(u) * Math.sin(v);
+                                zVal = rVal * Math.cos(u);
+                            }
+                        } else {
+                            rVal = toReal(rCompiled.evaluate({ theta: u, z: v }));
+                            if (!isNaN(rVal) && isFinite(rVal)) {
+                                xVal = rVal * Math.cos(u);
+                                yVal = rVal * Math.sin(u);
+                                zVal = v;
+                            }
+                        }
+
+                        if (rVal !== undefined && !isNaN(rVal) && isFinite(rVal)) {
+                            rowX.push(xVal);
+                            rowY.push(yVal);
+                            rowZ.push(zVal);
+                        } else {
+                            rowX.push(null);
+                            rowY.push(null);
+                            rowZ.push(null);
+                        }
+                    } catch (e) {
+                        rowX.push(null);
+                        rowY.push(null);
+                        rowZ.push(null);
+                    }
+                }
+                xGrid.push(rowX);
+                yGrid.push(rowY);
+                zGrid.push(rowZ);
+            }
+
+            plotData = { x: xGrid, y: yGrid, z: zGrid };
+
+            const flatX = xGrid.flat().filter(x => x !== null);
+            const flatY = yGrid.flat().filter(y => y !== null);
+            const flatZ = zGrid.flat().filter(z => z !== null);
+
+            if (flatX.length === 0) {
+                return { success: false, error: 'No valid real numbers were computed for this surface.' };
+            }
+
+            const getBounds = (arr, fallback) => {
+                if (arr.length === 0) return fallback;
+                const min = Math.min(...arr);
+                const max = Math.max(...arr);
+                const margin = (max - min) * 0.1 || 0.5;
+                return [min - margin, max + margin];
+            };
+
+            if (!domains[2]) opts.xDomain = getBounds(flatX, [-5, 5]);
+            if (!domains[3]) opts.yDomain = getBounds(flatY, [-5, 5]);
+            if (!domains[4] && !opts.zDomain) opts.zDomain = getBounds(flatZ, [-5, 5]);
+
+            try {
+                const texR = math.parse(rhsVal).toTex();
+                latexText = `r = ${texR}`;
+            } catch (e) {
+                latexText = `r = ${rhsVal}`;
+            }
+
+        } else if (isParametricCurve) {
             type = 'curve';
             const [xExpr, yExpr, zExpr] = bareTuple.map(e => e.trim());
             const xCompiled = math.compile(preprocessExpr(xExpr));
             const yCompiled = math.compile(preprocessExpr(yExpr));
             const zCompiled = math.compile(preprocessExpr(zExpr));
 
-            // Default parametric range [0, 2*pi]
-            const tMin = hasCustomXDomain ? opts.xDomain[0] : 0;
-            const tMax = hasCustomXDomain ? opts.xDomain[1] : 2 * Math.PI;
-            opts.xDomain = [tMin, tMax]; // Override for graph setup range mapping (internally handled)
+            const [tMin, tMax] = parameterDomain1 || [0, 2 * Math.PI];
 
             const steps = 250;
             const tStep = (tMax - tMin) / steps;
@@ -822,7 +1206,6 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 return { success: false, error: 'No valid real numbers were computed for this curve. Check if the function is defined on the given domain.' };
             }
 
-            // Determine bounds dynamically for curve scene
             const getBounds = (arr, fallback) => {
                 if (arr.length === 0) return fallback;
                 const min = Math.min(...arr);
@@ -830,9 +1213,9 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 const margin = (max - min) * 0.1 || 0.5;
                 return [min - margin, max + margin];
             };
-            opts.xDomain = getBounds(xVals, [-5, 5]);
-            opts.yDomain = getBounds(yVals, [-5, 5]);
-            opts.zDomain = opts.zDomain || getBounds(zVals, [-5, 5]);
+            if (!domains[1]) opts.xDomain = getBounds(xVals, [-5, 5]);
+            if (!domains[2]) opts.yDomain = getBounds(yVals, [-5, 5]);
+            if (!domains[3] && !opts.zDomain) opts.zDomain = getBounds(zVals, [-5, 5]);
 
             try {
                 const texX = math.parse(xExpr).toTex();
@@ -900,7 +1283,18 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                                 const z = zMin + k * (zMax - zMin) / coarseSteps;
                                 let val = NaN;
                                 try {
-                                    val = toReal(compiled.evaluate({ x, y, z }));
+                                    if (coordSystem === 'spherical') {
+                                        const r = Math.sqrt(x*x + y*y + z*z);
+                                        const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
+                                        const phi = Math.atan2(y, x);
+                                        val = toReal(compiled.evaluate({ x, y, z, r, theta, phi }));
+                                    } else if (coordSystem === 'cylindrical') {
+                                        const r = Math.sqrt(x*x + y*y);
+                                        const theta = Math.atan2(y, x);
+                                        val = toReal(compiled.evaluate({ x, y, z, r, theta }));
+                                    } else {
+                                        val = toReal(compiled.evaluate({ x, y, z }));
+                                    }
                                 } catch (e) { }
                                 col.push(!isNaN(val) && isFinite(val) ? val : NaN);
                             }
@@ -995,13 +1389,13 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                             evalZMax = Math.min(zMax, cz + 0.25);
                         }
 
-                        if (!hasCustomXDomain) {
+                        if (domainsCount < 1) {
                             opts.xDomain = [evalXMin, evalXMax];
                         }
-                        if (!hasCustomYDomain) {
+                        if (domainsCount < 2) {
                             opts.yDomain = [evalYMin, evalYMax];
                         }
-                        if (!hasCustomZDomain) {
+                        if (domainsCount < 3) {
                             opts.zDomain = [evalZMin, evalZMax];
                         }
                     }
@@ -1022,7 +1416,19 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                                 yVals.push(y);
                                 zVals.push(z);
                                 try {
-                                    const val = toReal(compiled.evaluate({ x, y, z }));
+                                    let val;
+                                    if (coordSystem === 'spherical') {
+                                        const r = Math.sqrt(x*x + y*y + z*z);
+                                        const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
+                                        const phi = Math.atan2(y, x);
+                                        val = toReal(compiled.evaluate({ x, y, z, r, theta, phi }));
+                                    } else if (coordSystem === 'cylindrical') {
+                                        const r = Math.sqrt(x*x + y*y);
+                                        const theta = Math.atan2(y, x);
+                                        val = toReal(compiled.evaluate({ x, y, z, r, theta }));
+                                    } else {
+                                        val = toReal(compiled.evaluate({ x, y, z }));
+                                    }
                                     valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
                                 } catch (e) {
                                     valueVals.push(NaN);
@@ -1068,7 +1474,14 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                     for (let i = 0; i <= gridSteps; i++) {
                         const xVal = xGrid[i];
                         try {
-                            const zVal = toReal(compiled.evaluate({ x: xVal, y: yVal }));
+                            let zVal;
+                            if (coordSystem === 'cylindrical') {
+                                const r = Math.sqrt(xVal*xVal + yVal*yVal);
+                                const theta = Math.atan2(yVal, xVal);
+                                zVal = toReal(compiled.evaluate({ x: xVal, y: yVal, r, theta }));
+                            } else {
+                                zVal = toReal(compiled.evaluate({ x: xVal, y: yVal }));
+                            }
                             const ok = !isNaN(zVal) && isFinite(zVal);
                             row.push(ok ? zVal : null);
                             if (ok) allZ.push(zVal);
@@ -1126,7 +1539,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 const progress = opts.animationMode === 'orbit'
                     ? f / totalFrames
                     : (totalFrames === 1 ? 0 : f / (totalFrames - 1));
-                const camera = buildAnimationCamera(progress, opts.animationMode);
+                const camera = buildAnimationCamera(progress, opts.animationMode, opts.animationAxis, opts.animationAngle);
 
                 await page.evaluate((nextCamera) => {
                     return Plotly.relayout('plotly-graph', { 'scene.camera': nextCamera }).then(() => {

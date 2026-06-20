@@ -388,6 +388,38 @@
           }
         }
         
+      } else if (type === 'parametric' || type === 'polar') {
+        let isDrawing = false;
+        ctx.beginPath();
+        for (let i = 0; i < data.length; i++) {
+          const pt = data[i];
+          if (pt.y === null || isNaN(pt.y) || !isFinite(pt.y) || pt.x === null || isNaN(pt.x) || !isFinite(pt.x)) {
+            isDrawing = false;
+            continue;
+          }
+          
+          const sx = toScreenX(pt.x);
+          const sy = toScreenY(pt.y);
+          const oob = sy < -height || sy > height * 2 || sx < -width || sx > width * 2;
+          
+          if (!isDrawing) {
+            if (!oob) {
+              if (i > 0 && data[i-1].y !== null && !isNaN(data[i-1].y) && isFinite(data[i-1].y) && data[i-1].x !== null && !isNaN(data[i-1].x) && isFinite(data[i-1].x)) {
+                const prev = data[i-1];
+                ctx.moveTo(toScreenX(prev.x), toScreenY(prev.y));
+                ctx.lineTo(sx, sy);
+              } else {
+                ctx.moveTo(sx, sy);
+              }
+              isDrawing = true;
+            }
+          } else {
+            ctx.lineTo(sx, sy);
+            if (oob) isDrawing = false;
+          }
+        }
+        ctx.stroke();
+
       } else if (type === 'implicit') {
         const X = data.X;
         const Y = data.Y;
@@ -578,7 +610,7 @@
           const color = curveColors[idx % curveColors.length];
           ctx.save();
           
-          if (plot.type === 'explicit') {
+          if (plot.type === 'explicit' || plot.type === 'parametric' || plot.type === 'polar') {
             ctx.strokeStyle = color;
             ctx.lineWidth = options.lineWidth || 3.5;
             ctx.lineJoin = 'round';
@@ -592,7 +624,7 @@
             const points = plot.data;
             for (let i = 0; i < points.length; i++) {
               const pt = points[i];
-              if (pt.y === null || isNaN(pt.y) || !isFinite(pt.y)) {
+              if (pt.y === null || isNaN(pt.y) || !isFinite(pt.y) || pt.x === null || isNaN(pt.x) || !isFinite(pt.x)) {
                 isDrawing = false;
                 continue;
               }
@@ -603,7 +635,7 @@
               
               if (!isDrawing) {
                 if (!oob) {
-                  if (i > 0 && points[i-1].y !== null && !isNaN(points[i-1].y) && isFinite(points[i-1].y)) {
+                  if (i > 0 && points[i-1].y !== null && !isNaN(points[i-1].y) && isFinite(points[i-1].y) && points[i-1].x !== null && !isNaN(points[i-1].x) && isFinite(points[i-1].x)) {
                     const prev = points[i-1];
                     ctx.moveTo(toScreenX(prev.x), toScreenY(prev.y));
                     ctx.lineTo(sx, sy);
@@ -850,12 +882,7 @@
         const dy = Math.abs((options.yDomain && options.yDomain[1] - options.yDomain[0]) || 8);
         const dz = Math.abs((options.zDomain && options.zDomain[1] - options.zDomain[0]) || 8);
         const avgSpan = (dx + dy + dz) / 3;
-        const sizeRef = avgSpan * 0.08; // 8% of coordinate box span for arrowhead size
-
-        const renderConfig = getRenderConfig();
-        const style = renderConfig.style || {};
-        const graph = style.graph || {};
-        const coneColor = graph.streamlineConeColor || '#ffd700';
+        const sizeRef = avgSpan * 0.04; // 4% of coordinate box span for arrowhead size
 
         trace = [
           {
@@ -881,7 +908,7 @@
             u: data.coneU,
             v: data.coneV,
             w: data.coneW,
-            colorscale: [[0, coneColor], [1, coneColor]],
+            colorscale: options.colorscale || 'Viridis',
             cmin: 0,
             cmax: 1,
             showscale: false,
@@ -903,6 +930,8 @@
           w: data.w,
           colorscale: options.colorscale || 'Viridis',
           showscale: false,
+          sizemode: 'scaled',
+          sizeref: 0.4,
           anchor: 'tail',
           opacity: 0.9,
           hoverinfo: 'skip'
