@@ -136,6 +136,10 @@ async function runTests() {
         handlePlot3dCommand('-a F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
     );
 
+    await runTest('3D Evolution Vector Field Streamlines Sweep', () =>
+        handlePlot3dCommand('-e[a] F(x,y,z) = (-y, x, a*z/2) [-4, 4] [-4, 4] [-4, 4] [0, 2]')
+    );
+
     console.log('\nShutting down renderer...');
     await renderer.close();
     console.log('--- DONE ---');

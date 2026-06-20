@@ -96,6 +96,7 @@ const helpText = [
     '  - `!plot3d r^2 = 9 * cos(2*theta)` (Lemniscate sphere - Implicit Spherical)',
     '  - `!plot3d z = lap("x^2 + y^2", x, y) [-3, 3] [-3, 3] [0, 8]`',
     '  - `!plot3d F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]`',
+    '  - `!plot3d -e[a] F(x,y,z) = (-y, x, a*z/2) [-4, 4] [-4, 4] [-4, 4] [0, 2]`',
     '  - `!plot3d F(r, theta, z) = (0, r, 0.2) [1, 5] [0, 2*pi] [-2, 2]` (Cylindrical Vector Field)',
     '  - `!plot3d (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]`',
     '',

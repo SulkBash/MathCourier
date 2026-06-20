@@ -183,7 +183,8 @@ function clonePlot3dOptions(baseOpts) {
                 center: { ...baseOpts.camera.center }
             }
             : buildDefaultCamera(),
-        evalScope: baseOpts.evalScope ? { ...baseOpts.evalScope } : undefined
+        evalScope: baseOpts.evalScope ? { ...baseOpts.evalScope } : undefined,
+        streamlineSeeds: baseOpts.streamlineSeeds
     };
 }
 
@@ -206,6 +207,23 @@ function appendEvolutionLatex(latexText, evolutionVar, evolutionValue) {
         return latexText;
     }
     return `${latexText}\\quad (${evolutionVar} = ${evolutionValue.toFixed(2)})`;
+}
+
+function createRandomStreamlineSeeds(xDomain, yDomain, zDomain, count = 180) {
+    const [xMin, xMax] = xDomain;
+    const [yMin, yMax] = yDomain;
+    const [zMin, zMax] = zDomain;
+    const seeds = [];
+
+    for (let i = 0; i < count; i++) {
+        seeds.push({
+            x: xMin + Math.random() * (xMax - xMin),
+            y: yMin + Math.random() * (yMax - yMin),
+            z: zMin + Math.random() * (zMax - zMin)
+        });
+    }
+
+    return seeds;
 }
 
 function getPlot3dTraceVariables({ isVectorField, isParametricSurface, isExplicitPolarSurface, isParametricCurve, coordSystem }) {
@@ -647,19 +665,9 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
     const yCompiled = math.compile(preprocessExpr(yExpr));
     const zCompiled = math.compile(preprocessExpr(zExpr));
 
-    const [origXMin, origXMax] = opts.xDomain;
-    const [origYMin, origYMax] = opts.yDomain;
-    const [origZMin, origZMax] = opts.zDomain;
-    const xMin = origXMin;
-    const yMin = origYMin;
-    const zMin = origZMin;
-    const xMax = opts.tracingVar === 'x' && opts.tracingLimit !== undefined ? Math.min(origXMax, opts.tracingLimit) : origXMax;
-    const yMax = opts.tracingVar === 'y' && opts.tracingLimit !== undefined ? Math.min(origYMax, opts.tracingLimit) : origYMax;
-    const zMax = opts.tracingVar === 'z' && opts.tracingLimit !== undefined ? Math.min(origZMax, opts.tracingLimit) : origZMax;
-
-    if (xMax <= xMin || yMax <= yMin || zMax <= zMin) {
-        return null;
-    }
+    const [xMin, xMax] = opts.xDomain;
+    const [yMin, yMax] = opts.yDomain;
+    const [zMin, zMax] = opts.zDomain;
 
     const evalVectorField = (x, y, z) => {
         if (shouldSkipCartesianPoint(opts, x, y, z)) {
@@ -708,16 +716,7 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
         }
     };
 
-    // Generate 180 random seed points uniformly distributed in the domain
-    const seeds = [];
-    const numSeeds = 180;
-    for (let i = 0; i < numSeeds; i++) {
-        seeds.push({
-            x: xMin + Math.random() * (xMax - xMin),
-            y: yMin + Math.random() * (yMax - yMin),
-            z: zMin + Math.random() * (zMax - zMin)
-        });
-    }
+    const seeds = opts.streamlineSeeds || createRandomStreamlineSeeds(opts.xDomain, opts.yDomain, opts.zDomain);
 
     const linesX = [];
     const linesY = [];
@@ -1815,7 +1814,10 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             animationMode: customOptions.animationMode || 'swing',
             animationAxis: customOptions.animationAxis || 'z',
             animationAngle: customOptions.animationAngle || null,
-            camera: buildDefaultCamera()
+            camera: buildDefaultCamera(),
+            streamlineSeeds: isVectorField && (customOptions.isFlux !== false)
+                ? createRandomStreamlineSeeds(domainInfo.xDomain, domainInfo.yDomain, domainInfo.zDomain)
+                : undefined
         };
 
         const plotContext = {
