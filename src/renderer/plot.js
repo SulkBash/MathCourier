@@ -56,7 +56,20 @@ function preprocessExpr(expr) {
 
         const prevChar = i > 0 ? expr[i - 1] : '';
         if (prevChar && isIdentifierChar(prevChar)) {
-            continue;
+            let skip = true;
+            let nextIndex = i + 1;
+            while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
+                nextIndex++;
+            }
+            if (nextIndex < expr.length && symbols.has(expr[nextIndex].toLowerCase())) {
+                skip = false;
+            }
+            if (/\d/.test(prevChar)) {
+                skip = false;
+            }
+            if (skip) {
+                continue;
+            }
         }
 
         let nextIndex = i + 1;

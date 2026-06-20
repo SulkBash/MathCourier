@@ -61,7 +61,20 @@ function preprocessExpr(expr) {
 
         const prevChar = i > 0 ? expr[i - 1] : '';
         if (prevChar && isIdentifierChar(prevChar)) {
-            continue;
+            let skip = true;
+            let nextIndex = i + 1;
+            while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
+                nextIndex++;
+            }
+            if (nextIndex < expr.length && symbols.has(expr[nextIndex].toLowerCase())) {
+                skip = false;
+            }
+            if (/\d/.test(prevChar)) {
+                skip = false;
+            }
+            if (skip) {
+                continue;
+            }
         }
 
         let nextIndex = i + 1;
@@ -180,7 +193,7 @@ function sampleVectorField3d(components, opts) {
                             points.push({ x, y, z, u, v, w, mag });
                         }
                     }
-                } catch (err) {}
+                } catch (err) { }
             }
         }
     }
@@ -297,7 +310,7 @@ function buildExplicitSurfaceFromLinearZ(combinedExpr, opts) {
                         continue;
                     }
                 }
-            } catch (err) {}
+            } catch (err) { }
 
             row.push(null);
         }
@@ -319,7 +332,7 @@ function buildExplicitSurfaceFromLinearZ(combinedExpr, opts) {
     try {
         const explicitNode = math.simplify(`-(${zFreeNode.toString()}) / (${zCoeffNode.toString()})`);
         latexText = `z = ${explicitNode.toTex()}`;
-    } catch (err) {}
+    } catch (err) { }
 
     return {
         type: 'surface',
@@ -446,7 +459,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                         yVals.push(y);
                         zVals.push(z);
                     }
-                } catch (err) {}
+                } catch (err) { }
             }
 
             plotData = { x: xVals, y: yVals, z: zVals };
@@ -520,18 +533,137 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                     const zMax = (opts.zDomain && opts.zDomain[1] !== undefined) ? opts.zDomain[1] : xMax;
                     opts.zDomain = [zMin, zMax];
 
-                    const gridSteps = 30;
+                    // Coarse pass to detect active bounding box containing the isosurface zero-crossings
+                    const coarseSteps = 30;
+                    const coarseV = [];
+                    for (let i = 0; i <= coarseSteps; i++) {
+                        const x = xMin + i * (xMax - xMin) / coarseSteps;
+                        const row = [];
+                        for (let j = 0; j <= coarseSteps; j++) {
+                            const y = yMin + j * (yMax - yMin) / coarseSteps;
+                            const col = [];
+                            for (let k = 0; k <= coarseSteps; k++) {
+                                const z = zMin + k * (zMax - zMin) / coarseSteps;
+                                let val = NaN;
+                                try {
+                                    val = toReal(compiled.evaluate({ x, y, z }));
+                                } catch (e) { }
+                                col.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                            }
+                            row.push(col);
+                        }
+                        coarseV.push(row);
+                    }
+
+                    const activeX = [];
+                    const activeY = [];
+                    const activeZ = [];
+
+                    for (let i = 0; i <= coarseSteps; i++) {
+                        const x = xMin + i * (xMax - xMin) / coarseSteps;
+                        for (let j = 0; j <= coarseSteps; j++) {
+                            const y = yMin + j * (yMax - yMin) / coarseSteps;
+                            for (let k = 0; k <= coarseSteps; k++) {
+                                const z = zMin + k * (zMax - zMin) / coarseSteps;
+                                const val = coarseV[i][j][k];
+                                if (isNaN(val)) continue;
+
+                                let hasCrossing = false;
+                                const neighbors = [
+                                    [i + 1, j, k],
+                                    [i, j + 1, k],
+                                    [i, j, k + 1],
+                                    [i - 1, j, k],
+                                    [i, j - 1, k],
+                                    [i, j, k - 1]
+                                ];
+
+                                for (const [ni, nj, nk] of neighbors) {
+                                    if (ni >= 0 && ni <= coarseSteps &&
+                                        nj >= 0 && nj <= coarseSteps &&
+                                        nk >= 0 && nk <= coarseSteps) {
+                                        const nVal = coarseV[ni][nj][nk];
+                                        if (!isNaN(nVal) && val * nVal <= 0) {
+                                            hasCrossing = true;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (hasCrossing) {
+                                    activeX.push(x);
+                                    activeY.push(y);
+                                    activeZ.push(z);
+                                }
+                            }
+                        }
+                    }
+
+                    let evalXMin = xMin;
+                    let evalXMax = xMax;
+                    let evalYMin = yMin;
+                    let evalYMax = yMax;
+                    let evalZMin = zMin;
+                    let evalZMax = zMax;
+
+                    if (activeX.length > 0) {
+                        const rawMinX = Math.min(...activeX);
+                        const rawMaxX = Math.max(...activeX);
+                        const rawMinY = Math.min(...activeY);
+                        const rawMaxY = Math.max(...activeY);
+                        const rawMinZ = Math.min(...activeZ);
+                        const rawMaxZ = Math.max(...activeZ);
+
+                        const padX = (rawMaxX - rawMinX) * 0.15 || 0.2;
+                        const padY = (rawMaxY - rawMinY) * 0.15 || 0.2;
+                        const padZ = (rawMaxZ - rawMinZ) * 0.15 || 0.2;
+
+                        evalXMin = Math.max(xMin, rawMinX - padX);
+                        evalXMax = Math.min(xMax, rawMaxX + padX);
+                        evalYMin = Math.max(yMin, rawMinY - padY);
+                        evalYMax = Math.min(yMax, rawMaxY + padY);
+                        evalZMin = Math.max(zMin, rawMinZ - padZ);
+                        evalZMax = Math.min(zMax, rawMaxZ + padZ);
+
+                        if (evalXMax - evalXMin < 0.5) {
+                            const cx = (evalXMin + evalXMax) / 2;
+                            evalXMin = Math.max(xMin, cx - 0.25);
+                            evalXMax = Math.min(xMax, cx + 0.25);
+                        }
+                        if (evalYMax - evalYMin < 0.5) {
+                            const cy = (evalYMin + evalYMax) / 2;
+                            evalYMin = Math.max(yMin, cy - 0.25);
+                            evalYMax = Math.min(yMax, cy + 0.25);
+                        }
+                        if (evalZMax - evalZMin < 0.5) {
+                            const cz = (evalZMin + evalZMax) / 2;
+                            evalZMin = Math.max(zMin, cz - 0.25);
+                            evalZMax = Math.min(zMax, cz + 0.25);
+                        }
+
+                        if (!hasCustomXDomain) {
+                            opts.xDomain = [evalXMin, evalXMax];
+                        }
+                        if (!hasCustomYDomain) {
+                            opts.yDomain = [evalYMin, evalYMax];
+                        }
+                        if (!hasCustomZDomain) {
+                            opts.zDomain = [evalZMin, evalZMax];
+                        }
+                    }
+
+                    const gridSteps = 35;
                     const xVals = [];
                     const yVals = [];
                     const zVals = [];
                     const valueVals = [];
 
                     for (let i = 0; i <= gridSteps; i++) {
-                        const x = xMin + i * (xMax - xMin) / gridSteps;
+                        const x = evalXMin + i * (evalXMax - evalXMin) / gridSteps;
                         for (let j = 0; j <= gridSteps; j++) {
-                            const y = yMin + j * (yMax - yMin) / gridSteps;
+                            const y = evalYMin + j * (evalYMax - evalYMin) / gridSteps;
                             for (let k = 0; k <= gridSteps; k++) {
-                                const z = zMin + k * (zMax - zMin) / gridSteps;
+                                const z = evalZMin + k * (evalZMax - evalZMin) / gridSteps;
                                 xVals.push(x);
                                 yVals.push(y);
                                 zVals.push(z);
@@ -687,7 +819,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             try {
                 await compileVideo(path.join(tempDirPath, 'frame_%03d.jpg'), mp4Path, 12);
                 const videoBuf = fs.readFileSync(mp4Path);
-                
+
                 // Cleanup temp folder & reset page state
                 fs.rmSync(tempDirPath, { recursive: true, force: true });
                 await cleanupPlotly();
@@ -703,7 +835,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 };
             } catch (ffmpegErr) {
                 console.warn('Failed to compile video with ffmpeg:', ffmpegErr.message);
-                
+
                 // Graceful fallback: return the first frame as static JPEG
                 const firstFramePath = path.join(tempDirPath, 'frame_000.jpg');
                 let fallbackBuf = null;
