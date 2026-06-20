@@ -6,8 +6,8 @@ async function handlePlotCommand(input) {
     let isAnimated = false;
     let animationVar = null;
 
-    // Parse animation flag: -a, -ax, -at, -aa, etc.
-    const matchAnim = expr.match(/^-a([a-zA-Z])?(?=\s|$)/i);
+    // Parse animation flag: -e, -ex, -et, -ea, etc.
+    const matchAnim = expr.match(/^-e([a-zA-Z])?(?=\s|$)/i);
     if (matchAnim) {
         isAnimated = true;
         animationVar = matchAnim[1] ? matchAnim[1].toLowerCase() : null;
@@ -37,7 +37,7 @@ async function handlePlotCommand(input) {
         isAnimated,
         animationVar
     };
-    
+
     if (domains.length > 0) {
         opts.domains = domains;
     }
