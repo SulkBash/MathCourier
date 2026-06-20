@@ -49,6 +49,10 @@ async function runTests() {
         handlePlot3dCommand('x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
     );
 
+    await runTest('3D Static Surface From Linear Z Equation', () =>
+        handlePlot3dCommand('4x^3 + 2yx + z = 0 [-10, 10] [-10, 10]')
+    );
+
     await runTest('3D Animated Implicit Sphere', () =>
         handlePlot3dCommand('-a x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
     );

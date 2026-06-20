@@ -5,6 +5,7 @@ const { splitByTopLevelCommas } = require('./plot');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const ZERO_TOLERANCE = 1e-9;
 
 // Coerce mathjs result to a plain number
 function toReal(val) {
@@ -27,6 +28,127 @@ function preprocessExpr(expr) {
         .replace(/([xXyYzZ])\s*([xXyYzZ])/g, '$1*$2')
         .replace(/([xXyYzZ])\s*([xXyYzZ])/g, '$1*$2')
         .replace(/([xXyYzZ])\s*\(/g, '$1*(');
+}
+
+function nodeContainsSymbol(node, symbolName) {
+    let found = false;
+    node.traverse((child) => {
+        if (child && child.isSymbolNode && child.name === symbolName) {
+            found = true;
+        }
+    });
+    return found;
+}
+
+function isZeroNode(node) {
+    const simplified = math.simplify(node);
+    if (simplified.toString() === '0') {
+        return true;
+    }
+
+    if (nodeContainsSymbol(simplified, 'x') || nodeContainsSymbol(simplified, 'y') || nodeContainsSymbol(simplified, 'z')) {
+        return false;
+    }
+
+    try {
+        const value = toReal(simplified.compile().evaluate({ x: 1, y: 1, z: 1 }));
+        return !isNaN(value) && isFinite(value) && Math.abs(value) < ZERO_TOLERANCE;
+    } catch (err) {
+        return false;
+    }
+}
+
+function substituteSymbolWithZero(node, symbolName) {
+    return node.transform((child) => {
+        if (child && child.isSymbolNode && child.name === symbolName) {
+            return math.parse('0');
+        }
+        return child;
+    });
+}
+
+function buildExplicitSurfaceFromLinearZ(combinedExpr, opts) {
+    const combinedNode = math.parse(combinedExpr);
+    const zCoeffNode = math.simplify(math.derivative(combinedNode, 'z'));
+
+    if (isZeroNode(zCoeffNode)) {
+        return null;
+    }
+
+    const zSecondDerivative = math.simplify(math.derivative(zCoeffNode, 'z'));
+    if (!isZeroNode(zSecondDerivative)) {
+        return null;
+    }
+
+    const zFreeNode = math.simplify(substituteSymbolWithZero(combinedNode, 'z'));
+    const zCoeffCompiled = zCoeffNode.compile();
+    const zFreeCompiled = zFreeNode.compile();
+
+    const xMin = opts.xDomain[0];
+    const xMax = opts.xDomain[1];
+    const yMin = opts.yDomain[0];
+    const yMax = opts.yDomain[1];
+    const gridSteps = 40;
+    const xGrid = [];
+    const yGrid = [];
+
+    for (let i = 0; i <= gridSteps; i++) {
+        xGrid.push(xMin + i * (xMax - xMin) / gridSteps);
+    }
+    for (let j = 0; j <= gridSteps; j++) {
+        yGrid.push(yMin + j * (yMax - yMin) / gridSteps);
+    }
+
+    const zGrid = [];
+    const allZ = [];
+
+    for (let j = 0; j <= gridSteps; j++) {
+        const row = [];
+        const y = yGrid[j];
+        for (let i = 0; i <= gridSteps; i++) {
+            const x = xGrid[i];
+
+            try {
+                const zCoeff = toReal(zCoeffCompiled.evaluate({ x, y }));
+                const zFree = toReal(zFreeCompiled.evaluate({ x, y }));
+
+                if (!isNaN(zCoeff) && isFinite(zCoeff) && Math.abs(zCoeff) > ZERO_TOLERANCE && !isNaN(zFree) && isFinite(zFree)) {
+                    const zValue = -zFree / zCoeff;
+                    if (!isNaN(zValue) && isFinite(zValue)) {
+                        row.push(zValue);
+                        allZ.push(zValue);
+                        continue;
+                    }
+                }
+            } catch (err) {}
+
+            row.push(null);
+        }
+        zGrid.push(row);
+    }
+
+    if (allZ.length === 0) {
+        return null;
+    }
+
+    if (!opts.zDomain) {
+        const zMin = Math.min(...allZ);
+        const zMax = Math.max(...allZ);
+        const margin = (zMax - zMin) * 0.1 || 0.5;
+        opts.zDomain = [zMin - margin, zMax + margin];
+    }
+
+    let latexText = '';
+    try {
+        const explicitNode = math.simplify(`-(${zFreeNode.toString()}) / (${zCoeffNode.toString()})`);
+        latexText = `z = ${explicitNode.toTex()}`;
+    } catch (err) {}
+
+    return {
+        type: 'surface',
+        plotData: { x: xGrid, y: yGrid, z: zGrid },
+        latexText
+    };
 }
 
 // Compile frame sequence into an H.264 MP4 using ffmpeg
@@ -66,6 +188,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
     const expr = rawExpr.trim();
     const graphStyle = config.style.graph || {};
+    const hasCustomXDomain = Array.isArray(customOptions.xDomain);
     const opts = {
         width: graphStyle.width || 600,
         height: graphStyle.height || 450,
@@ -74,8 +197,8 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
         curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
         lineWidth: graphStyle.lineWidth || 6,
-        xDomain: customOptions.xDomain || [-5, 5],
-        yDomain: customOptions.yDomain || [-5, 5],
+        xDomain: customOptions.xDomain || graphStyle.defaultXDomain || [-10, 10],
+        yDomain: customOptions.yDomain || graphStyle.defaultYDomain || [-10, 10],
         zDomain: customOptions.zDomain || null,
         isAnimated: customOptions.isAnimated || false
     };
@@ -105,8 +228,8 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             const zCompiled = math.compile(preprocessExpr(zExpr));
 
             // Default parametric range [0, 2*pi]
-            const tMin = opts.xDomain[0] !== -5 ? opts.xDomain[0] : 0;
-            const tMax = opts.xDomain[1] !== 5 ? opts.xDomain[1] : 2 * Math.PI;
+            const tMin = hasCustomXDomain ? opts.xDomain[0] : 0;
+            const tMax = hasCustomXDomain ? opts.xDomain[1] : 2 * Math.PI;
             opts.xDomain = [tMin, tMax]; // Override for graph setup range mapping (internally handled)
 
             const steps = 250;
@@ -178,50 +301,62 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             }
 
             if (isImplicit) {
-                type = 'implicit';
                 const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
-                const compiled = math.compile(combined);
+                const projectedSurface = buildExplicitSurfaceFromLinearZ(combined, opts);
 
-                const xMin = opts.xDomain[0];
-                const xMax = opts.xDomain[1];
-                const yMin = opts.yDomain[0];
-                const yMax = opts.yDomain[1];
+                if (projectedSurface) {
+                    type = projectedSurface.type;
+                    plotData = projectedSurface.plotData;
+                    try {
+                        latexText = projectedSurface.latexText || `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
+                    } catch (e) {
+                        latexText = projectedSurface.latexText || `${lhs} = ${rhs}`;
+                    }
+                } else {
+                    type = 'implicit';
+                    const compiled = math.compile(combined);
 
-                const zMin = (opts.zDomain && opts.zDomain[0] !== undefined) ? opts.zDomain[0] : xMin;
-                const zMax = (opts.zDomain && opts.zDomain[1] !== undefined) ? opts.zDomain[1] : xMax;
-                opts.zDomain = [zMin, zMax];
+                    const xMin = opts.xDomain[0];
+                    const xMax = opts.xDomain[1];
+                    const yMin = opts.yDomain[0];
+                    const yMax = opts.yDomain[1];
 
-                const gridSteps = 30;
-                const xVals = [];
-                const yVals = [];
-                const zVals = [];
-                const valueVals = [];
+                    const zMin = (opts.zDomain && opts.zDomain[0] !== undefined) ? opts.zDomain[0] : xMin;
+                    const zMax = (opts.zDomain && opts.zDomain[1] !== undefined) ? opts.zDomain[1] : xMax;
+                    opts.zDomain = [zMin, zMax];
 
-                for (let i = 0; i <= gridSteps; i++) {
-                    const x = xMin + i * (xMax - xMin) / gridSteps;
-                    for (let j = 0; j <= gridSteps; j++) {
-                        const y = yMin + j * (yMax - yMin) / gridSteps;
-                        for (let k = 0; k <= gridSteps; k++) {
-                            const z = zMin + k * (zMax - zMin) / gridSteps;
-                            xVals.push(x);
-                            yVals.push(y);
-                            zVals.push(z);
-                            try {
-                                const val = toReal(compiled.evaluate({ x, y, z }));
-                                valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
-                            } catch (e) {
-                                valueVals.push(NaN);
+                    const gridSteps = 30;
+                    const xVals = [];
+                    const yVals = [];
+                    const zVals = [];
+                    const valueVals = [];
+
+                    for (let i = 0; i <= gridSteps; i++) {
+                        const x = xMin + i * (xMax - xMin) / gridSteps;
+                        for (let j = 0; j <= gridSteps; j++) {
+                            const y = yMin + j * (yMax - yMin) / gridSteps;
+                            for (let k = 0; k <= gridSteps; k++) {
+                                const z = zMin + k * (zMax - zMin) / gridSteps;
+                                xVals.push(x);
+                                yVals.push(y);
+                                zVals.push(z);
+                                try {
+                                    const val = toReal(compiled.evaluate({ x, y, z }));
+                                    valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                                } catch (e) {
+                                    valueVals.push(NaN);
+                                }
                             }
                         }
                     }
-                }
 
-                plotData = { x: xVals, y: yVals, z: zVals, value: valueVals };
+                    plotData = { x: xVals, y: yVals, z: zVals, value: valueVals };
 
-                try {
-                    latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
-                } catch (e) {
-                    latexText = `${lhs} = ${rhs}`;
+                    try {
+                        latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
+                    } catch (e) {
+                        latexText = `${lhs} = ${rhs}`;
+                    }
                 }
             } else {
                 // Explicit surface z = f(x, y)
