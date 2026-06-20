@@ -7,7 +7,7 @@ async function handlePlotCommand(input) {
     let animationVar = null;
 
     // Parse animation flag: -e, -ex, -et, -ea, etc.
-    const matchAnim = expr.match(/^-e([a-zA-Z])?(?=\s|$)/i);
+    const matchAnim = expr.match(/^-e(?:\[([a-zA-Z][a-zA-Z0-9_]*)\]|([a-zA-Z]))?(?=\s|$)/i);
     if (matchAnim) {
         isAnimated = true;
         animationVar = matchAnim[1] ? matchAnim[1].toLowerCase() : null;
