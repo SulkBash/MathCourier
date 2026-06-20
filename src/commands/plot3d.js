@@ -4,6 +4,9 @@ const renderer = require('../renderer');
 async function handlePlot3dCommand(input) {
     let expr = input.trim();
     let isAnimated = false;
+    let isCameraAnimated = false;
+    let isEvolutionAnimated = false;
+    let evolutionVar = null;
     let animationAxis = 'z';
     let animationMode = 'swing';
     let animationAngle = null;
@@ -18,6 +21,7 @@ async function handlePlot3dCommand(input) {
         const match = expr.match(/^-a(x|y|z)?(\d+)?(?=\s|$)/i);
         if (match) {
             isAnimated = true;
+            isCameraAnimated = true;
             const axis = match[1] ? match[1].toLowerCase() : 'z';
             const angleStr = match[2];
 
@@ -31,6 +35,16 @@ async function handlePlot3dCommand(input) {
             }
 
             expr = expr.slice(match[0].length).trim();
+            flagMatched = true;
+            continue;
+        }
+
+        const matchEvolution = expr.match(/^-e(?:\[([a-zA-Z][a-zA-Z0-9_]*)\]|([a-zA-Z]))?(?=\s|$)/i);
+        if (matchEvolution) {
+            isAnimated = true;
+            isEvolutionAnimated = true;
+            evolutionVar = (matchEvolution[1] || matchEvolution[2] || '').toLowerCase() || null;
+            expr = expr.slice(matchEvolution[0].length).trim();
             flagMatched = true;
         }
     }
@@ -54,7 +68,16 @@ async function handlePlot3dCommand(input) {
 
     expr = expr.trim();
 
-    const opts = { isAnimated, animationMode, animationAxis, animationAngle, isFlux };
+    const opts = {
+        isAnimated,
+        isCameraAnimated,
+        isEvolutionAnimated,
+        evolutionVar,
+        animationMode,
+        animationAxis,
+        animationAngle,
+        isFlux
+    };
     if (domains.length > 0) {
         opts.domains = domains;
     }

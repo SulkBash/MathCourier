@@ -155,6 +155,216 @@ function buildAnimationCamera(progress, mode = 'swing', axis = 'z', customAngle 
     return buildSwingCamera(progress, axis, customAngle);
 }
 
+function normalizeAnimationIdentifier(identifier) {
+    if (!identifier) {
+        return null;
+    }
+    return String(identifier).trim().toLowerCase() || null;
+}
+
+function mergeEvalScope(opts, localScope = {}) {
+    return Object.assign({}, opts.evalScope || {}, localScope);
+}
+
+function cloneDomain(domain) {
+    return Array.isArray(domain) ? [...domain] : domain;
+}
+
+function clonePlot3dOptions(baseOpts) {
+    return {
+        ...baseOpts,
+        xDomain: cloneDomain(baseOpts.xDomain),
+        yDomain: cloneDomain(baseOpts.yDomain),
+        zDomain: cloneDomain(baseOpts.zDomain),
+        camera: baseOpts.camera
+            ? {
+                eye: { ...baseOpts.camera.eye },
+                up: { ...baseOpts.camera.up },
+                center: { ...baseOpts.camera.center }
+            }
+            : buildDefaultCamera(),
+        evalScope: baseOpts.evalScope ? { ...baseOpts.evalScope } : undefined
+    };
+}
+
+function isTracingLimited(opts, symbolName, value) {
+    return opts.tracingVar === symbolName &&
+        opts.tracingLimit !== undefined &&
+        opts.tracingLimit !== null &&
+        typeof value === 'number' &&
+        value > opts.tracingLimit;
+}
+
+function shouldSkipCartesianPoint(opts, x, y, z) {
+    return isTracingLimited(opts, 'x', x) ||
+        isTracingLimited(opts, 'y', y) ||
+        isTracingLimited(opts, 'z', z);
+}
+
+function appendEvolutionLatex(latexText, evolutionVar, evolutionValue) {
+    if (!evolutionVar || typeof evolutionValue !== 'number' || !isFinite(evolutionValue)) {
+        return latexText;
+    }
+    return `${latexText}\\quad (${evolutionVar} = ${evolutionValue.toFixed(2)})`;
+}
+
+function getPlot3dTraceVariables({ isVectorField, isParametricSurface, isExplicitPolarSurface, isParametricCurve, coordSystem }) {
+    if (isParametricSurface) {
+        return ['u', 'v'];
+    }
+
+    if (isExplicitPolarSurface) {
+        return coordSystem === 'spherical' ? ['theta', 'phi'] : ['theta', 'z'];
+    }
+
+    if (isParametricCurve) {
+        return ['t'];
+    }
+
+    if (isVectorField) {
+        return ['x', 'y', 'z'];
+    }
+
+    return ['x', 'y', 'z'];
+}
+
+function getDefaultPlot3dEvolutionVar(expr, traceVars) {
+    if (/\bt\b/i.test(expr) && !traceVars.includes('t')) {
+        return 't';
+    }
+    return traceVars[0] || 't';
+}
+
+function resolvePlot3dTraceBounds(tracingVar, domainInfo, coordSystem) {
+    switch (tracingVar) {
+        case 'x':
+            return domainInfo.xDomain || null;
+        case 'y':
+            return domainInfo.yDomain || null;
+        case 'z':
+            if (domainInfo.parameterDomain2 && coordSystem === 'cylindrical') {
+                return domainInfo.parameterDomain2;
+            }
+            return domainInfo.zDomain || null;
+        case 'u':
+        case 'theta':
+            return domainInfo.parameterDomain1 || null;
+        case 'v':
+        case 'phi':
+            return domainInfo.parameterDomain2 || null;
+        case 't':
+            return domainInfo.parameterDomain1 || null;
+        default:
+            return null;
+    }
+}
+
+function resolvePlot3dDomains({
+    customOptions,
+    domains,
+    graphStyle,
+    coordSystem,
+    isVectorField,
+    isParametricSurface,
+    isExplicitPolarSurface,
+    isParametricCurve,
+    isImplicitEquation,
+    hasEvolutionSweep
+}) {
+    const defaultEvolutionDomain = [0, 2 * Math.PI];
+    const defaultXDomain = graphStyle.defaultXDomain || [-10, 10];
+    const defaultYDomain = graphStyle.defaultYDomain || [-10, 10];
+
+    if (customOptions.pdeData) {
+        return {
+            xDomain: customOptions.xDomain,
+            yDomain: customOptions.yDomain,
+            zDomain: customOptions.zDomain,
+            parameterDomain1: null,
+            parameterDomain2: null,
+            evolutionDomain: null,
+            providedDomains: { x: true, y: true, z: true }
+        };
+    }
+
+    let xDomain;
+    let yDomain;
+    let zDomain;
+    let parameterDomain1 = null;
+    let parameterDomain2 = null;
+    let evolutionDomain = null;
+    const providedDomains = { x: false, y: false, z: false };
+
+    if (isVectorField) {
+        xDomain = domains.length >= 1 ? domains[0] : defaultXDomain;
+        yDomain = domains.length >= 2 ? domains[1] : [...xDomain];
+        zDomain = domains.length >= 3 ? domains[2] : [...xDomain];
+        evolutionDomain = hasEvolutionSweep ? (domains.length >= 4 ? domains[3] : defaultEvolutionDomain) : null;
+        providedDomains.x = domains.length >= 1;
+        providedDomains.y = domains.length >= 2;
+        providedDomains.z = domains.length >= 3;
+    } else if (isParametricSurface || isExplicitPolarSurface) {
+        const defaultU = coordSystem === 'spherical' ? [0, Math.PI] : [0, 2 * Math.PI];
+        const defaultV = coordSystem === 'spherical'
+            ? [0, 2 * Math.PI]
+            : (coordSystem === 'cylindrical' ? [-5, 5] : [0, 2 * Math.PI]);
+
+        parameterDomain1 = domains.length >= 1 ? domains[0] : defaultU;
+        parameterDomain2 = domains.length >= 2 ? domains[1] : defaultV;
+        evolutionDomain = hasEvolutionSweep ? (domains.length >= 3 ? domains[2] : defaultEvolutionDomain) : null;
+
+        const displayOffset = hasEvolutionSweep ? 3 : 2;
+        xDomain = domains.length >= displayOffset + 1 ? domains[displayOffset] : defaultXDomain;
+        yDomain = domains.length >= displayOffset + 2 ? domains[displayOffset + 1] : [...xDomain];
+        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : [...xDomain];
+        providedDomains.x = domains.length >= displayOffset + 1;
+        providedDomains.y = domains.length >= displayOffset + 2;
+        providedDomains.z = domains.length >= displayOffset + 3;
+    } else if (isParametricCurve) {
+        parameterDomain1 = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
+        evolutionDomain = hasEvolutionSweep ? (domains.length >= 2 ? domains[1] : defaultEvolutionDomain) : null;
+
+        const displayOffset = hasEvolutionSweep ? 2 : 1;
+        xDomain = domains.length >= displayOffset + 1 ? domains[displayOffset] : defaultXDomain;
+        yDomain = domains.length >= displayOffset + 2 ? domains[displayOffset + 1] : [...xDomain];
+        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : [...xDomain];
+        providedDomains.x = domains.length >= displayOffset + 1;
+        providedDomains.y = domains.length >= displayOffset + 2;
+        providedDomains.z = domains.length >= displayOffset + 3;
+    } else if (isImplicitEquation) {
+        xDomain = domains.length >= 1 ? domains[0] : defaultXDomain;
+        yDomain = domains.length >= 2 ? domains[1] : defaultYDomain;
+        zDomain = domains.length >= 3 ? domains[2] : null;
+        evolutionDomain = hasEvolutionSweep ? (domains.length >= 4 ? domains[3] : defaultEvolutionDomain) : null;
+        providedDomains.x = domains.length >= 1;
+        providedDomains.y = domains.length >= 2;
+        providedDomains.z = domains.length >= 3;
+    } else {
+        xDomain = domains.length >= 1 ? domains[0] : defaultXDomain;
+        yDomain = domains.length >= 2 ? domains[1] : defaultYDomain;
+        if (hasEvolutionSweep) {
+            evolutionDomain = domains.length >= 3 ? domains[2] : defaultEvolutionDomain;
+            zDomain = domains.length >= 4 ? domains[3] : null;
+            providedDomains.z = domains.length >= 4;
+        } else {
+            zDomain = domains.length >= 3 ? domains[2] : null;
+            providedDomains.z = domains.length >= 3;
+        }
+        providedDomains.x = domains.length >= 1;
+        providedDomains.y = domains.length >= 2;
+    }
+
+    return {
+        xDomain,
+        yDomain,
+        zDomain,
+        parameterDomain1,
+        parameterDomain2,
+        evolutionDomain,
+        providedDomains
+    };
+}
+
 // Coerce mathjs result to a plain number
 function toReal(val) {
     if (val && typeof val === 'object') {
@@ -362,14 +572,18 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
             const y = yMin + j * yStep;
             for (let k = 0; k <= steps; k++) {
                 const z = zMin + k * zStep;
+                if (shouldSkipCartesianPoint(opts, x, y, z)) {
+                    continue;
+                }
                 try {
                     let uVal, vVal, wVal;
                     if (coordSystem === 'cylindrical') {
                         const r = Math.sqrt(x*x + y*y);
                         const theta = Math.atan2(y, x);
-                        const Fr = toReal(xCompiled.evaluate({ r, theta, z }));
-                        const Ftheta = toReal(yCompiled.evaluate({ r, theta, z }));
-                        const Fz = toReal(zCompiled.evaluate({ r, theta, z }));
+                        const scope = mergeEvalScope(opts, { r, theta, z });
+                        const Fr = toReal(xCompiled.evaluate(scope));
+                        const Ftheta = toReal(yCompiled.evaluate(scope));
+                        const Fz = toReal(zCompiled.evaluate(scope));
                         
                         uVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
                         vVal = Fr * Math.sin(theta) + Ftheta * Math.cos(theta);
@@ -378,17 +592,19 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
                         const r = Math.sqrt(x*x + y*y + z*z);
                         const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
                         const phi = Math.atan2(y, x);
-                        const Fr = toReal(xCompiled.evaluate({ r, theta, phi }));
-                        const Ftheta = toReal(yCompiled.evaluate({ r, theta, phi }));
-                        const Fphi = toReal(zCompiled.evaluate({ r, theta, phi }));
+                        const scope = mergeEvalScope(opts, { r, theta, phi });
+                        const Fr = toReal(xCompiled.evaluate(scope));
+                        const Ftheta = toReal(yCompiled.evaluate(scope));
+                        const Fphi = toReal(zCompiled.evaluate(scope));
                         
                         uVal = Fr * Math.sin(theta) * Math.cos(phi) + Ftheta * Math.cos(theta) * Math.cos(phi) - Fphi * Math.sin(phi);
                         vVal = Fr * Math.sin(theta) * Math.sin(phi) + Ftheta * Math.cos(theta) * Math.sin(phi) + Fphi * Math.cos(phi);
                         wVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
                     } else {
-                        uVal = toReal(xCompiled.evaluate({ x, y, z }));
-                        vVal = toReal(yCompiled.evaluate({ x, y, z }));
-                        wVal = toReal(zCompiled.evaluate({ x, y, z }));
+                        const scope = mergeEvalScope(opts, { x, y, z });
+                        uVal = toReal(xCompiled.evaluate(scope));
+                        vVal = toReal(yCompiled.evaluate(scope));
+                        wVal = toReal(zCompiled.evaluate(scope));
                     }
 
                     if (!isNaN(uVal) && isFinite(uVal) && !isNaN(vVal) && isFinite(vVal) && !isNaN(wVal) && isFinite(wVal)) {
@@ -431,19 +647,34 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
     const yCompiled = math.compile(preprocessExpr(yExpr));
     const zCompiled = math.compile(preprocessExpr(zExpr));
 
-    const [xMin, xMax] = opts.xDomain;
-    const [yMin, yMax] = opts.yDomain;
-    const [zMin, zMax] = opts.zDomain;
+    const [origXMin, origXMax] = opts.xDomain;
+    const [origYMin, origYMax] = opts.yDomain;
+    const [origZMin, origZMax] = opts.zDomain;
+    const xMin = origXMin;
+    const yMin = origYMin;
+    const zMin = origZMin;
+    const xMax = opts.tracingVar === 'x' && opts.tracingLimit !== undefined ? Math.min(origXMax, opts.tracingLimit) : origXMax;
+    const yMax = opts.tracingVar === 'y' && opts.tracingLimit !== undefined ? Math.min(origYMax, opts.tracingLimit) : origYMax;
+    const zMax = opts.tracingVar === 'z' && opts.tracingLimit !== undefined ? Math.min(origZMax, opts.tracingLimit) : origZMax;
+
+    if (xMax <= xMin || yMax <= yMin || zMax <= zMin) {
+        return null;
+    }
 
     const evalVectorField = (x, y, z) => {
+        if (shouldSkipCartesianPoint(opts, x, y, z)) {
+            return null;
+        }
+
         try {
             let uVal, vVal, wVal;
             if (coordSystem === 'cylindrical') {
                 const r = Math.sqrt(x*x + y*y);
                 const theta = Math.atan2(y, x);
-                const Fr = toReal(xCompiled.evaluate({ r, theta, z }));
-                const Ftheta = toReal(yCompiled.evaluate({ r, theta, z }));
-                const Fz = toReal(zCompiled.evaluate({ r, theta, z }));
+                const scope = mergeEvalScope(opts, { r, theta, z });
+                const Fr = toReal(xCompiled.evaluate(scope));
+                const Ftheta = toReal(yCompiled.evaluate(scope));
+                const Fz = toReal(zCompiled.evaluate(scope));
                 
                 uVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
                 vVal = Fr * Math.sin(theta) + Ftheta * Math.cos(theta);
@@ -452,17 +683,19 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
                 const r = Math.sqrt(x*x + y*y + z*z);
                 const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
                 const phi = Math.atan2(y, x);
-                const Fr = toReal(xCompiled.evaluate({ r, theta, phi }));
-                const Ftheta = toReal(yCompiled.evaluate({ r, theta, phi }));
-                const Fphi = toReal(zCompiled.evaluate({ r, theta, phi }));
+                const scope = mergeEvalScope(opts, { r, theta, phi });
+                const Fr = toReal(xCompiled.evaluate(scope));
+                const Ftheta = toReal(yCompiled.evaluate(scope));
+                const Fphi = toReal(zCompiled.evaluate(scope));
                 
                 uVal = Fr * Math.sin(theta) * Math.cos(phi) + Ftheta * Math.cos(theta) * Math.cos(phi) - Fphi * Math.sin(phi);
                 vVal = Fr * Math.sin(theta) * Math.sin(phi) + Ftheta * Math.cos(theta) * Math.sin(phi) + Fphi * Math.cos(phi);
                 wVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
             } else {
-                uVal = toReal(xCompiled.evaluate({ x, y, z }));
-                vVal = toReal(yCompiled.evaluate({ x, y, z }));
-                wVal = toReal(zCompiled.evaluate({ x, y, z }));
+                const scope = mergeEvalScope(opts, { x, y, z });
+                uVal = toReal(xCompiled.evaluate(scope));
+                vVal = toReal(yCompiled.evaluate(scope));
+                wVal = toReal(zCompiled.evaluate(scope));
             }
 
             if (isNaN(uVal) || !isFinite(uVal) || isNaN(vVal) || !isFinite(vVal) || isNaN(wVal) || !isFinite(wVal)) {
@@ -751,14 +984,19 @@ function buildExplicitSurfaceFromLinearZ(combinedExpr, opts) {
         const y = yGrid[j];
         for (let i = 0; i <= gridSteps; i++) {
             const x = xGrid[i];
+            if (isTracingLimited(opts, 'x', x) || isTracingLimited(opts, 'y', y)) {
+                row.push(null);
+                continue;
+            }
 
             try {
-                const zCoeff = toReal(zCoeffCompiled.evaluate({ x, y }));
-                const zFree = toReal(zFreeCompiled.evaluate({ x, y }));
+                const scope = mergeEvalScope(opts, { x, y });
+                const zCoeff = toReal(zCoeffCompiled.evaluate(scope));
+                const zFree = toReal(zFreeCompiled.evaluate(scope));
 
                 if (!isNaN(zCoeff) && isFinite(zCoeff) && Math.abs(zCoeff) > ZERO_TOLERANCE && !isNaN(zFree) && isFinite(zFree)) {
                     const zValue = -zFree / zCoeff;
-                    if (!isNaN(zValue) && isFinite(zValue)) {
+                    if (!isNaN(zValue) && isFinite(zValue) && !isTracingLimited(opts, 'z', zValue)) {
                         row.push(zValue);
                         allZ.push(zValue);
                         continue;
@@ -878,6 +1116,615 @@ function compileVideo(frameBuffers, fps = DEFAULT_ANIMATION_FPS) {
     });
 }
 
+function buildPlot3dScene(context, opts) {
+    const {
+        customOptions,
+        expr,
+        namedVectorField,
+        bareTuple,
+        coordSystem,
+        isVectorField,
+        isParametricSurface,
+        isExplicitPolarSurface,
+        isParametricCurve,
+        isImplicitEquation,
+        lhsVal,
+        rhsVal,
+        parameterDomain1,
+        parameterDomain2,
+        providedDomains
+    } = context;
+
+    const getBounds = (arr, fallback) => {
+        if (arr.length === 0) return fallback;
+        const min = Math.min(...arr);
+        const max = Math.max(...arr);
+        const margin = (max - min) * 0.1 || 0.5;
+        return [min - margin, max + margin];
+    };
+
+    let type = '';
+    let plotData = null;
+    let latexText = '';
+
+    if (customOptions.pdeData) {
+        return {
+            success: true,
+            type: 'surface',
+            plotData: customOptions.pdeData,
+            latexText: customOptions.latexText || ''
+        };
+    }
+
+    if (isVectorField) {
+        const isFlux = customOptions.isFlux || false;
+        type = isFlux ? 'flux3d' : 'vector3d';
+        const fieldName = namedVectorField ? namedVectorField.name : 'F';
+        const components = namedVectorField ? namedVectorField.components : bareTuple;
+
+        if (!opts.zDomain) {
+            opts.zDomain = [...opts.xDomain];
+        }
+
+        plotData = isFlux ? sampleFluxLines3d(components, opts, coordSystem) : sampleVectorField3d(components, opts, coordSystem);
+        if (!plotData) {
+            return {
+                success: false,
+                error: isFlux
+                    ? 'No valid flux lines could be computed. Check if the field is defined on the given domains.'
+                    : 'No valid real vectors were computed for this field. Check if the field is defined on the given domains.'
+            };
+        }
+
+        try {
+            const [uExpr, vExpr, wExpr] = components;
+            const texU = math.parse(uExpr).toTex();
+            const texV = math.parse(vExpr).toTex();
+            const texW = math.parse(wExpr).toTex();
+            if (coordSystem === 'cylindrical') {
+                latexText = `\\vec{${fieldName}}(r,\\theta,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+            } else if (coordSystem === 'spherical') {
+                latexText = `\\vec{${fieldName}}(r,\\theta,\\phi) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+            } else {
+                latexText = `\\vec{${fieldName}}(x,y,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+            }
+        } catch (e) {
+            latexText = `\\vec{${fieldName}} = \\left( ${components.join(', ')} \\right)`;
+        }
+
+        return { success: true, type, plotData, latexText };
+    }
+
+    if (isParametricSurface) {
+        type = 'surface';
+        const [xExpr, yExpr, zExpr] = bareTuple.map((value) => value.trim());
+        const xCompiled = math.compile(preprocessExpr(xExpr));
+        const yCompiled = math.compile(preprocessExpr(yExpr));
+        const zCompiled = math.compile(preprocessExpr(zExpr));
+
+        const [uMin, uMax] = parameterDomain1;
+        const [vMin, vMax] = parameterDomain2;
+        const gridSteps = 40;
+        const uStep = (uMax - uMin) / gridSteps;
+        const vStep = (vMax - vMin) / gridSteps;
+
+        const xGrid = [];
+        const yGrid = [];
+        const zGrid = [];
+
+        for (let j = 0; j <= gridSteps; j++) {
+            const v = vMin + j * vStep;
+            const rowX = [];
+            const rowY = [];
+            const rowZ = [];
+            for (let i = 0; i <= gridSteps; i++) {
+                const u = uMin + i * uStep;
+                if (isTracingLimited(opts, 'u', u) || isTracingLimited(opts, 'v', v)) {
+                    rowX.push(null);
+                    rowY.push(null);
+                    rowZ.push(null);
+                    continue;
+                }
+
+                try {
+                    const scope = mergeEvalScope(opts, { u, v });
+                    const xVal = toReal(xCompiled.evaluate(scope));
+                    const yVal = toReal(yCompiled.evaluate(scope));
+                    const zVal = toReal(zCompiled.evaluate(scope));
+                    if (!isNaN(xVal) && isFinite(xVal) && !isNaN(yVal) && isFinite(yVal) && !isNaN(zVal) && isFinite(zVal)) {
+                        rowX.push(xVal);
+                        rowY.push(yVal);
+                        rowZ.push(zVal);
+                    } else {
+                        rowX.push(null);
+                        rowY.push(null);
+                        rowZ.push(null);
+                    }
+                } catch (e) {
+                    rowX.push(null);
+                    rowY.push(null);
+                    rowZ.push(null);
+                }
+            }
+            xGrid.push(rowX);
+            yGrid.push(rowY);
+            zGrid.push(rowZ);
+        }
+
+        plotData = { x: xGrid, y: yGrid, z: zGrid };
+        const flatX = xGrid.flat().filter((value) => value !== null);
+        const flatY = yGrid.flat().filter((value) => value !== null);
+        const flatZ = zGrid.flat().filter((value) => value !== null);
+
+        if (flatX.length === 0) {
+            return { success: false, error: 'No valid real numbers were computed for this surface.' };
+        }
+
+        if (!providedDomains.x) opts.xDomain = getBounds(flatX, [-5, 5]);
+        if (!providedDomains.y) opts.yDomain = getBounds(flatY, [-5, 5]);
+        if (!providedDomains.z && !opts.zDomain) opts.zDomain = getBounds(flatZ, [-5, 5]);
+
+        try {
+            const texX = math.parse(xExpr).toTex();
+            const texY = math.parse(yExpr).toTex();
+            const texZ = math.parse(zExpr).toTex();
+            latexText = `\\vec{r}(u,v) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
+        } catch (e) {
+            latexText = `\\vec{r}(u,v) = \\left( ${xExpr},\\ ${yExpr},\\ ${zExpr} \\right)`;
+        }
+
+        return { success: true, type, plotData, latexText };
+    }
+
+    if (isExplicitPolarSurface) {
+        type = 'surface';
+        const rCompiled = math.compile(preprocessExpr(rhsVal));
+        const [uMin, uMax] = parameterDomain1;
+        const [vMin, vMax] = parameterDomain2;
+        const gridSteps = 40;
+        const uStep = (uMax - uMin) / gridSteps;
+        const vStep = (vMax - vMin) / gridSteps;
+
+        const xGrid = [];
+        const yGrid = [];
+        const zGrid = [];
+
+        for (let j = 0; j <= gridSteps; j++) {
+            const v = vMin + j * vStep;
+            const rowX = [];
+            const rowY = [];
+            const rowZ = [];
+            for (let i = 0; i <= gridSteps; i++) {
+                const u = uMin + i * uStep;
+                const shouldTraceSkip = coordSystem === 'spherical'
+                    ? isTracingLimited(opts, 'theta', u) || isTracingLimited(opts, 'phi', v)
+                    : isTracingLimited(opts, 'theta', u) || isTracingLimited(opts, 'z', v);
+                if (shouldTraceSkip) {
+                    rowX.push(null);
+                    rowY.push(null);
+                    rowZ.push(null);
+                    continue;
+                }
+
+                try {
+                    let rVal;
+                    let xVal;
+                    let yVal;
+                    let zVal;
+
+                    if (coordSystem === 'spherical') {
+                        const scope = mergeEvalScope(opts, { theta: u, phi: v });
+                        rVal = toReal(rCompiled.evaluate(scope));
+                        if (!isNaN(rVal) && isFinite(rVal)) {
+                            xVal = rVal * Math.sin(u) * Math.cos(v);
+                            yVal = rVal * Math.sin(u) * Math.sin(v);
+                            zVal = rVal * Math.cos(u);
+                        }
+                    } else {
+                        const scope = mergeEvalScope(opts, { theta: u, z: v });
+                        rVal = toReal(rCompiled.evaluate(scope));
+                        if (!isNaN(rVal) && isFinite(rVal)) {
+                            xVal = rVal * Math.cos(u);
+                            yVal = rVal * Math.sin(u);
+                            zVal = v;
+                        }
+                    }
+
+                    if (rVal !== undefined && !isNaN(rVal) && isFinite(rVal)) {
+                        rowX.push(xVal);
+                        rowY.push(yVal);
+                        rowZ.push(zVal);
+                    } else {
+                        rowX.push(null);
+                        rowY.push(null);
+                        rowZ.push(null);
+                    }
+                } catch (e) {
+                    rowX.push(null);
+                    rowY.push(null);
+                    rowZ.push(null);
+                }
+            }
+            xGrid.push(rowX);
+            yGrid.push(rowY);
+            zGrid.push(rowZ);
+        }
+
+        plotData = { x: xGrid, y: yGrid, z: zGrid };
+        const flatX = xGrid.flat().filter((value) => value !== null);
+        const flatY = yGrid.flat().filter((value) => value !== null);
+        const flatZ = zGrid.flat().filter((value) => value !== null);
+
+        if (flatX.length === 0) {
+            return { success: false, error: 'No valid real numbers were computed for this surface.' };
+        }
+
+        if (!providedDomains.x) opts.xDomain = getBounds(flatX, [-5, 5]);
+        if (!providedDomains.y) opts.yDomain = getBounds(flatY, [-5, 5]);
+        if (!providedDomains.z && !opts.zDomain) opts.zDomain = getBounds(flatZ, [-5, 5]);
+
+        try {
+            const texR = math.parse(rhsVal).toTex();
+            latexText = `r = ${texR}`;
+        } catch (e) {
+            latexText = `r = ${rhsVal}`;
+        }
+
+        return { success: true, type, plotData, latexText };
+    }
+
+    if (isParametricCurve) {
+        type = 'curve';
+        const [xExpr, yExpr, zExpr] = bareTuple.map((value) => value.trim());
+        const xCompiled = math.compile(preprocessExpr(xExpr));
+        const yCompiled = math.compile(preprocessExpr(yExpr));
+        const zCompiled = math.compile(preprocessExpr(zExpr));
+
+        const [tMin, tMax] = parameterDomain1 || [0, 2 * Math.PI];
+        const steps = 250;
+        const tStep = (tMax - tMin) / steps;
+        const limitT = (opts.tracingVar === 't' && opts.tracingLimit !== undefined) ? Math.min(opts.tracingLimit, tMax) : tMax;
+
+        const xVals = [];
+        const yVals = [];
+        const zVals = [];
+
+        for (let i = 0; i <= steps; i++) {
+            const t = tMin + i * tStep;
+            if (t > limitT) break;
+
+            try {
+                const scope = mergeEvalScope(opts, { t });
+                const x = toReal(xCompiled.evaluate(scope));
+                const y = toReal(yCompiled.evaluate(scope));
+                const z = toReal(zCompiled.evaluate(scope));
+
+                if (!isNaN(x) && isFinite(x) && !isNaN(y) && isFinite(y) && !isNaN(z) && isFinite(z)) {
+                    xVals.push(x);
+                    yVals.push(y);
+                    zVals.push(z);
+                }
+            } catch (err) { }
+        }
+
+        plotData = { x: xVals, y: yVals, z: zVals };
+
+        if (xVals.length === 0) {
+            return {
+                success: false,
+                error: 'No valid real numbers were computed for this curve. Check if the function is defined on the given domain.'
+            };
+        }
+
+        if (!providedDomains.x) opts.xDomain = getBounds(xVals, [-5, 5]);
+        if (!providedDomains.y) opts.yDomain = getBounds(yVals, [-5, 5]);
+        if (!providedDomains.z && !opts.zDomain) opts.zDomain = getBounds(zVals, [-5, 5]);
+
+        try {
+            const texX = math.parse(xExpr).toTex();
+            const texY = math.parse(yExpr).toTex();
+            const texZ = math.parse(zExpr).toTex();
+            latexText = `\\vec{r}(t) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
+        } catch (e) {
+            latexText = `\\vec{r}(t) = \\left( ${xExpr}, ${yExpr}, ${zExpr} \\right)`;
+        }
+
+        return { success: true, type, plotData, latexText };
+    }
+
+    let lhs = lhsVal;
+    let rhs = rhsVal;
+    if (!expr.includes('=')) {
+        lhs = 'z';
+        rhs = expr;
+    }
+
+    if (isImplicitEquation) {
+        const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+        const projectedSurface = buildExplicitSurfaceFromLinearZ(combined, opts);
+
+        if (projectedSurface) {
+            try {
+                latexText = projectedSurface.latexText || `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
+            } catch (e) {
+                latexText = projectedSurface.latexText || `${lhs} = ${rhs}`;
+            }
+            return {
+                success: true,
+                type: projectedSurface.type,
+                plotData: projectedSurface.plotData,
+                latexText
+            };
+        }
+
+        type = 'implicit';
+        const compiled = math.compile(combined);
+        const xMin = opts.xDomain[0];
+        const xMax = opts.xDomain[1];
+        const yMin = opts.yDomain[0];
+        const yMax = opts.yDomain[1];
+
+        const zMin = (opts.zDomain && opts.zDomain[0] !== undefined) ? opts.zDomain[0] : xMin;
+        const zMax = (opts.zDomain && opts.zDomain[1] !== undefined) ? opts.zDomain[1] : xMax;
+        opts.zDomain = [zMin, zMax];
+
+        const coarseSteps = 30;
+        const coarseV = [];
+        for (let i = 0; i <= coarseSteps; i++) {
+            const x = xMin + i * (xMax - xMin) / coarseSteps;
+            const row = [];
+            for (let j = 0; j <= coarseSteps; j++) {
+                const y = yMin + j * (yMax - yMin) / coarseSteps;
+                const col = [];
+                for (let k = 0; k <= coarseSteps; k++) {
+                    const z = zMin + k * (zMax - zMin) / coarseSteps;
+                    if (shouldSkipCartesianPoint(opts, x, y, z)) {
+                        col.push(NaN);
+                        continue;
+                    }
+
+                    let val = NaN;
+                    try {
+                        if (coordSystem === 'spherical') {
+                            const r = Math.sqrt(x*x + y*y + z*z);
+                            const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
+                            const phi = Math.atan2(y, x);
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta, phi })));
+                        } else if (coordSystem === 'cylindrical') {
+                            const r = Math.sqrt(x*x + y*y);
+                            const theta = Math.atan2(y, x);
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta })));
+                        } else {
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z })));
+                        }
+                    } catch (e) { }
+                    col.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                }
+                row.push(col);
+            }
+            coarseV.push(row);
+        }
+
+        const activeX = [];
+        const activeY = [];
+        const activeZ = [];
+
+        for (let i = 0; i <= coarseSteps; i++) {
+            const x = xMin + i * (xMax - xMin) / coarseSteps;
+            for (let j = 0; j <= coarseSteps; j++) {
+                const y = yMin + j * (yMax - yMin) / coarseSteps;
+                for (let k = 0; k <= coarseSteps; k++) {
+                    const z = zMin + k * (zMax - zMin) / coarseSteps;
+                    const val = coarseV[i][j][k];
+                    if (isNaN(val)) continue;
+
+                    let hasCrossing = false;
+                    const neighbors = [
+                        [i + 1, j, k],
+                        [i, j + 1, k],
+                        [i, j, k + 1],
+                        [i - 1, j, k],
+                        [i, j - 1, k],
+                        [i, j, k - 1]
+                    ];
+
+                    for (const [ni, nj, nk] of neighbors) {
+                        if (ni >= 0 && ni <= coarseSteps &&
+                            nj >= 0 && nj <= coarseSteps &&
+                            nk >= 0 && nk <= coarseSteps) {
+                            const nVal = coarseV[ni][nj][nk];
+                            if (!isNaN(nVal) && val * nVal <= 0) {
+                                hasCrossing = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (hasCrossing) {
+                        activeX.push(x);
+                        activeY.push(y);
+                        activeZ.push(z);
+                    }
+                }
+            }
+        }
+
+        let evalXMin = xMin;
+        let evalXMax = xMax;
+        let evalYMin = yMin;
+        let evalYMax = yMax;
+        let evalZMin = zMin;
+        let evalZMax = zMax;
+
+        if (activeX.length > 0) {
+            const rawMinX = Math.min(...activeX);
+            const rawMaxX = Math.max(...activeX);
+            const rawMinY = Math.min(...activeY);
+            const rawMaxY = Math.max(...activeY);
+            const rawMinZ = Math.min(...activeZ);
+            const rawMaxZ = Math.max(...activeZ);
+
+            const padX = (rawMaxX - rawMinX) * 0.15 || 0.2;
+            const padY = (rawMaxY - rawMinY) * 0.15 || 0.2;
+            const padZ = (rawMaxZ - rawMinZ) * 0.15 || 0.2;
+
+            evalXMin = Math.max(xMin, rawMinX - padX);
+            evalXMax = Math.min(xMax, rawMaxX + padX);
+            evalYMin = Math.max(yMin, rawMinY - padY);
+            evalYMax = Math.min(yMax, rawMaxY + padY);
+            evalZMin = Math.max(zMin, rawMinZ - padZ);
+            evalZMax = Math.min(zMax, rawMaxZ + padZ);
+
+            if (evalXMax - evalXMin < 0.5) {
+                const cx = (evalXMin + evalXMax) / 2;
+                evalXMin = Math.max(xMin, cx - 0.25);
+                evalXMax = Math.min(xMax, cx + 0.25);
+            }
+            if (evalYMax - evalYMin < 0.5) {
+                const cy = (evalYMin + evalYMax) / 2;
+                evalYMin = Math.max(yMin, cy - 0.25);
+                evalYMax = Math.min(yMax, cy + 0.25);
+            }
+            if (evalZMax - evalZMin < 0.5) {
+                const cz = (evalZMin + evalZMax) / 2;
+                evalZMin = Math.max(zMin, cz - 0.25);
+                evalZMax = Math.min(zMax, cz + 0.25);
+            }
+
+            if (!providedDomains.x) opts.xDomain = [evalXMin, evalXMax];
+            if (!providedDomains.y) opts.yDomain = [evalYMin, evalYMax];
+            if (!providedDomains.z) opts.zDomain = [evalZMin, evalZMax];
+        }
+
+        const gridSteps = 35;
+        const xVals = [];
+        const yVals = [];
+        const zVals = [];
+        const valueVals = [];
+
+        for (let i = 0; i <= gridSteps; i++) {
+            const x = evalXMin + i * (evalXMax - evalXMin) / gridSteps;
+            for (let j = 0; j <= gridSteps; j++) {
+                const y = evalYMin + j * (evalYMax - evalYMin) / gridSteps;
+                for (let k = 0; k <= gridSteps; k++) {
+                    const z = evalZMin + k * (evalZMax - evalZMin) / gridSteps;
+                    xVals.push(x);
+                    yVals.push(y);
+                    zVals.push(z);
+
+                    if (shouldSkipCartesianPoint(opts, x, y, z)) {
+                        valueVals.push(NaN);
+                        continue;
+                    }
+
+                    try {
+                        let val;
+                        if (coordSystem === 'spherical') {
+                            const r = Math.sqrt(x*x + y*y + z*z);
+                            const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
+                            const phi = Math.atan2(y, x);
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta, phi })));
+                        } else if (coordSystem === 'cylindrical') {
+                            const r = Math.sqrt(x*x + y*y);
+                            const theta = Math.atan2(y, x);
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta })));
+                        } else {
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z })));
+                        }
+                        valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                    } catch (e) {
+                        valueVals.push(NaN);
+                    }
+                }
+            }
+        }
+
+        plotData = { x: xVals, y: yVals, z: zVals, value: valueVals };
+
+        try {
+            latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
+        } catch (e) {
+            latexText = `${lhs} = ${rhs}`;
+        }
+
+        return { success: true, type, plotData, latexText };
+    }
+
+    type = 'surface';
+    const compiled = math.compile(preprocessExpr(rhs));
+    const xMin = opts.xDomain[0];
+    const xMax = opts.xDomain[1];
+    const yMin = opts.yDomain[0];
+    const yMax = opts.yDomain[1];
+    const gridSteps = 40;
+    const xGrid = [];
+    const yGrid = [];
+
+    for (let i = 0; i <= gridSteps; i++) {
+        xGrid.push(xMin + i * (xMax - xMin) / gridSteps);
+    }
+    for (let j = 0; j <= gridSteps; j++) {
+        yGrid.push(yMin + j * (yMax - yMin) / gridSteps);
+    }
+
+    const zGrid = [];
+    const allZ = [];
+
+    for (let j = 0; j <= gridSteps; j++) {
+        const row = [];
+        const yValue = yGrid[j];
+        for (let i = 0; i <= gridSteps; i++) {
+            const xValue = xGrid[i];
+            if (isTracingLimited(opts, 'x', xValue) || isTracingLimited(opts, 'y', yValue)) {
+                row.push(null);
+                continue;
+            }
+
+            try {
+                let zValue;
+                if (coordSystem === 'cylindrical') {
+                    const r = Math.sqrt(xValue*xValue + yValue*yValue);
+                    const theta = Math.atan2(yValue, xValue);
+                    zValue = toReal(compiled.evaluate(mergeEvalScope(opts, { x: xValue, y: yValue, r, theta })));
+                } else {
+                    zValue = toReal(compiled.evaluate(mergeEvalScope(opts, { x: xValue, y: yValue })));
+                }
+
+                const ok = !isNaN(zValue) && isFinite(zValue) && !isTracingLimited(opts, 'z', zValue);
+                row.push(ok ? zValue : null);
+                if (ok) allZ.push(zValue);
+            } catch (e) {
+                row.push(null);
+            }
+        }
+        zGrid.push(row);
+    }
+
+    plotData = { x: xGrid, y: yGrid, z: zGrid };
+
+    if (allZ.length === 0) {
+        return {
+            success: false,
+            error: 'No valid real numbers were computed for this surface. Check if the function is defined on the given domains.'
+        };
+    }
+
+    if (!opts.zDomain) {
+        const zMin = Math.min(...allZ);
+        const zMax = Math.max(...allZ);
+        const margin = (zMax - zMin) * 0.1 || 0.5;
+        opts.zDomain = [zMin - margin, zMax + margin];
+    }
+
+    try {
+        latexText = `z = ${math.parse(rhs).toTex()}`;
+    } catch (e) {
+        latexText = `z = ${rhs}`;
+    }
+
+    return { success: true, type, plotData, latexText };
+}
+
 async function renderPlot3d(rawExpr, customOptions = {}) {
     if (!katexModule.isInitialized()) {
         return { success: false, error: 'Local renderer is not initialized.' };
@@ -886,649 +1733,200 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
     const releasePlot3dSlot = await acquirePlot3dSlot();
     let page = null;
 
-    const expr = rawExpr.trim();
-    const graphStyle = config.style.graph || {};
-    const domains = customOptions.domains || [];
-    const domainsCount = domains.length;
-
-    const namedVectorField = parseNamedVectorField(expr);
-    const bareTuple = namedVectorField ? null : parseVectorTuple(expr, 3);
-    const coordSystem = getCoordinateSystem(expr, namedVectorField ? namedVectorField.components : bareTuple);
-
-    const isBareVectorField = bareTuple && shouldTreatBareTupleAsVector(bareTuple, domainsCount);
-    const isVectorField = namedVectorField || isBareVectorField;
-
-    const hasUV = bareTuple && bareTuple.some(c => expressionUsesAnySymbol(c, ['u', 'v']));
-    const isParametricSurface = bareTuple && hasUV && !isVectorField;
-    const isParametricCurve = bareTuple && !hasUV && !isVectorField;
-
-    let isExplicitPolarSurface = false;
-    let lhsVal = '';
-    let rhsVal = '';
-    if (expr.includes('=')) {
-        const eqIdx = expr.indexOf('=');
-        lhsVal = expr.substring(0, eqIdx).trim();
-        rhsVal = expr.substring(eqIdx + 1).trim();
-        if (lhsVal.toLowerCase() === 'r') {
-            isExplicitPolarSurface = true;
-        }
-    }
-
-    let xDomain, yDomain, zDomain;
-    let parameterDomain1 = null;
-    let parameterDomain2 = null;
-
-    if (customOptions.pdeData) {
-        xDomain = customOptions.xDomain;
-        yDomain = customOptions.yDomain;
-        zDomain = customOptions.zDomain;
-    } else if (isVectorField) {
-        xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
-        yDomain = domains.length >= 2 ? domains[1] : [...xDomain];
-        zDomain = domains.length >= 3 ? domains[2] : [...xDomain];
-    } else if (isParametricSurface || isExplicitPolarSurface) {
-        const defaultU = coordSystem === 'spherical' ? [0, Math.PI] : [0, 2 * Math.PI];
-        const defaultV = coordSystem === 'spherical' ? [0, 2 * Math.PI] : (coordSystem === 'cylindrical' ? [-5, 5] : [0, 2 * Math.PI]);
-        
-        parameterDomain1 = domains.length >= 1 ? domains[0] : defaultU;
-        parameterDomain2 = domains.length >= 2 ? domains[1] : defaultV;
-        
-        xDomain = domains.length >= 3 ? domains[2] : (graphStyle.defaultXDomain || [-10, 10]);
-        yDomain = domains.length >= 4 ? domains[3] : [...xDomain];
-        zDomain = domains.length >= 5 ? domains[4] : [...xDomain];
-    } else if (isParametricCurve) {
-        parameterDomain1 = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
-        xDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultXDomain || [-10, 10]);
-        yDomain = domains.length >= 3 ? domains[2] : [...xDomain];
-        zDomain = domains.length >= 4 ? domains[3] : [...xDomain];
-    } else {
-        xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
-        yDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultYDomain || [-10, 10]);
-        zDomain = domains.length >= 3 ? domains[2] : null;
-    }
-
-    const opts = {
-        width: graphStyle.width || 600,
-        height: graphStyle.height || 450,
-        gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.08)',
-        axisColor: graphStyle.axisColor || 'rgba(255, 255, 255, 0.3)',
-        axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
-        curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
-        lineWidth: graphStyle.lineWidth || 6,
-        xDomain,
-        yDomain,
-        zDomain,
-        isAnimated: customOptions.isAnimated || false,
-        animationMode: customOptions.animationMode || 'swing',
-        animationAxis: customOptions.animationAxis || 'z',
-        animationAngle: customOptions.animationAngle || null,
-        camera: buildDefaultCamera()
-    };
-
     try {
+        const expr = rawExpr.trim();
+        const graphStyle = config.style.graph || {};
+        const domains = customOptions.domains || [];
+        const namedVectorField = parseNamedVectorField(expr);
+        const bareTuple = namedVectorField ? null : parseVectorTuple(expr, 3);
+        const coordSystem = getCoordinateSystem(expr, namedVectorField ? namedVectorField.components : bareTuple);
+        const isBareVectorField = bareTuple && shouldTreatBareTupleAsVector(bareTuple, domains.length);
+        const isVectorField = namedVectorField || isBareVectorField;
+        const hasUV = bareTuple && bareTuple.some((component) => expressionUsesAnySymbol(component, ['u', 'v']));
+        const isParametricSurface = bareTuple && hasUV && !isVectorField;
+        const isParametricCurve = bareTuple && !hasUV && !isVectorField;
+
+        let lhsVal = '';
+        let rhsVal = '';
+        let isExplicitPolarSurface = false;
+        if (expr.includes('=')) {
+            const eqIdx = expr.indexOf('=');
+            lhsVal = expr.substring(0, eqIdx).trim();
+            rhsVal = expr.substring(eqIdx + 1).trim();
+            if (lhsVal.toLowerCase() === 'r') {
+                isExplicitPolarSurface = true;
+            }
+        }
+
+        const isImplicitEquation = !customOptions.pdeData &&
+            !isVectorField &&
+            !isParametricSurface &&
+            !isParametricCurve &&
+            !isExplicitPolarSurface &&
+            expr.includes('=') &&
+            lhsVal.toLowerCase() !== 'z';
+
+        const evolutionRequested = Boolean(customOptions.isEvolutionAnimated);
+        const cameraAnimationRequested = Boolean(customOptions.isCameraAnimated || (customOptions.isAnimated && !evolutionRequested));
+        const traceVars = getPlot3dTraceVariables({
+            isVectorField,
+            isParametricSurface,
+            isExplicitPolarSurface,
+            isParametricCurve,
+            coordSystem
+        });
+
+        let evolutionVar = evolutionRequested ? normalizeAnimationIdentifier(customOptions.evolutionVar) : null;
+        if (evolutionRequested && !evolutionVar) {
+            evolutionVar = getDefaultPlot3dEvolutionVar(expr, traceVars);
+        }
+
+        const isTracingMode = evolutionRequested && traceVars.includes(evolutionVar);
+        const hasEvolutionSweep = evolutionRequested && !isTracingMode;
+        const domainInfo = resolvePlot3dDomains({
+            customOptions,
+            domains,
+            graphStyle,
+            coordSystem,
+            isVectorField,
+            isParametricSurface,
+            isExplicitPolarSurface,
+            isParametricCurve,
+            isImplicitEquation,
+            hasEvolutionSweep
+        });
+
+        const baseOpts = {
+            width: graphStyle.width || 600,
+            height: graphStyle.height || 450,
+            gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.08)',
+            axisColor: graphStyle.axisColor || 'rgba(255, 255, 255, 0.3)',
+            axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
+            curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
+            lineWidth: graphStyle.lineWidth || 6,
+            xDomain: domainInfo.xDomain,
+            yDomain: domainInfo.yDomain,
+            zDomain: domainInfo.zDomain,
+            isAnimated: cameraAnimationRequested || evolutionRequested,
+            isCameraAnimated: cameraAnimationRequested,
+            isEvolutionAnimated: evolutionRequested,
+            evolutionVar,
+            tracingVar: isTracingMode ? evolutionVar : null,
+            animationMode: customOptions.animationMode || 'swing',
+            animationAxis: customOptions.animationAxis || 'z',
+            animationAngle: customOptions.animationAngle || null,
+            camera: buildDefaultCamera()
+        };
+
+        const plotContext = {
+            customOptions,
+            expr,
+            namedVectorField,
+            bareTuple,
+            coordSystem,
+            isVectorField,
+            isParametricSurface,
+            isExplicitPolarSurface,
+            isParametricCurve,
+            isImplicitEquation,
+            lhsVal,
+            rhsVal,
+            parameterDomain1: domainInfo.parameterDomain1,
+            parameterDomain2: domainInfo.parameterDomain2,
+            providedDomains: domainInfo.providedDomains
+        };
+
         page = await katexModule.createRenderPage();
 
-        let type = '';
-        let plotData = null;
-        let latexText = '';
+        if (evolutionRequested) {
+            const totalFrames = DEFAULT_ANIMATION_FRAMES;
+            const frameBuffers = [];
+            const traceBounds = isTracingMode
+                ? resolvePlot3dTraceBounds(evolutionVar, domainInfo, coordSystem)
+                : null;
+            const evolutionDomain = hasEvolutionSweep ? domainInfo.evolutionDomain : null;
 
-        if (customOptions.pdeData) {
-            type = 'surface';
-            plotData = customOptions.pdeData;
-            latexText = customOptions.latexText || '';
-        } else if (isVectorField) {
-            const isFlux = customOptions.isFlux || false;
-            type = isFlux ? 'flux3d' : 'vector3d';
-            const fieldName = namedVectorField ? namedVectorField.name : 'F';
-            const components = namedVectorField ? namedVectorField.components : bareTuple;
+            for (let f = 0; f < totalFrames; f++) {
+                const frameOpts = clonePlot3dOptions(baseOpts);
+                const evolutionProgress = totalFrames === 1 ? 1 : (f + 1) / totalFrames;
 
-            if (!opts.zDomain) {
-                opts.zDomain = [...opts.xDomain];
-            }
+                if (cameraAnimationRequested) {
+                    const cameraProgress = frameOpts.animationMode === 'orbit'
+                        ? f / totalFrames
+                        : (totalFrames === 1 ? 0 : f / (totalFrames - 1));
+                    frameOpts.camera = buildAnimationCamera(
+                        cameraProgress,
+                        frameOpts.animationMode,
+                        frameOpts.animationAxis,
+                        frameOpts.animationAngle
+                    );
+                }
 
-            plotData = isFlux ? sampleFluxLines3d(components, opts, coordSystem) : sampleVectorField3d(components, opts, coordSystem);
-            if (!plotData) {
-                return { success: false, error: isFlux ? 'No valid flux lines could be computed. Check if the field is defined on the given domains.' : 'No valid real vectors were computed for this field. Check if the field is defined on the given domains.' };
+                let evolutionValue = null;
+                if (isTracingMode && traceBounds) {
+                    frameOpts.tracingLimit = traceBounds[0] + evolutionProgress * (traceBounds[1] - traceBounds[0]);
+                } else if (hasEvolutionSweep && evolutionDomain) {
+                    evolutionValue = evolutionDomain[0] + evolutionProgress * (evolutionDomain[1] - evolutionDomain[0]);
+                    frameOpts.evalScope = { [evolutionVar]: evolutionValue };
+                }
+
+                const scene = buildPlot3dScene(plotContext, frameOpts);
+                if (!scene.success) {
+                    return { success: false, error: scene.error };
+                }
+
+                const frameLatex = hasEvolutionSweep
+                    ? appendEvolutionLatex(scene.latexText, evolutionVar, evolutionValue)
+                    : scene.latexText;
+
+                const renderResult = await page.evaluate((lat, t, pData, opt) => {
+                    return window.renderGraph3d(lat, t, pData, opt);
+                }, frameLatex, scene.type, scene.plotData, frameOpts);
+
+                if (!renderResult.success) {
+                    return { success: false, error: renderResult.error };
+                }
+
+                const card = await page.$('#card');
+                if (!card) {
+                    return { success: false, error: 'Card element not found in DOM.' };
+                }
+
+                const buf = await card.screenshot({ type: 'jpeg', quality: 85 });
+                frameBuffers.push(buf);
             }
 
             try {
-                const [uExpr, vExpr, wExpr] = components;
-                const texU = math.parse(uExpr).toTex();
-                const texV = math.parse(vExpr).toTex();
-                const texW = math.parse(wExpr).toTex();
-                if (coordSystem === 'cylindrical') {
-                    latexText = `\\vec{${fieldName}}(r,\\theta,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
-                } else if (coordSystem === 'spherical') {
-                    latexText = `\\vec{${fieldName}}(r,\\theta,\\phi) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
-                } else {
-                    latexText = `\\vec{${fieldName}}(x,y,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
-                }
-            } catch (e) {
-                latexText = `\\vec{${fieldName}} = \\left( ${components.join(', ')} \\right)`;
-            }
-        } else if (isParametricSurface) {
-            type = 'surface';
-            const [xExpr, yExpr, zExpr] = bareTuple.map(e => e.trim());
-            const xCompiled = math.compile(preprocessExpr(xExpr));
-            const yCompiled = math.compile(preprocessExpr(yExpr));
-            const zCompiled = math.compile(preprocessExpr(zExpr));
-
-            const [uMin, uMax] = parameterDomain1;
-            const [vMin, vMax] = parameterDomain2;
-
-            const gridSteps = 40;
-            const uStep = (uMax - uMin) / gridSteps;
-            const vStep = (vMax - vMin) / gridSteps;
-
-            const xGrid = [];
-            const yGrid = [];
-            const zGrid = [];
-
-            for (let j = 0; j <= gridSteps; j++) {
-                const v = vMin + j * vStep;
-                const rowX = [];
-                const rowY = [];
-                const rowZ = [];
-                for (let i = 0; i <= gridSteps; i++) {
-                    const u = uMin + i * uStep;
-                    try {
-                        const xVal = toReal(xCompiled.evaluate({ u, v }));
-                        const yVal = toReal(yCompiled.evaluate({ u, v }));
-                        const zVal = toReal(zCompiled.evaluate({ u, v }));
-                        if (!isNaN(xVal) && isFinite(xVal) && !isNaN(yVal) && isFinite(yVal) && !isNaN(zVal) && isFinite(zVal)) {
-                            rowX.push(xVal);
-                            rowY.push(yVal);
-                            rowZ.push(zVal);
-                        } else {
-                            rowX.push(null);
-                            rowY.push(null);
-                            rowZ.push(null);
-                        }
-                    } catch (e) {
-                        rowX.push(null);
-                        rowY.push(null);
-                        rowZ.push(null);
-                    }
-                }
-                xGrid.push(rowX);
-                yGrid.push(rowY);
-                zGrid.push(rowZ);
-            }
-
-            plotData = { x: xGrid, y: yGrid, z: zGrid };
-
-            const flatX = xGrid.flat().filter(x => x !== null);
-            const flatY = yGrid.flat().filter(y => y !== null);
-            const flatZ = zGrid.flat().filter(z => z !== null);
-
-            if (flatX.length === 0) {
-                return { success: false, error: 'No valid real numbers were computed for this surface.' };
-            }
-
-            const getBounds = (arr, fallback) => {
-                if (arr.length === 0) return fallback;
-                const min = Math.min(...arr);
-                const max = Math.max(...arr);
-                const margin = (max - min) * 0.1 || 0.5;
-                return [min - margin, max + margin];
-            };
-
-            if (!domains[2]) opts.xDomain = getBounds(flatX, [-5, 5]);
-            if (!domains[3]) opts.yDomain = getBounds(flatY, [-5, 5]);
-            if (!domains[4] && !opts.zDomain) opts.zDomain = getBounds(flatZ, [-5, 5]);
-
-            try {
-                const texX = math.parse(xExpr).toTex();
-                const texY = math.parse(yExpr).toTex();
-                const texZ = math.parse(zExpr).toTex();
-                latexText = `\\vec{r}(u,v) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
-            } catch (e) {
-                latexText = `\\vec{r}(u,v) = \\left( ${xExpr},\\ ${yExpr},\\ ${zExpr} \\right)`;
-            }
-
-        } else if (isExplicitPolarSurface) {
-            type = 'surface';
-            const rCompiled = math.compile(preprocessExpr(rhsVal));
-
-            const [uMin, uMax] = parameterDomain1;
-            const [vMin, vMax] = parameterDomain2;
-
-            const gridSteps = 40;
-            const uStep = (uMax - uMin) / gridSteps;
-            const vStep = (vMax - vMin) / gridSteps;
-
-            const xGrid = [];
-            const yGrid = [];
-            const zGrid = [];
-
-            for (let j = 0; j <= gridSteps; j++) {
-                const v = vMin + j * vStep;
-                const rowX = [];
-                const rowY = [];
-                const rowZ = [];
-                for (let i = 0; i <= gridSteps; i++) {
-                    const u = uMin + i * uStep;
-                    try {
-                        let rVal;
-                        let xVal, yVal, zVal;
-
-                        if (coordSystem === 'spherical') {
-                            rVal = toReal(rCompiled.evaluate({ theta: u, phi: v }));
-                            if (!isNaN(rVal) && isFinite(rVal)) {
-                                xVal = rVal * Math.sin(u) * Math.cos(v);
-                                yVal = rVal * Math.sin(u) * Math.sin(v);
-                                zVal = rVal * Math.cos(u);
-                            }
-                        } else {
-                            rVal = toReal(rCompiled.evaluate({ theta: u, z: v }));
-                            if (!isNaN(rVal) && isFinite(rVal)) {
-                                xVal = rVal * Math.cos(u);
-                                yVal = rVal * Math.sin(u);
-                                zVal = v;
-                            }
-                        }
-
-                        if (rVal !== undefined && !isNaN(rVal) && isFinite(rVal)) {
-                            rowX.push(xVal);
-                            rowY.push(yVal);
-                            rowZ.push(zVal);
-                        } else {
-                            rowX.push(null);
-                            rowY.push(null);
-                            rowZ.push(null);
-                        }
-                    } catch (e) {
-                        rowX.push(null);
-                        rowY.push(null);
-                        rowZ.push(null);
-                    }
-                }
-                xGrid.push(rowX);
-                yGrid.push(rowY);
-                zGrid.push(rowZ);
-            }
-
-            plotData = { x: xGrid, y: yGrid, z: zGrid };
-
-            const flatX = xGrid.flat().filter(x => x !== null);
-            const flatY = yGrid.flat().filter(y => y !== null);
-            const flatZ = zGrid.flat().filter(z => z !== null);
-
-            if (flatX.length === 0) {
-                return { success: false, error: 'No valid real numbers were computed for this surface.' };
-            }
-
-            const getBounds = (arr, fallback) => {
-                if (arr.length === 0) return fallback;
-                const min = Math.min(...arr);
-                const max = Math.max(...arr);
-                const margin = (max - min) * 0.1 || 0.5;
-                return [min - margin, max + margin];
-            };
-
-            if (!domains[2]) opts.xDomain = getBounds(flatX, [-5, 5]);
-            if (!domains[3]) opts.yDomain = getBounds(flatY, [-5, 5]);
-            if (!domains[4] && !opts.zDomain) opts.zDomain = getBounds(flatZ, [-5, 5]);
-
-            try {
-                const texR = math.parse(rhsVal).toTex();
-                latexText = `r = ${texR}`;
-            } catch (e) {
-                latexText = `r = ${rhsVal}`;
-            }
-
-        } else if (isParametricCurve) {
-            type = 'curve';
-            const [xExpr, yExpr, zExpr] = bareTuple.map(e => e.trim());
-            const xCompiled = math.compile(preprocessExpr(xExpr));
-            const yCompiled = math.compile(preprocessExpr(yExpr));
-            const zCompiled = math.compile(preprocessExpr(zExpr));
-
-            const [tMin, tMax] = parameterDomain1 || [0, 2 * Math.PI];
-
-            const steps = 250;
-            const tStep = (tMax - tMin) / steps;
-
-            const xVals = [];
-            const yVals = [];
-            const zVals = [];
-
-            for (let i = 0; i <= steps; i++) {
-                const t = tMin + i * tStep;
-                try {
-                    const x = toReal(xCompiled.evaluate({ t }));
-                    const y = toReal(yCompiled.evaluate({ t }));
-                    const z = toReal(zCompiled.evaluate({ t }));
-
-                    if (!isNaN(x) && isFinite(x) && !isNaN(y) && isFinite(y) && !isNaN(z) && isFinite(z)) {
-                        xVals.push(x);
-                        yVals.push(y);
-                        zVals.push(z);
-                    }
-                } catch (err) { }
-            }
-
-            plotData = { x: xVals, y: yVals, z: zVals };
-
-            if (xVals.length === 0) {
-                return { success: false, error: 'No valid real numbers were computed for this curve. Check if the function is defined on the given domain.' };
-            }
-
-            const getBounds = (arr, fallback) => {
-                if (arr.length === 0) return fallback;
-                const min = Math.min(...arr);
-                const max = Math.max(...arr);
-                const margin = (max - min) * 0.1 || 0.5;
-                return [min - margin, max + margin];
-            };
-            if (!domains[1]) opts.xDomain = getBounds(xVals, [-5, 5]);
-            if (!domains[2]) opts.yDomain = getBounds(yVals, [-5, 5]);
-            if (!domains[3] && !opts.zDomain) opts.zDomain = getBounds(zVals, [-5, 5]);
-
-            try {
-                const texX = math.parse(xExpr).toTex();
-                const texY = math.parse(yExpr).toTex();
-                const texZ = math.parse(zExpr).toTex();
-                latexText = `\\vec{r}(t) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
-            } catch (e) {
-                latexText = `\\vec{r}(t) = \\left( ${xExpr}, ${yExpr}, ${zExpr} \\right)`;
-            }
-
-        } else {
-            // Check if it's an implicit equation
-            let isImplicit = false;
-            let lhs = '';
-            let rhs = '';
-
-            if (expr.includes('=')) {
-                const eqIdx = expr.indexOf('=');
-                lhs = expr.substring(0, eqIdx).trim();
-                rhs = expr.substring(eqIdx + 1).trim();
-
-                if (lhs.toLowerCase() !== 'z') {
-                    isImplicit = true;
-                }
-            } else {
-                rhs = expr;
-                lhs = 'z';
-            }
-
-            if (isImplicit) {
-                const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
-                const projectedSurface = buildExplicitSurfaceFromLinearZ(combined, opts);
-
-                if (projectedSurface) {
-                    type = projectedSurface.type;
-                    plotData = projectedSurface.plotData;
-                    try {
-                        latexText = projectedSurface.latexText || `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
-                    } catch (e) {
-                        latexText = projectedSurface.latexText || `${lhs} = ${rhs}`;
-                    }
-                } else {
-                    type = 'implicit';
-                    const compiled = math.compile(combined);
-
-                    const xMin = opts.xDomain[0];
-                    const xMax = opts.xDomain[1];
-                    const yMin = opts.yDomain[0];
-                    const yMax = opts.yDomain[1];
-
-                    const zMin = (opts.zDomain && opts.zDomain[0] !== undefined) ? opts.zDomain[0] : xMin;
-                    const zMax = (opts.zDomain && opts.zDomain[1] !== undefined) ? opts.zDomain[1] : xMax;
-                    opts.zDomain = [zMin, zMax];
-
-                    // Coarse pass to detect active bounding box containing the isosurface zero-crossings
-                    const coarseSteps = 30;
-                    const coarseV = [];
-                    for (let i = 0; i <= coarseSteps; i++) {
-                        const x = xMin + i * (xMax - xMin) / coarseSteps;
-                        const row = [];
-                        for (let j = 0; j <= coarseSteps; j++) {
-                            const y = yMin + j * (yMax - yMin) / coarseSteps;
-                            const col = [];
-                            for (let k = 0; k <= coarseSteps; k++) {
-                                const z = zMin + k * (zMax - zMin) / coarseSteps;
-                                let val = NaN;
-                                try {
-                                    if (coordSystem === 'spherical') {
-                                        const r = Math.sqrt(x*x + y*y + z*z);
-                                        const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
-                                        const phi = Math.atan2(y, x);
-                                        val = toReal(compiled.evaluate({ x, y, z, r, theta, phi }));
-                                    } else if (coordSystem === 'cylindrical') {
-                                        const r = Math.sqrt(x*x + y*y);
-                                        const theta = Math.atan2(y, x);
-                                        val = toReal(compiled.evaluate({ x, y, z, r, theta }));
-                                    } else {
-                                        val = toReal(compiled.evaluate({ x, y, z }));
-                                    }
-                                } catch (e) { }
-                                col.push(!isNaN(val) && isFinite(val) ? val : NaN);
-                            }
-                            row.push(col);
-                        }
-                        coarseV.push(row);
-                    }
-
-                    const activeX = [];
-                    const activeY = [];
-                    const activeZ = [];
-
-                    for (let i = 0; i <= coarseSteps; i++) {
-                        const x = xMin + i * (xMax - xMin) / coarseSteps;
-                        for (let j = 0; j <= coarseSteps; j++) {
-                            const y = yMin + j * (yMax - yMin) / coarseSteps;
-                            for (let k = 0; k <= coarseSteps; k++) {
-                                const z = zMin + k * (zMax - zMin) / coarseSteps;
-                                const val = coarseV[i][j][k];
-                                if (isNaN(val)) continue;
-
-                                let hasCrossing = false;
-                                const neighbors = [
-                                    [i + 1, j, k],
-                                    [i, j + 1, k],
-                                    [i, j, k + 1],
-                                    [i - 1, j, k],
-                                    [i, j - 1, k],
-                                    [i, j, k - 1]
-                                ];
-
-                                for (const [ni, nj, nk] of neighbors) {
-                                    if (ni >= 0 && ni <= coarseSteps &&
-                                        nj >= 0 && nj <= coarseSteps &&
-                                        nk >= 0 && nk <= coarseSteps) {
-                                        const nVal = coarseV[ni][nj][nk];
-                                        if (!isNaN(nVal) && val * nVal <= 0) {
-                                            hasCrossing = true;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if (hasCrossing) {
-                                    activeX.push(x);
-                                    activeY.push(y);
-                                    activeZ.push(z);
-                                }
-                            }
-                        }
-                    }
-
-                    let evalXMin = xMin;
-                    let evalXMax = xMax;
-                    let evalYMin = yMin;
-                    let evalYMax = yMax;
-                    let evalZMin = zMin;
-                    let evalZMax = zMax;
-
-                    if (activeX.length > 0) {
-                        const rawMinX = Math.min(...activeX);
-                        const rawMaxX = Math.max(...activeX);
-                        const rawMinY = Math.min(...activeY);
-                        const rawMaxY = Math.max(...activeY);
-                        const rawMinZ = Math.min(...activeZ);
-                        const rawMaxZ = Math.max(...activeZ);
-
-                        const padX = (rawMaxX - rawMinX) * 0.15 || 0.2;
-                        const padY = (rawMaxY - rawMinY) * 0.15 || 0.2;
-                        const padZ = (rawMaxZ - rawMinZ) * 0.15 || 0.2;
-
-                        evalXMin = Math.max(xMin, rawMinX - padX);
-                        evalXMax = Math.min(xMax, rawMaxX + padX);
-                        evalYMin = Math.max(yMin, rawMinY - padY);
-                        evalYMax = Math.min(yMax, rawMaxY + padY);
-                        evalZMin = Math.max(zMin, rawMinZ - padZ);
-                        evalZMax = Math.min(zMax, rawMaxZ + padZ);
-
-                        if (evalXMax - evalXMin < 0.5) {
-                            const cx = (evalXMin + evalXMax) / 2;
-                            evalXMin = Math.max(xMin, cx - 0.25);
-                            evalXMax = Math.min(xMax, cx + 0.25);
-                        }
-                        if (evalYMax - evalYMin < 0.5) {
-                            const cy = (evalYMin + evalYMax) / 2;
-                            evalYMin = Math.max(yMin, cy - 0.25);
-                            evalYMax = Math.min(yMax, cy + 0.25);
-                        }
-                        if (evalZMax - evalZMin < 0.5) {
-                            const cz = (evalZMin + evalZMax) / 2;
-                            evalZMin = Math.max(zMin, cz - 0.25);
-                            evalZMax = Math.min(zMax, cz + 0.25);
-                        }
-
-                        if (domainsCount < 1) {
-                            opts.xDomain = [evalXMin, evalXMax];
-                        }
-                        if (domainsCount < 2) {
-                            opts.yDomain = [evalYMin, evalYMax];
-                        }
-                        if (domainsCount < 3) {
-                            opts.zDomain = [evalZMin, evalZMax];
-                        }
-                    }
-
-                    const gridSteps = 35;
-                    const xVals = [];
-                    const yVals = [];
-                    const zVals = [];
-                    const valueVals = [];
-
-                    for (let i = 0; i <= gridSteps; i++) {
-                        const x = evalXMin + i * (evalXMax - evalXMin) / gridSteps;
-                        for (let j = 0; j <= gridSteps; j++) {
-                            const y = evalYMin + j * (evalYMax - evalYMin) / gridSteps;
-                            for (let k = 0; k <= gridSteps; k++) {
-                                const z = evalZMin + k * (evalZMax - evalZMin) / gridSteps;
-                                xVals.push(x);
-                                yVals.push(y);
-                                zVals.push(z);
-                                try {
-                                    let val;
-                                    if (coordSystem === 'spherical') {
-                                        const r = Math.sqrt(x*x + y*y + z*z);
-                                        const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
-                                        const phi = Math.atan2(y, x);
-                                        val = toReal(compiled.evaluate({ x, y, z, r, theta, phi }));
-                                    } else if (coordSystem === 'cylindrical') {
-                                        const r = Math.sqrt(x*x + y*y);
-                                        const theta = Math.atan2(y, x);
-                                        val = toReal(compiled.evaluate({ x, y, z, r, theta }));
-                                    } else {
-                                        val = toReal(compiled.evaluate({ x, y, z }));
-                                    }
-                                    valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
-                                } catch (e) {
-                                    valueVals.push(NaN);
-                                }
-                            }
-                        }
-                    }
-
-                    plotData = { x: xVals, y: yVals, z: zVals, value: valueVals };
-
-                    try {
-                        latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
-                    } catch (e) {
-                        latexText = `${lhs} = ${rhs}`;
-                    }
-                }
-            } else {
-                // Explicit surface z = f(x, y)
-                type = 'surface';
-                const compiled = math.compile(preprocessExpr(rhs));
-                const xMin = opts.xDomain[0];
-                const xMax = opts.xDomain[1];
-                const yMin = opts.yDomain[0];
-                const yMax = opts.yDomain[1];
-
-                const gridSteps = 40;
-                const xGrid = [];
-                const yGrid = [];
-
-                for (let i = 0; i <= gridSteps; i++) {
-                    xGrid.push(xMin + i * (xMax - xMin) / gridSteps);
-                }
-                for (let j = 0; j <= gridSteps; j++) {
-                    yGrid.push(yMin + j * (yMax - yMin) / gridSteps);
-                }
-
-                const zGrid = [];
-                let allZ = [];
-
-                for (let j = 0; j <= gridSteps; j++) {
-                    const row = [];
-                    const yVal = yGrid[j];
-                    for (let i = 0; i <= gridSteps; i++) {
-                        const xVal = xGrid[i];
-                        try {
-                            let zVal;
-                            if (coordSystem === 'cylindrical') {
-                                const r = Math.sqrt(xVal*xVal + yVal*yVal);
-                                const theta = Math.atan2(yVal, xVal);
-                                zVal = toReal(compiled.evaluate({ x: xVal, y: yVal, r, theta }));
-                            } else {
-                                zVal = toReal(compiled.evaluate({ x: xVal, y: yVal }));
-                            }
-                            const ok = !isNaN(zVal) && isFinite(zVal);
-                            row.push(ok ? zVal : null);
-                            if (ok) allZ.push(zVal);
-                        } catch (e) {
-                            row.push(null);
-                        }
-                    }
-                    zGrid.push(row);
-                }
-
-                plotData = { x: xGrid, y: yGrid, z: zGrid };
-
-                if (allZ.length === 0) {
-                    return { success: false, error: 'No valid real numbers were computed for this surface. Check if the function is defined on the given domains.' };
-                }
-
-                if (!opts.zDomain) {
-                    if (allZ.length > 0) {
-                        const zMin = Math.min(...allZ);
-                        const zMax = Math.max(...allZ);
-                        const margin = (zMax - zMin) * 0.1 || 0.5;
-                        opts.zDomain = [zMin - margin, zMax + margin];
-                    } else {
-                        opts.zDomain = [-5, 5];
-                    }
-                }
-
-                try {
-                    latexText = `z = ${math.parse(rhs).toTex()}`;
-                } catch (e) {
-                    latexText = `z = ${rhs}`;
-                }
+                const videoBuf = await compileVideo(frameBuffers, DEFAULT_ANIMATION_FPS);
+                return {
+                    success: true,
+                    data: videoBuf.toString('base64'),
+                    mimeType: 'video/mp4',
+                    filename: 'plot3d.mp4',
+                    source: 'local-plot3d-anim',
+                    isAnimation: true
+                };
+            } catch (ffmpegErr) {
+                console.warn('Failed to compile video with ffmpeg:', ffmpegErr.message);
+                return {
+                    success: true,
+                    data: frameBuffers[0].toString('base64'),
+                    mimeType: 'image/jpeg',
+                    filename: 'plot3d_fallback.jpg',
+                    source: 'local-plot3d-fallback'
+                };
             }
         }
 
-        // Render Plotly in Puppeteer context
+        const opts = clonePlot3dOptions(baseOpts);
+        const scene = buildPlot3dScene(plotContext, opts);
+        if (!scene.success) {
+            return { success: false, error: scene.error };
+        }
+
         const renderResult = await page.evaluate((lat, t, pData, opt) => {
             return window.renderGraph3d(lat, t, pData, opt);
-        }, latexText, type, plotData, opts);
+        }, scene.latexText, scene.type, scene.plotData, opts);
 
         if (!renderResult.success) {
             return { success: false, error: renderResult.error };
@@ -1539,7 +1937,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             return { success: false, error: 'Card element not found in DOM.' };
         }
 
-        if (opts.isAnimated) {
+        if (cameraAnimationRequested) {
             const totalFrames = DEFAULT_ANIMATION_FRAMES;
             const frameBuffers = [];
 
@@ -1563,7 +1961,6 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
             try {
                 const videoBuf = await compileVideo(frameBuffers, DEFAULT_ANIMATION_FPS);
-
                 return {
                     success: true,
                     data: videoBuf.toString('base64'),
@@ -1574,10 +1971,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 };
             } catch (ffmpegErr) {
                 console.warn('Failed to compile video with ffmpeg:', ffmpegErr.message);
-
-                // Graceful fallback: return the first frame as static JPEG
                 const fallbackBuf = frameBuffers[0] || await card.screenshot({ type: 'jpeg', quality: 85 });
-
                 return {
                     success: true,
                     data: fallbackBuf.toString('base64'),
@@ -1586,19 +1980,16 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                     source: 'local-plot3d-fallback'
                 };
             }
-        } else {
-            // Render static screenshot
-            const buf = await card.screenshot({ type: 'png', omitBackground: true });
-
-            return {
-                success: true,
-                data: buf.toString('base64'),
-                mimeType: 'image/png',
-                filename: 'plot3d.png',
-                source: 'local-plot3d-static'
-            };
         }
 
+        const buf = await card.screenshot({ type: 'png', omitBackground: true });
+        return {
+            success: true,
+            data: buf.toString('base64'),
+            mimeType: 'image/png',
+            filename: 'plot3d.png',
+            source: 'local-plot3d-static'
+        };
     } catch (err) {
         console.error('Error during 3D plotting:', err);
         return { success: false, error: err.message };

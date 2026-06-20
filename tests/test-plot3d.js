@@ -105,6 +105,18 @@ async function runTests() {
         handlePlot3dCommand('-az360 x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
     );
 
+    await runTest('3D Evolution Surface Sweep', () =>
+        handlePlot3dCommand('-e[t] z = sin(x - t) * cos(y) [-3, 3] [-3, 3] [0, 2*pi] [-1.2, 1.2]')
+    );
+
+    await runTest('3D Evolution Parametric Curve Trace', () =>
+        handlePlot3dCommand('-et (sin(t), cos(t), t/3) [0, 6*pi]')
+    );
+
+    await runTest('3D Combined Camera And Evolution Surface', () =>
+        handlePlot3dCommand('-a -e[t] z = sin(x - t) * cos(y) [-3, 3] [-3, 3] [0, 2*pi] [-1.2, 1.2]')
+    );
+
     await runParallelTests('3D Parallel Animated Requests', [
         {
             name: 'surface',
