@@ -314,11 +314,18 @@ function parseSingleExpression(expr, opts) {
 
         for (let i = 0; i <= steps; i++) {
             const x = xMin + i * xStep;
+            if (opts.tracingVar === 'x' && opts.tracingLimit !== undefined && x > opts.tracingLimit) {
+                continue;
+            }
             for (let j = 0; j <= steps; j++) {
                 const y = yMin + j * yStep;
+                if (opts.tracingVar === 'y' && opts.tracingLimit !== undefined && y > opts.tracingLimit) {
+                    continue;
+                }
                 try {
-                    let u = toReal(uCompiled.evaluate({ x, y }));
-                    let v = toReal(vCompiled.evaluate({ x, y }));
+                    const scope = Object.assign({ x, y }, opts.evalScope || {});
+                    let u = toReal(uCompiled.evaluate(scope));
+                    let v = toReal(vCompiled.evaluate(scope));
                     
                     if (!isNaN(u) && isFinite(u) && !isNaN(v) && isFinite(v)) {
                         const mag = Math.sqrt(u * u + v * v);
@@ -356,11 +363,14 @@ function parseSingleExpression(expr, opts) {
         const steps = 500;
         const step = (tMax - tMin) / steps;
 
+        const limitT = (opts.tracingVar === 't' && opts.tracingLimit !== undefined) ? opts.tracingLimit : tMax;
         for (let i = 0; i <= steps; i++) {
             const t = tMin + i * step;
+            if (t > limitT) break;
             try {
-                const xVal = toReal(xCompiled.evaluate({ t }));
-                const yVal = toReal(yCompiled.evaluate({ t }));
+                const scope = Object.assign({ t }, opts.evalScope || {});
+                const xVal = toReal(xCompiled.evaluate(scope));
+                const yVal = toReal(yCompiled.evaluate(scope));
                 if (typeof xVal === 'number' && !isNaN(xVal) && isFinite(xVal) &&
                     typeof yVal === 'number' && !isNaN(yVal) && isFinite(yVal)) {
                     points.push({ x: xVal, y: yVal });
@@ -390,10 +400,13 @@ function parseSingleExpression(expr, opts) {
         const steps = 500;
         const step = (thetaMax - thetaMin) / steps;
 
+        const limitTheta = (opts.tracingVar === 'theta' && opts.tracingLimit !== undefined) ? opts.tracingLimit : thetaMax;
         for (let i = 0; i <= steps; i++) {
             const theta = thetaMin + i * step;
+            if (theta > limitTheta) break;
             try {
-                const rVal = toReal(rCompiled.evaluate({ theta }));
+                const scope = Object.assign({ theta }, opts.evalScope || {});
+                const rVal = toReal(rCompiled.evaluate(scope));
                 if (typeof rVal === 'number' && !isNaN(rVal) && isFinite(rVal)) {
                     const xVal = rVal * Math.cos(theta);
                     const yVal = rVal * Math.sin(theta);
@@ -426,8 +439,14 @@ function parseSingleExpression(expr, opts) {
 
         function evalAt(x) {
             try {
-                let val = toReal(compiled.evaluate({ x }));
-                if (typeof val === 'number' && !isNaN(val) && isFinite(val)) return val;
+                const scope = Object.assign({ x }, opts.evalScope || {});
+                let val = toReal(compiled.evaluate(scope));
+                if (typeof val === 'number' && !isNaN(val) && isFinite(val)) {
+                    if (opts.tracingVar === 'y' && opts.tracingLimit !== undefined && val > opts.tracingLimit) {
+                        return null;
+                    }
+                    return val;
+                }
             } catch (e) {}
             return null;
         }
@@ -469,9 +488,11 @@ function parseSingleExpression(expr, opts) {
         const yStart = evalAt(xMin);
         points.push({ x: xMin, y: yStart });
 
+        const limitX = (opts.tracingVar === 'x' && opts.tracingLimit !== undefined) ? opts.tracingLimit : xMax;
         for (let i = 0; i < steps; i++) {
             const x1 = xMin + i * step;
             const x2 = xMin + (i + 1) * step;
+            if (x2 > limitX) break;
             const y1 = points[points.length - 1].y;
             const y2 = evalAt(x2);
             subdivide(x1, y1, x2, y2, 0);
@@ -509,13 +530,20 @@ function parseSingleExpression(expr, opts) {
         for (let i = 0; i <= steps; i++) {
             const row = [];
             const x = X[i];
+            const skipX = opts.tracingVar === 'x' && opts.tracingLimit !== undefined && x > opts.tracingLimit;
             for (let j = 0; j <= steps; j++) {
                 const y = Y[j];
+                const skipY = opts.tracingVar === 'y' && opts.tracingLimit !== undefined && y > opts.tracingLimit;
+                if (skipX || skipY) {
+                    row.push(NaN);
+                    continue;
+                }
                 let val = NaN;
                 try {
                     const r = Math.sqrt(x * x + y * y);
                     const theta = Math.atan2(y, x);
-                    let res = toReal(compiled.evaluate({ x, y, r, theta }));
+                    const scope = Object.assign({ x, y, r, theta }, opts.evalScope || {});
+                    let res = toReal(compiled.evaluate(scope));
                     if (typeof res === 'number' && !isNaN(res) && isFinite(res)) val = res;
                 } catch (e) {
                     val = NaN;
@@ -564,90 +592,265 @@ async function renderPlot(rawExpr, customOptions = {}) {
             }
         }
 
+        const isAnimated = customOptions.isAnimated || false;
+        let animVar = customOptions.animationVar;
+        if (isAnimated && !animVar) {
+            // Auto-detect: if expression contains 't' and it's not parametric/polar, default to 't' (parameter sweep)
+            const hasT = parts.some(part => /\bt\b/i.test(part));
+            if (hasT && !isParametricOrPolar) {
+                animVar = 't';
+            } else {
+                animVar = 'x';
+            }
+        }
+
+        let isTracingMode = false;
+        let tracingVar = null;
+        if (isAnimated) {
+            let indepVars = [];
+            if (isParametricOrPolar) {
+                indepVars = ['t', 'theta'];
+            } else {
+                indepVars = ['x', 'y'];
+            }
+            if (indepVars.includes(animVar)) {
+                isTracingMode = true;
+                tracingVar = animVar;
+            }
+        }
+
         const domains = customOptions.domains || [];
-        let xDomain, yDomain, parameterDomain;
+        let xDomain, yDomain, parameterDomain, paramDomain;
         const graphStyle = config.style.graph || {};
 
-        if (isParametricOrPolar) {
-            parameterDomain = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
-            xDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultXDomain || [-10, 10]);
-            if (domains.length >= 3) {
-                yDomain = domains[2];
-            } else if (domains.length === 2) {
-                yDomain = domains[1];
+        if (isAnimated && !isTracingMode) {
+            // Parameter Sweep Mode
+            if (isParametricOrPolar) {
+                parameterDomain = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
+                if (domains.length >= 2) {
+                    paramDomain = domains[1];
+                    xDomain = domains.length >= 3 ? domains[2] : (graphStyle.defaultXDomain || [-10, 10]);
+                    yDomain = domains.length >= 4 ? domains[3] : (domains.length === 3 ? domains[2] : (graphStyle.defaultYDomain || [-10, 10]));
+                } else {
+                    paramDomain = [0, 2 * Math.PI];
+                    xDomain = graphStyle.defaultXDomain || [-10, 10];
+                    yDomain = graphStyle.defaultYDomain || [-10, 10];
+                }
             } else {
-                yDomain = graphStyle.defaultYDomain || [-10, 10];
-            }
-        } else {
-            parameterDomain = null;
-            xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
-            yDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultYDomain || [-10, 10]);
-        }
-
-        const opts = {
-            width: graphStyle.width || 600,
-            height: graphStyle.height || 450,
-            gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.06)',
-            axisColor: graphStyle.axisColor || 'rgba(255, 255, 255, 0.3)',
-            axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.5)',
-            curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
-            glowColor: graphStyle.glowColor || 'rgba(6, 182, 212, 0.4)',
-            glowBlur: graphStyle.glowBlur || 10,
-            lineWidth: graphStyle.lineWidth || 3.5,
-            xDomain,
-            yDomain,
-            parameterDomain,
-            fontFamily: config.style.fontFamily || 'sans-serif'
-        };
-
-        let type = '';
-        let plotData = null;
-        let latexText = '';
-
-        if (parts.length === 1) {
-            let parsed;
-            try {
-                parsed = parseSingleExpression(parts[0], opts);
-            } catch (err) {
-                return { success: false, error: `Parsing error in expression: ${err.message}` };
-            }
-            type = parsed.type;
-            plotData = parsed.data;
-            latexText = parsed.latexText;
-        } else {
-            type = 'multi';
-            const plots = [];
-            const latexParts = [];
-            for (let i = 0; i < parts.length; i++) {
-                try {
-                    const parsed = parseSingleExpression(parts[i], opts);
-                    plots.push(parsed);
-                    latexParts.push(parsed.latexText);
-                } catch (err) {
-                    return { success: false, error: `Parsing error in expression "${parts[i]}": ${err.message}` };
+                parameterDomain = null;
+                xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
+                if (domains.length >= 2) {
+                    paramDomain = domains[1];
+                    yDomain = domains.length >= 3 ? domains[2] : (graphStyle.defaultYDomain || [-10, 10]);
+                } else {
+                    paramDomain = [0, 2 * Math.PI];
+                    yDomain = graphStyle.defaultYDomain || [-10, 10];
                 }
             }
-            plotData = plots;
-            latexText = latexParts.join(',\\quad ');
+        } else {
+            // Static or Tracing Mode (no separate animation parameter)
+            paramDomain = null;
+            if (isParametricOrPolar) {
+                parameterDomain = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
+                xDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultXDomain || [-10, 10]);
+                if (domains.length >= 3) {
+                    yDomain = domains[2];
+                } else if (domains.length === 2) {
+                    yDomain = domains[1];
+                } else {
+                    yDomain = graphStyle.defaultYDomain || [-10, 10];
+                }
+            } else {
+                parameterDomain = null;
+                xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
+                yDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultYDomain || [-10, 10]);
+            }
         }
 
-        const renderResult = await page.evaluate((lat, t, pData, opt) => {
-            return window.renderGraph(lat, t, pData, opt);
-        }, latexText, type, plotData, opts);
+        if (isAnimated) {
+            let animPage = null;
+            try {
+                animPage = await katexModule.createRenderPage();
+                const totalFrames = 20;
+                const frameBuffers = [];
 
-        if (!renderResult.success) return { success: false, error: renderResult.error };
+                for (let f = 0; f < totalFrames; f++) {
+                    const progress = (f + 1) / totalFrames; // 5% to 100%
 
-        const card = await page.$('#card');
-        if (!card) return { success: false, error: 'Card element not found in DOM.' };
+                    const opts = {
+                        width: graphStyle.width || 600,
+                        height: graphStyle.height || 450,
+                        gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.06)',
+                        axisColor: graphStyle.axisColor || 'rgba(255, 255, 255, 0.3)',
+                        axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.5)',
+                        curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
+                        glowColor: graphStyle.glowColor || 'rgba(6, 182, 212, 0.4)',
+                        glowBlur: graphStyle.glowBlur || 10,
+                        lineWidth: graphStyle.lineWidth || 3.5,
+                        xDomain,
+                        yDomain,
+                        parameterDomain,
+                        fontFamily: config.style.fontFamily || 'sans-serif'
+                    };
 
-        const buf = await card.screenshot({ type: 'png', omitBackground: true });
+                    if (isTracingMode) {
+                        opts.tracingVar = tracingVar;
+                        if (tracingVar === 'x') {
+                            opts.tracingLimit = xDomain[0] + progress * (xDomain[1] - xDomain[0]);
+                        } else if (tracingVar === 'y') {
+                            opts.tracingLimit = yDomain[0] + progress * (yDomain[1] - yDomain[0]);
+                        } else if (tracingVar === 't' || tracingVar === 'theta') {
+                            opts.tracingLimit = parameterDomain[0] + progress * (parameterDomain[1] - parameterDomain[0]);
+                        }
+                    } else {
+                        const paramVal = paramDomain[0] + progress * (paramDomain[1] - paramDomain[0]);
+                        opts.evalScope = { [animVar]: paramVal };
+                    }
 
-        await page.evaluate(() => {
-            const canvas = document.getElementById('graph-canvas');
-            if (canvas) canvas.remove();
-        });
+                    let type = '';
+                    let plotData = null;
+                    let latexText = '';
 
-        return { success: true, data: buf.toString('base64'), source: 'local-plot' };
+                    if (parts.length === 1) {
+                        let parsed;
+                        try {
+                            parsed = parseSingleExpression(parts[0], opts);
+                        } catch (err) {
+                            return { success: false, error: `Parsing error in expression: ${err.message}` };
+                        }
+                        type = parsed.type;
+                        plotData = parsed.data;
+                        latexText = parsed.latexText;
+                        if (!isTracingMode) {
+                            const val = opts.evalScope[animVar];
+                            latexText += `\\quad (${animVar} = ${val.toFixed(2)})`;
+                        }
+                    } else {
+                        type = 'multi';
+                        const plots = [];
+                        const latexParts = [];
+                        for (let i = 0; i < parts.length; i++) {
+                            try {
+                                const parsed = parseSingleExpression(parts[i], opts);
+                                plots.push(parsed);
+                                latexParts.push(parsed.latexText);
+                            } catch (err) {
+                                return { success: false, error: `Parsing error in expression "${parts[i]}": ${err.message}` };
+                            }
+                        }
+                        plotData = plots;
+                        latexText = latexParts.join(',\\quad ');
+                        if (!isTracingMode) {
+                            const val = opts.evalScope[animVar];
+                            latexText += `\\quad (${animVar} = ${val.toFixed(2)})`;
+                        }
+                    }
+
+                    const renderResult = await animPage.evaluate((lat, t, pData, opt) => {
+                        return window.renderGraph(lat, t, pData, opt);
+                    }, latexText, type, plotData, opts);
+
+                    if (!renderResult.success) {
+                        return { success: false, error: renderResult.error };
+                    }
+
+                    const card = await animPage.$('#card');
+                    if (!card) return { success: false, error: 'Card element not found in DOM.' };
+
+                    const buf = await card.screenshot({ type: 'jpeg', quality: 85 });
+                    frameBuffers.push(buf);
+
+                    await animPage.evaluate(() => {
+                        const canvas = document.getElementById('graph-canvas');
+                        if (canvas) canvas.remove();
+                    });
+                }
+
+                const { compileVideo } = require('./plot3d');
+                const videoBuf = await compileVideo(frameBuffers, 10);
+                return {
+                    success: true,
+                    data: videoBuf.toString('base64'),
+                    mimeType: 'video/mp4',
+                    filename: 'plot2d.mp4',
+                    source: 'local-plot-2d-anim',
+                    isAnimation: true
+                };
+
+            } catch (err) {
+                console.error('Error during 2D plot animation rendering:', err.message);
+                return { success: false, error: err.message };
+            } finally {
+                if (animPage) {
+                    try { await animPage.close(); } catch (e) {}
+                }
+            }
+        } else {
+            const opts = {
+                width: graphStyle.width || 600,
+                height: graphStyle.height || 450,
+                gridColor: graphStyle.gridColor || 'rgba(255, 255, 255, 0.06)',
+                axisColor: graphStyle.axisColor || 'rgba(255, 255, 255, 0.3)',
+                axisLabelColor: graphStyle.axisLabelColor || 'rgba(248, 250, 252, 0.5)',
+                curveColors: graphStyle.curveColors || ['#06b6d4', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#84cc16'],
+                glowColor: graphStyle.glowColor || 'rgba(6, 182, 212, 0.4)',
+                glowBlur: graphStyle.glowBlur || 10,
+                lineWidth: graphStyle.lineWidth || 3.5,
+                xDomain,
+                yDomain,
+                parameterDomain,
+                fontFamily: config.style.fontFamily || 'sans-serif'
+            };
+
+            let type = '';
+            let plotData = null;
+            let latexText = '';
+
+            if (parts.length === 1) {
+                let parsed;
+                try {
+                    parsed = parseSingleExpression(parts[0], opts);
+                } catch (err) {
+                    return { success: false, error: `Parsing error in expression: ${err.message}` };
+                }
+                type = parsed.type;
+                plotData = parsed.data;
+                latexText = parsed.latexText;
+            } else {
+                type = 'multi';
+                const plots = [];
+                const latexParts = [];
+                for (let i = 0; i < parts.length; i++) {
+                    try {
+                        const parsed = parseSingleExpression(parts[i], opts);
+                        plots.push(parsed);
+                        latexParts.push(parsed.latexText);
+                    } catch (err) {
+                        return { success: false, error: `Parsing error in expression "${parts[i]}": ${err.message}` };
+                    }
+                }
+                plotData = plots;
+                latexText = latexParts.join(',\\quad ');
+            }
+
+            const renderResult = await page.evaluate((lat, t, pData, opt) => {
+                return window.renderGraph(lat, t, pData, opt);
+            }, latexText, type, plotData, opts);
+
+            if (!renderResult.success) return { success: false, error: renderResult.error };
+
+            const card = await page.$('#card');
+            if (!card) return { success: false, error: 'Card element not found in DOM.' };
+
+            const buf = await card.screenshot({ type: 'png', omitBackground: true });
+
+            await page.evaluate(() => {
+                const canvas = document.getElementById('graph-canvas');
+                if (canvas) canvas.remove();
+            });
+
+            return { success: true, data: buf.toString('base64'), source: 'local-plot' };
+        }
 
     } catch (err) {
         console.error('Error during plot rendering:', err.message);

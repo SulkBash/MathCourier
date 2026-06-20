@@ -918,7 +918,11 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
     let parameterDomain1 = null;
     let parameterDomain2 = null;
 
-    if (isVectorField) {
+    if (customOptions.pdeData) {
+        xDomain = customOptions.xDomain;
+        yDomain = customOptions.yDomain;
+        zDomain = customOptions.zDomain;
+    } else if (isVectorField) {
         xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
         yDomain = domains.length >= 2 ? domains[1] : [...xDomain];
         zDomain = domains.length >= 3 ? domains[2] : [...xDomain];
@@ -968,7 +972,11 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         let plotData = null;
         let latexText = '';
 
-        if (isVectorField) {
+        if (customOptions.pdeData) {
+            type = 'surface';
+            plotData = customOptions.pdeData;
+            latexText = customOptions.latexText || '';
+        } else if (isVectorField) {
             const isFlux = customOptions.isFlux || false;
             type = isFlux ? 'flux3d' : 'vector3d';
             const fieldName = namedVectorField ? namedVectorField.name : 'F';
@@ -1606,5 +1614,6 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 }
 
 module.exports = {
-    renderPlot3d
+    renderPlot3d,
+    compileVideo
 };

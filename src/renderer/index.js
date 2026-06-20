@@ -1,6 +1,7 @@
 const katexModule = require('./katex');
 const { renderPlot, renderOde } = require('./plot');
 const { renderPlot3d } = require('./plot3d');
+const { renderPde } = require('./pde');
 const { renderChem, renderTikz } = require('./quicklatex');
 const { isRateLimited } = require('../middleware/rateLimit');
 const { validateInputLength } = require('../middleware/validate');
@@ -69,6 +70,11 @@ async function renderOdeWrapped(latexText, curves, customOptions) {
     return renderWithLock(() => renderOde(latexText, curves, customOptions));
 }
 
+async function renderPdeWrapped(pdeRes, customOptions) {
+    // PDE renders use isolated pages, so they can run safely outside the shared lock.
+    return renderPde(pdeRes, customOptions);
+}
+
 module.exports = {
     initialize: katexModule.initialize,
     render,
@@ -77,6 +83,7 @@ module.exports = {
     renderPlot: renderPlotWrapped,
     renderPlot3d: renderPlot3dWrapped,
     renderOde: renderOdeWrapped,
+    renderPde: renderPdeWrapped,
     close: katexModule.close,
     isLocalReady: () => katexModule.isInitialized(),
     isRateLimited,

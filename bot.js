@@ -11,6 +11,7 @@ const handleRearrangeCommand = require('./src/commands/desp');
 const handleDiffCommand = require('./src/commands/diff');
 const handleIntCommand = require('./src/commands/int');
 const handleOdeCommand = require('./src/commands/ode');
+const handlePdeCommand = require('./src/commands/pde');
 const handleGradCommand = require('./src/commands/grad');
 const handleLapCommand = require('./src/commands/lap');
 const handleDivCommand = require('./src/commands/div');
@@ -149,6 +150,7 @@ async function handleCommandMessage(msg) {
     const solveInput = parseCommand(body, '!solve');
     const matrixInput = parseCommand(body, '!matrix');
     const odeInput = parseCommand(body, '!ode');
+    const pdeInput = parseCommand(body, '!pde');
     const despInput = parseCommand(body, '!desp');
     const diffInput = parseCommand(body, '!diff');
     const intInput = parseCommand(body, '!int');
@@ -173,6 +175,8 @@ async function handleCommandMessage(msg) {
         triggered = true; mode = 'matrix'; input = matrixInput;
     } else if (odeInput) {
         triggered = true; mode = 'ode'; input = odeInput;
+    } else if (pdeInput) {
+        triggered = true; mode = 'pde'; input = pdeInput;
     } else if (despInput) {
         triggered = true; mode = 'desp'; input = despInput;
     } else if (diffInput) {
@@ -238,6 +242,8 @@ async function handleCommandMessage(msg) {
             result = await handleMatrixCommand(input);
         } else if (mode === 'ode') {
             result = await handleOdeCommand(input);
+        } else if (mode === 'pde') {
+            result = await handlePdeCommand(input);
         } else if (mode === 'desp') {
             result = await handleRearrangeCommand(input);
         } else if (mode === 'diff') {

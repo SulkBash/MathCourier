@@ -3,6 +3,8 @@ node_modules/
 # WhatsApp session data
 .wwebjs_auth/
 .wwebjs_cache/
+__pycache__/
+*.pyc
 
 # Test outputs
 test_output/

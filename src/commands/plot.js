@@ -3,6 +3,16 @@ const renderer = require('../renderer');
 
 async function handlePlotCommand(input) {
     let expr = input.trim();
+    let isAnimated = false;
+    let animationVar = null;
+
+    // Parse animation flag: -a, -ax, -at, -aa, etc.
+    const matchAnim = expr.match(/^-a([a-zA-Z])?(?=\s|$)/i);
+    if (matchAnim) {
+        isAnimated = true;
+        animationVar = matchAnim[1] ? matchAnim[1].toLowerCase() : null;
+        expr = expr.slice(matchAnim[0].length).trim();
+    }
 
     const rangeMatches = [...expr.matchAll(/\[([^\]]+)\]/g)];
     const domains = [];
@@ -23,7 +33,11 @@ async function handlePlotCommand(input) {
 
     expr = expr.trim();
 
-    const opts = {};
+    const opts = {
+        isAnimated,
+        animationVar
+    };
+    
     if (domains.length > 0) {
         opts.domains = domains;
     }
