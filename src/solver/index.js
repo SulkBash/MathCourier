@@ -3,6 +3,7 @@ const { solveOde } = require('./ode');
 const { rearrangeEquation } = require('./rearrange');
 const { solveDerivative, solveIntegral } = require('./calculus');
 const { solveGradient, solveLaplacian, solveDivergence, solveCurl } = require('./vector');
+const { solveMatrixExpression } = require('./matrix');
 
 module.exports = {
     solveEquation,
@@ -10,6 +11,7 @@ module.exports = {
     rearrangeEquation,
     solveDerivative,
     solveIntegral,
+    solveMatrixExpression,
     solveGradient,
     solveLaplacian,
     solveDivergence,

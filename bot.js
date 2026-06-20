@@ -6,6 +6,7 @@ const config = require('./config');
 const handlePlotCommand = require('./src/commands/plot');
 const handlePlot3dCommand = require('./src/commands/plot3d');
 const handleSolveCommand = require('./src/commands/solve');
+const handleMatrixCommand = require('./src/commands/matrix');
 const handleRearrangeCommand = require('./src/commands/desp');
 const handleDiffCommand = require('./src/commands/diff');
 const handleIntCommand = require('./src/commands/int');
@@ -137,7 +138,7 @@ async function handleCommandMessage(msg) {
     }
 
     let triggered = false;
-    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'solve' | 'grad' | 'lap' | 'div' | 'curl' | 'mixed'
+    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'plot3d' | 'solve' | 'matrix' | 'grad' | 'lap' | 'div' | 'curl' | 'mixed'
     let input = '';
 
     const latexInput = parseCommand(body, '!latex') || parseCommand(body, '!tex');
@@ -146,6 +147,7 @@ async function handleCommandMessage(msg) {
     const plotInput = parseCommand(body, '!plot');
     const plot3dInput = parseCommand(body, '!plot3d');
     const solveInput = parseCommand(body, '!solve');
+    const matrixInput = parseCommand(body, '!matrix');
     const odeInput = parseCommand(body, '!ode');
     const despInput = parseCommand(body, '!desp');
     const diffInput = parseCommand(body, '!diff');
@@ -167,6 +169,8 @@ async function handleCommandMessage(msg) {
         triggered = true; mode = 'plot3d'; input = plot3dInput;
     } else if (solveInput) {
         triggered = true; mode = 'solve'; input = solveInput;
+    } else if (matrixInput) {
+        triggered = true; mode = 'matrix'; input = matrixInput;
     } else if (odeInput) {
         triggered = true; mode = 'ode'; input = odeInput;
     } else if (despInput) {
@@ -230,6 +234,8 @@ async function handleCommandMessage(msg) {
             result = await handlePlot3dCommand(input);
         } else if (mode === 'solve') {
             result = await handleSolveCommand(input);
+        } else if (mode === 'matrix') {
+            result = await handleMatrixCommand(input);
         } else if (mode === 'ode') {
             result = await handleOdeCommand(input);
         } else if (mode === 'desp') {

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node bot.js",
     "test": "node tests/test-render.js",
-    "test:vector": "node tests/test-vector.js"
+    "test:vector": "node tests/test-vector.js",
+    "test:matrix": "node tests/test-matrix.js"
   },
   "dependencies": {
     "katex": "^0.16.9",
