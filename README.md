@@ -10,19 +10,29 @@ Uses a local headless browser (Puppeteer + KaTeX) for fast rendering, with a Cod
 - `$$ ... $$` in any message — auto-renders the equation in context with surrounding text
 - `!chem <chemfig code>` — draws molecular structures (via QuickLaTeX)
 - `!tikz <code>` — renders TikZ diagrams (via QuickLaTeX)
-- `!plot <expr>` — plots functions and equations on a coordinate grid
+- `!plot <expr>` — plots functions, vector fields, and implicit equations
+- `!solve <equation(s)>` — solves algebraic equations or square systems
+- `!diff` / `!int` — differentiates/integrates expressions symbolically
+- `!ode` — solves differential equations symbolically/numerically and graphs trajectories
+- `!desp <eq> for <var>` — isolates a target variable symbolically
 
 Output is a dark-themed card with rounded corners, drop shadows, and a small watermark. Looks nice on both light and dark WhatsApp themes.
 
 ## Setup
 
-**Prerequisites:** Node.js v18+
+**Prerequisites:** 
+- Node.js v18+
+- Python 3 with `sympy`, `numpy`, `scipy` (required for calculus, ODE, and rearrange solvers)
 
 ```bash
+# Install Node dependencies
 npm install
+
+# Install Python packages
+pip install sympy numpy scipy
 ```
 
-This pulls down KaTeX, Puppeteer (with Chromium), mathjs, and whatsapp-web.js.
+Node dependencies include KaTeX, Puppeteer (with Chromium), mathjs, and whatsapp-web.js.
 
 ### Test rendering locally
 
@@ -99,3 +109,27 @@ Or just send a `\begin{tikzpicture}` block directly.
 ```
 
 Brackets at the end set custom x/y domains.
+
+### Equation Solving
+```
+!solve x^2 - 5x + 6 = 0
+!solve cos(x) - x = 0
+!solve x + y = 5; x - y = 1
+```
+
+### Calculus
+```
+!diff x^2 * sin(x)
+!int sin(x) x 0 pi
+```
+
+### Differential Equations (ODEs)
+```
+!ode dy/dx = -y, y(0) = 1
+!ode y'' + y = 0, y(0) = 1, y'(0) = 0 [-10, 10]
+```
+
+### Variable Isolation
+```
+!desp E = m * c^2 for c
+```
