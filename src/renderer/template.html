@@ -6,7 +6,7 @@
   <script src="katex.min.js"></script>
   <script src="contrib/mhchem.min.js"></script>
   <script src="contrib/auto-render.min.js"></script>
-  {{plotlyScript}}
+  <script id="render-config" type="application/json">{{renderConfig}}</script>
   <style>
     body {
       margin: 0;
@@ -18,34 +18,100 @@
       display: flex;
       flex-direction: column;
       box-sizing: border-box;
-      background-color: {{style.backgroundColor}};
-      color: {{style.textColor}};
-      font-family: {{style.fontFamily}};
-      font-size: {{style.fontSize}};
-      padding: {{style.padding}};
-      border-radius: {{style.borderRadius}};
-      border: {{style.border}};
-      box-shadow: {{style.boxShadow}};
       margin: 10px;
     }
     #math {
       display: block;
-      margin-bottom: {{style.watermark.margin}};
     }
     #watermark {
       align-self: flex-end;
-      color: {{style.watermark.color}};
-      font-size: {{style.watermark.fontSize}};
-      font-family: {{style.watermark.fontFamily}};
     }
   </style>
 </head>
 <body>
   <div id="card">
     <div id="math"></div>
-    <div id="watermark">{{style.watermark.text}}</div>
+    <div id="watermark"></div>
   </div>
   <script>
+    let renderConfigCache = null;
+    let plotlyLoadPromise = null;
+
+    function getRenderConfig() {
+      if (renderConfigCache) {
+        return renderConfigCache;
+      }
+
+      const configElement = document.getElementById('render-config');
+      if (!configElement) {
+        renderConfigCache = {};
+        return renderConfigCache;
+      }
+
+      try {
+        renderConfigCache = JSON.parse(configElement.textContent);
+      } catch (err) {
+        console.error('Failed to parse render config:', err);
+        renderConfigCache = {};
+      }
+
+      return renderConfigCache;
+    }
+
+    function applyTemplateStyle() {
+      const renderConfig = getRenderConfig();
+      const style = renderConfig.style || {};
+      const watermark = style.watermark || {};
+      const card = document.getElementById('card');
+      const mathDiv = document.getElementById('math');
+      const watermarkDiv = document.getElementById('watermark');
+
+      card.style.backgroundColor = style.backgroundColor || 'transparent';
+      card.style.color = style.textColor || '';
+      card.style.fontFamily = style.fontFamily || '';
+      card.style.fontSize = style.fontSize || '';
+      card.style.padding = style.padding || '0';
+      card.style.borderRadius = style.borderRadius || '0';
+      card.style.border = style.border || 'none';
+      card.style.boxShadow = style.boxShadow || 'none';
+
+      mathDiv.style.marginBottom = watermark.text ? '12px' : '0';
+
+      watermarkDiv.textContent = watermark.text || '';
+      watermarkDiv.style.color = watermark.color || '';
+      watermarkDiv.style.fontSize = watermark.fontSize || '';
+      watermarkDiv.style.fontFamily = watermark.fontFamily || '';
+    }
+
+    function ensurePlotlyLoaded() {
+      if (typeof Plotly !== 'undefined') {
+        return Promise.resolve();
+      }
+
+      if (plotlyLoadPromise) {
+        return plotlyLoadPromise;
+      }
+
+      const renderConfig = getRenderConfig();
+      const plotlyScriptSrc = renderConfig.plotlyScriptSrc;
+      if (!plotlyScriptSrc) {
+        return Promise.reject(new Error('Plotly.js script source is not configured.'));
+      }
+
+      plotlyLoadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = plotlyScriptSrc;
+        script.charset = 'utf-8';
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed to load Plotly.js.'));
+        document.head.appendChild(script);
+      });
+
+      return plotlyLoadPromise;
+    }
+
+    applyTemplateStyle();
+
     function interpolateColor(color1, color2, factor) {
       function parseColor(c) {
         if (c.startsWith('#')) {
@@ -697,6 +763,8 @@
     async function renderGraph3d(latex, type, data, options) {
       const mathDiv = document.getElementById('math');
       try {
+        await ensurePlotlyLoaded();
+
         if (latex) {
           katex.render(latex, mathDiv, {
             displayMode: true,

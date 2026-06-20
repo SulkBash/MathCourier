@@ -63,30 +63,21 @@ async function initialize() {
             }
         }
 
-        const plotlyScript = useLocalPlotly
-            ? '<script src="plotly.min.js"></script>'
-            : '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>';
+        const plotlyScriptSrc = useLocalPlotly
+            ? 'plotly.min.js'
+            : 'https://cdn.plot.ly/plotly-2.27.0.min.js';
 
         // Read template.html
         const staticTemplatePath = path.join(__dirname, 'template.html');
         let templateHtml = fs.readFileSync(staticTemplatePath, 'utf8');
 
-        // Replace placeholders with style variables from config
-        templateHtml = templateHtml
-            .replace('{{plotlyScript}}', plotlyScript)
-            .replace('{{style.backgroundColor}}', config.style.backgroundColor)
-            .replace('{{style.textColor}}', config.style.textColor)
-            .replace('{{style.fontFamily}}', config.style.fontFamily)
-            .replace('{{style.fontSize}}', config.style.fontSize)
-            .replace('{{style.padding}}', config.style.padding)
-            .replace('{{style.borderRadius}}', config.style.borderRadius)
-            .replace('{{style.border}}', config.style.border)
-            .replace('{{style.boxShadow}}', config.style.boxShadow)
-            .replace('{{style.watermark.margin}}', config.style.watermark.text ? '12px' : '0')
-            .replace('{{style.watermark.color}}', config.style.watermark.color)
-            .replace('{{style.watermark.fontSize}}', config.style.watermark.fontSize)
-            .replace('{{style.watermark.fontFamily}}', config.style.watermark.fontFamily)
-            .replace('{{style.watermark.text}}', config.style.watermark.text || '');
+        // Replace placeholders with a single JSON config blob so the template remains valid HTML/CSS.
+        const renderConfig = JSON.stringify({
+            plotlyScriptSrc,
+            style: config.style
+        }).replace(/</g, '\\u003c');
+
+        templateHtml = templateHtml.replace('{{renderConfig}}', renderConfig);
 
         // Write the temp template inside katex/dist so relative font paths resolve naturally
         templatePath = path.join(katexDir, 'render_temp.html');
