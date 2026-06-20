@@ -1,4 +1,4 @@
-const solver = require('./solver');
+const solver = require('../src/solver');
 
 const testCases = [
     // 1. Differentiation tests (Pure JS and Fallback)

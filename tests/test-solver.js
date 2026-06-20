@@ -1,4 +1,4 @@
-const solver = require('./solver');
+const solver = require('../src/solver');
 
 const testCases = [
     // Linear system

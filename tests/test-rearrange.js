@@ -1,5 +1,5 @@
-const solver = require('./solver');
-const renderer = require('./renderer');
+const solver = require('../src/solver');
+const renderer = require('../src/renderer');
 const fs = require('fs');
 const path = require('path');
 
@@ -20,7 +20,7 @@ async function runTests() {
     console.log('=== STARTING REARRANGE SOLVER INTEGRATION TESTS ===\n');
     
     // Ensure test_output folder exists
-    const outputDir = path.join(__dirname, 'test_output');
+    const outputDir = path.join(__dirname, '../test_output');
     if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
     }

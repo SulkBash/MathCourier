@@ -1,10 +1,10 @@
 import sys
 import json
 import sympy
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+from sympy.parsing.sympy_parser import parse_expr
+from math_utils import transformations, get_base_local_dict
 
-# Common mathematical transformations
-transformations = (standard_transformations + (implicit_multiplication_application,))
+local_dict = get_base_local_dict()
 
 def deriv_impl(expr, var, val):
     expr_str = str(expr).strip("'\"").replace('^', '**')
@@ -22,35 +22,8 @@ def integ_impl(expr, var, lower, upper):
     int_expr = sympy.integrate(expr_parsed, (var_parsed, lower, upper))
     return int_expr
 
-# Establish local dictionary for common mathematical function aliases and helper implementations
-local_dict = {
-    "ln": sympy.log,
-    "arcsin": sympy.asin,
-    "arccos": sympy.acos,
-    "arctan": sympy.atan,
-    "arccot": sympy.acot,
-    "arcsec": sympy.asec,
-    "arccsc": sympy.acsc,
-    "arcsinh": sympy.asinh,
-    "arccosh": sympy.acosh,
-    "arctanh": sympy.atanh,
-    "arccoth": sympy.acoth,
-    "arcsech": sympy.asech,
-    "arccsch": sympy.acsch,
-    "cosec": sympy.csc,
-    "cosech": sympy.csch,
-    "tg": sympy.tan,
-    "ctg": sympy.cot,
-    "arctg": sympy.atan,
-    "arcctg": sympy.acot,
-    "deriv": deriv_impl,
-    "integ": integ_impl,
-}
-
-# Map all uppercase letters A-Z to Symbols to prevent conflicts with SymPy built-in constants (like E, I)
-for char_code in range(65, 91):
-    letter = chr(char_code)
-    local_dict[letter] = sympy.Symbol(letter)
+local_dict["deriv"] = deriv_impl
+local_dict["integ"] = integ_impl
 
 def main():
     try:
@@ -145,4 +118,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

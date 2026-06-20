@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const renderer = require('./renderer');
+const renderer = require('../src/renderer');
 
-const OUTPUT_DIR = path.join(__dirname, 'test_output');
+const OUTPUT_DIR = path.join(__dirname, '../test_output');
 
 async function runTest(name, fn) {
     console.log(`\n${name}`);
@@ -105,7 +105,7 @@ async function runTests() {
     await runTest('Plot polygamma y = polygamma(0, x)', () =>
         renderer.renderPlot('y = polygamma(0, x)', { xDomain: [-5, 5], yDomain: [-10, 10] }));
 
-    const solver = require('./solver');
+    const solver = require('../src/solver');
     await runTest('Solve quadratic', async () => {
         const res = solver.solveEquation('x^2 - 5x + 6 = 0');
         if (res.success) return await renderer.render(res.latex, true);
