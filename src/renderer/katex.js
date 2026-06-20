@@ -1,12 +1,36 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const config = require('../../config');
 
 let browser = null;
 let page = null;
 let templatePath = null;
 let isInitialized = false;
+
+function downloadPlotly(destPath) {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(destPath);
+        https.get('https://cdn.plot.ly/plotly-2.27.0.min.js', (response) => {
+            if (response.statusCode !== 200) {
+                file.close();
+                fs.unlink(destPath, () => {});
+                reject(new Error(`Failed to download Plotly.js: status code ${response.statusCode}`));
+                return;
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close();
+                resolve();
+            });
+        }).on('error', (err) => {
+            file.close();
+            fs.unlink(destPath, () => {});
+            reject(err);
+        });
+    });
+}
 
 async function initialize() {
     if (isInitialized) return;
@@ -22,12 +46,34 @@ async function initialize() {
             throw new Error('KaTeX node_modules files not found. Run npm install first.');
         }
 
+        // Check and download Plotly.js if missing
+        const plotlyJsPath = path.join(katexDir, 'plotly.min.js');
+        let useLocalPlotly = false;
+        if (fs.existsSync(plotlyJsPath)) {
+            useLocalPlotly = true;
+        } else {
+            console.log('Plotly.js not found locally. Attempting to download...');
+            try {
+                await downloadPlotly(plotlyJsPath);
+                useLocalPlotly = true;
+                console.log('Plotly.js downloaded successfully.');
+            } catch (err) {
+                console.warn('Failed to download Plotly.js locally:', err.message);
+                console.log('Plotly.js will be loaded via CDN fallback.');
+            }
+        }
+
+        const plotlyScript = useLocalPlotly
+            ? '<script src="plotly.min.js"></script>'
+            : '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>';
+
         // Read template.html
         const staticTemplatePath = path.join(__dirname, 'template.html');
         let templateHtml = fs.readFileSync(staticTemplatePath, 'utf8');
 
         // Replace placeholders with style variables from config
         templateHtml = templateHtml
+            .replace('{{plotlyScript}}', plotlyScript)
             .replace('{{style.backgroundColor}}', config.style.backgroundColor)
             .replace('{{style.textColor}}', config.style.textColor)
             .replace('{{style.fontFamily}}', config.style.fontFamily)

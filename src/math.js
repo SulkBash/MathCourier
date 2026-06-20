@@ -61,9 +61,28 @@ polygamma.toTex = function (node, options) {
     return `\\psi^{(${nTex})}\\left(${xTex}\\right)`;
 };
 
-const deriv = function (expr, varName, val) {
-    return math.derivative(expr, varName).evaluate({ [varName]: val });
+const deriv = function (args, math, scope) {
+    const exprStr = args[0].compile().evaluate(scope);
+    const varName = args[1].compile().evaluate(scope);
+    const val = args[2].compile().evaluate(scope);
+
+    const derivativeNode = math.derivative(exprStr, varName);
+
+    const localScope = new Map();
+    if (scope && typeof scope.forEach === 'function') {
+        scope.forEach((value, key) => {
+            localScope.set(key, value);
+        });
+    } else if (scope && typeof scope === 'object') {
+        Object.keys(scope).forEach(key => {
+            localScope.set(key, scope[key]);
+        });
+    }
+    localScope.set(varName, val);
+
+    return derivativeNode.evaluate(localScope);
 };
+deriv.rawArgs = true;
 
 deriv.toTex = function (node, options) {
     const exprStr = node.args[0].value;
@@ -72,9 +91,30 @@ deriv.toTex = function (node, options) {
     return `\\frac{d}{d${varStr}}\\left(${innerTex}\\right)`;
 };
 
-const integ = function (expr, varName, lower, upper) {
-    const compiled = math.compile(expr);
-    const f = (val) => compiled.evaluate({ [varName]: val });
+const integ = function (args, math, scope) {
+    const exprStr = args[0].compile().evaluate(scope);
+    const varName = args[1].compile().evaluate(scope);
+    const lower = args[2].compile().evaluate(scope);
+    const upper = args[3].compile().evaluate(scope);
+
+    const compiled = math.compile(exprStr);
+
+    const localScope = new Map();
+    if (scope && typeof scope.forEach === 'function') {
+        scope.forEach((value, key) => {
+            localScope.set(key, value);
+        });
+    } else if (scope && typeof scope === 'object') {
+        Object.keys(scope).forEach(key => {
+            localScope.set(key, scope[key]);
+        });
+    }
+
+    const f = (val) => {
+        localScope.set(varName, val);
+        return compiled.evaluate(localScope);
+    };
+
     const n = 100;
     const h = (upper - lower) / n;
     let sum = 0.5 * (f(lower) + f(upper));
@@ -83,6 +123,7 @@ const integ = function (expr, varName, lower, upper) {
     }
     return sum * h;
 };
+integ.rawArgs = true;
 
 integ.toTex = function (node, options) {
     const exprStr = node.args[0].value;

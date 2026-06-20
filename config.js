@@ -42,7 +42,13 @@ module.exports = {
     puppeteer: {
         launchArgs: {
             headless: 'new',
-            args: []
+            args: [
+                '--enable-webgl',
+                '--use-gl=angle',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding'
+            ]
         }
     }
 };

@@ -4,6 +4,7 @@ const renderer = require('./src/renderer');
 const config = require('./config');
 
 const handlePlotCommand = require('./src/commands/plot');
+const handlePlot3dCommand = require('./src/commands/plot3d');
 const handleSolveCommand = require('./src/commands/solve');
 const handleRearrangeCommand = require('./src/commands/desp');
 const handleDiffCommand = require('./src/commands/diff');
@@ -79,6 +80,7 @@ client.on('message_create', async (msg) => {
     const chemInput = parseCommand(body, '!chem') || parseCommand(body, '!chemfig');
     const tikzInput = parseCommand(body, '!tikz');
     const plotInput = parseCommand(body, '!plot');
+    const plot3dInput = parseCommand(body, '!plot3d');
     const solveInput = parseCommand(body, '!solve');
     const odeInput = parseCommand(body, '!ode');
     const despInput = parseCommand(body, '!desp');
@@ -93,6 +95,8 @@ client.on('message_create', async (msg) => {
         triggered = true; mode = 'tikz'; input = tikzInput;
     } else if (plotInput) {
         triggered = true; mode = 'plot'; input = plotInput;
+    } else if (plot3dInput) {
+        triggered = true; mode = 'plot3d'; input = plot3dInput;
     } else if (solveInput) {
         triggered = true; mode = 'solve'; input = solveInput;
     } else if (odeInput) {
@@ -146,6 +150,8 @@ client.on('message_create', async (msg) => {
             result = await handleTikzCommand(input);
         } else if (mode === 'plot') {
             result = await handlePlotCommand(input);
+        } else if (mode === 'plot3d') {
+            result = await handlePlot3dCommand(input);
         } else if (mode === 'solve') {
             result = await handleSolveCommand(input);
         } else if (mode === 'ode') {
@@ -163,9 +169,12 @@ client.on('message_create', async (msg) => {
         }
 
         if (result.success && result.data) {
-            const media = new MessageMedia('image/png', result.data, 'latex.png');
-            await msg.reply(media);
-            console.log(`Replied with rendered image (source: ${result.source})`);
+            const mimeType = result.mimeType || 'image/png';
+            const filename = result.filename || 'latex.png';
+            const media = new MessageMedia(mimeType, result.data, filename);
+            const sendOpts = result.isAnimation ? { gifPlayback: true } : {};
+            await msg.reply(media, undefined, sendOpts);
+            console.log(`Replied with rendered image/video (source: ${result.source})`);
         } else {
             await msg.reply(`${config.bot.errorPrefix}${result.error}`);
             console.log(`Render failed: ${result.error}`);

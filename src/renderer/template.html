@@ -6,6 +6,7 @@
   <script src="katex.min.js"></script>
   <script src="contrib/mhchem.min.js"></script>
   <script src="contrib/auto-render.min.js"></script>
+  {{plotlyScript}}
   <style>
     body {
       margin: 0;
@@ -691,6 +692,134 @@
         }
       }
       ctx.restore();
+    }
+
+    async function renderGraph3d(latex, type, data, options) {
+      const mathDiv = document.getElementById('math');
+      try {
+        if (latex) {
+          katex.render(latex, mathDiv, {
+            displayMode: true,
+            throwOnError: true,
+            trust: false
+          });
+        } else {
+          mathDiv.innerHTML = '';
+        }
+
+        // Remove 2D canvas if it exists
+        const canvas = document.getElementById('graph-canvas');
+        if (canvas) canvas.remove();
+
+        // Create or get Plotly container
+        let container = document.getElementById('plotly-graph');
+        if (!container) {
+          container = document.createElement('div');
+          container.id = 'plotly-graph';
+          container.style.marginTop = '16px';
+          container.style.display = 'block';
+          container.style.borderRadius = '8px';
+          const watermarkDiv = document.getElementById('watermark');
+          mathDiv.parentNode.insertBefore(container, watermarkDiv);
+        }
+
+        container.style.width = (options.width || 600) + 'px';
+        container.style.height = (options.height || 450) + 'px';
+
+        await drawGraph3d(container, type, data, options);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    }
+
+    function drawGraph3d(container, type, data, options) {
+      if (typeof Plotly === 'undefined') {
+        throw new Error('Plotly.js is not loaded.');
+      }
+
+      let trace;
+      if (type === 'surface') {
+        trace = {
+          type: 'surface',
+          x: data.x,
+          y: data.y,
+          z: data.z,
+          colorscale: options.colorscale || 'Viridis',
+          showscale: false
+        };
+      } else if (type === 'implicit') {
+        trace = {
+          type: 'isosurface',
+          x: data.x,
+          y: data.y,
+          z: data.z,
+          value: data.value,
+          isomin: 0,
+          isomax: 0,
+          colorscale: options.colorscale || 'Viridis',
+          showscale: false,
+          caps: {
+            x: { show: false },
+            y: { show: false },
+            z: { show: false }
+          }
+        };
+      } else if (type === 'curve') {
+        trace = {
+          type: 'scatter3d',
+          mode: 'lines',
+          x: data.x,
+          y: data.y,
+          z: data.z,
+          line: {
+            width: options.lineWidth || 6,
+            color: options.curveColors ? options.curveColors[0] : '#06b6d4'
+          }
+        };
+      } else {
+        throw new Error('Unknown 3D plot type: ' + type);
+      }
+
+      const layout = {
+        width: options.width || 600,
+        height: options.height || 450,
+        margin: { l: 0, r: 0, b: 0, t: 0 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        showlegend: false,
+        scene: {
+          xaxis: {
+            gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
+            color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
+            backgroundcolor: 'transparent',
+            showbackground: false,
+            zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
+            range: options.xDomain
+          },
+          yaxis: {
+            gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
+            color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
+            backgroundcolor: 'transparent',
+            showbackground: false,
+            zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
+            range: options.yDomain
+          },
+          zaxis: {
+            gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
+            color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
+            backgroundcolor: 'transparent',
+            showbackground: false,
+            zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
+            range: options.zDomain
+          },
+          camera: options.camera || {
+            eye: { x: 1.5, y: 1.5, z: 1.25 }
+          }
+        }
+      };
+
+      return Plotly.newPlot(container, [trace], layout, { displayModeBar: false });
     }
   </script>
 </body>
