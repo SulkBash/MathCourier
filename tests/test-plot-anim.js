@@ -5,32 +5,32 @@ const path = require('path');
 
 const testCases = [
     {
-        name: '1. Explicit Curve Tracing (-ax)',
-        input: '-ax y = sin(x) [-10, 10]'
+        name: '1. Explicit Curve Tracing (-e[x])',
+        input: '-e[x] y = sin(x) [-10, 10]'
     },
     {
-        name: '2. Explicit Curve Tracing along Y (-ay)',
-        input: '-ay y = 2*x [-5, 5]'
+        name: '2. Explicit Curve Tracing along Y (-e[y])',
+        input: '-e[y] y = 2*x [-5, 5]'
     },
     {
-        name: '3. Explicit Curve Parameter Sweep (traveling wave -at)',
-        input: '-at y = sin(x - t) [-10, 10] [0, 2*pi]'
+        name: '3. Explicit Curve Parameter Sweep (traveling wave -e[t])',
+        input: '-e[t] y = sin(x - t) [-10, 10] [0, 2*pi]'
     },
     {
-        name: '4. Parametric Curve Tracing (-at)',
-        input: '-at (cos(t), sin(t)) [0, 2*pi]'
+        name: '4. Parametric Curve Tracing (-et)',
+        input: '-et (cos(t), sin(t)) [0, 2*pi]'
     },
     {
-        name: '5. Parametric Curve Parameter Sweep (-aa)',
-        input: '-aa (2*cos(t - a), sin(t - a)) [0, 2*pi] [0, 2*pi]'
+        name: '5. Parametric Curve Parameter Sweep (-e[a])',
+        input: '-e[a] (2*cos(t - a), sin(t - a)) [0, 2*pi] [0, 2*pi]'
     },
     {
-        name: '6. Polar Curve Parameter Sweep (-at)',
-        input: '-at r = t * theta [0, 6*pi] [0, 2*pi]'
+        name: '6. Polar Curve Tracing (-e[theta])',
+        input: '-e[theta] r = 2 * (1 - cos(theta)) [0, 2*pi]'
     },
     {
-        name: '7. Vector Field Tracing (-ax)',
-        input: '-ax v(x,y) = (-y, x) [-5, 5] [-5, 5]'
+        name: '7. Vector Field Tracing (-ex)',
+        input: '-ex v(x,y) = (-y, x) [-5, 5] [-5, 5]'
     }
 ];
 

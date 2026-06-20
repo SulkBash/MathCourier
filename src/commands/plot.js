@@ -6,11 +6,11 @@ async function handlePlotCommand(input) {
     let isAnimated = false;
     let animationVar = null;
 
-    // Parse animation flag: -e, -ex, -et, -ea, etc.
-    const matchAnim = expr.match(/^-e(?:\[([a-zA-Z][a-zA-Z0-9_]*)\]|([a-zA-Z]))?(?=\s|$)/i);
+    // Preferred evolution flag: -e, -et, -e[t], etc. Legacy -a/-ax/-at still work.
+    const matchAnim = expr.match(/^-(?:e(?:\[([a-zA-Z][a-zA-Z0-9_]*)\]|([a-zA-Z]))?|a([a-zA-Z])?)(?=\s|$)/i);
     if (matchAnim) {
         isAnimated = true;
-        animationVar = matchAnim[1] ? matchAnim[1].toLowerCase() : null;
+        animationVar = (matchAnim[1] || matchAnim[2] || matchAnim[3] || '').toLowerCase() || null;
         expr = expr.slice(matchAnim[0].length).trim();
     }
 
