@@ -25,6 +25,7 @@ const generalHelp = block([
     '',
     '*Options* (use `!help <option>` for details)',
     '`view` · `kind` · `camera` · `animate` · `vars` · `mode` · `phase` · `ic` · `bc` · `param`',
+    '',
     '*Quick Syntax Rules*',
     '- Ranges use brackets: `key:[min, max]` (e.g. `x:[-5, 5]`)',
     '- Scalar options use `key:value` (e.g. `mode:num`)',
