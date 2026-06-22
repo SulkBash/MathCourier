@@ -8,10 +8,7 @@ const generalHelp = block([
     '',
     'Type `!command` followed by a space and the content you want to send.',
     '',
-    'Use `!help <command>` to see options and examples for any command. (e.g. `!help syntax`, `!help plot`, `!help ode`)',
-    'Use `!help <option>` for a full description of any option. (e.g. `!help kind`, `!help camera`, `!help ic`)',
-    '',
-    '*Commands*',
+    '*Commands (use `!help <command>` for details)*',
     '- `!latex <formula>` or `!tex <formula>`',
     '- `$$ ... $$` anywhere in a normal message',
     '- `!chem <chemfig code>`',
@@ -26,15 +23,14 @@ const generalHelp = block([
     '- `!grad <field>` · `!lap <field>` · `!div <field>` · `!curl <field>`',
     '- `!desp <equation> vars:<var>` or `for <var>`',
     '',
+    '*Options* (use `!help <option>` for details)',
+    '`view` · `kind` · `camera` · `animate` · `vars` · `mode` · `phase` · `ic` · `bc` · `param`',
     '*Quick Syntax Rules*',
     '- Ranges use brackets: `key:[min, max]` (e.g. `x:[-5, 5]`)',
     '- Scalar options use `key:value` (e.g. `mode:num`)',
     '- Grouped options use `key:{...}` (e.g. `vars:{x, y}`, `ic:{y(0)=1}`)',
     '- Semicolons separate equations: `!solve x + y = 5; x - y = 1`',
-    '- Matrix rows also use semicolons: `[1, 2; 3, 4]`',
-    '',
-    '*Options* (use `!help <option>` for details)',
-    '`view` · `kind` · `camera` · `animate` · `vars` · `mode` · `phase` · `ic` · `bc` · `param`'
+    '- Matrix rows also use semicolons: `[1, 2; 3, 4]`'
 ]);
 
 const detailedHelp = {
