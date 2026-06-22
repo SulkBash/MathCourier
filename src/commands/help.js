@@ -31,7 +31,10 @@ const generalHelp = block([
     '- Scalar options use `key:value` (e.g. `mode:num`)',
     '- Grouped options use `key:{...}` (e.g. `vars:{x, y}`, `ic:{y(0)=1}`)',
     '- Semicolons separate equations: `!solve x + y = 5; x - y = 1`',
-    '- Matrix rows also use semicolons: `[1, 2; 3, 4]`'
+    '- Matrix rows also use semicolons: `[1, 2; 3, 4]`',
+    '',
+    '*Options* (use `!help <option>` for details)',
+    '`view` · `kind` · `camera` · `animate` · `vars` · `mode` · `phase` · `ic` · `bc` · `param`'
 ]);
 
 const detailedHelp = {
