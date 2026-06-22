@@ -6,7 +6,7 @@ This file explains the project layout, how the pieces connect, and the rules to 
 
 ## Project overview
 
-A WhatsApp bot that receives math-related commands and replies with rendered cards, plots, and solver output. It runs locally after the user scans a QR code once. Most replies are PNG images, and animated `!plot3d` requests can return MP4 output.
+A WhatsApp bot that receives math-related commands and replies with rendered cards, plots, and solver output. It runs locally after the user scans a QR code once. Most replies are PNG images, and animated `!plot view:3d ...` requests can return MP4 output.
 
 **Core capabilities:**
 - Render LaTeX / KaTeX formulas as styled dark-theme cards
@@ -37,8 +37,8 @@ src/
     validate.js         - Input length validation middleware
   commands/
     latex.js            - Command handler for !latex / !tex
-    plot.js             - Command handler for !plot
-    plot3d.js           - Command handler for !plot3d and animation flags
+    plot.js             - Command handler for !plot, including 3D via view:3d
+    plot3d.js           - Legacy compatibility wrapper for deprecated !plot3d syntax
     solve.js            - Command handler for !solve
     matrix.js           - Command handler for !matrix
     diff.js             - Command handler for !diff
@@ -83,6 +83,8 @@ tests/
   test-rearrange.js     - Rearrangement solver tests
   test-vector.js        - Vector-operator solver tests
   test-matrix.js        - Matrix solver tests
+  test-help.js          - Help command unit tests
+  test-labeled-domains.js - Labeled domain integration tests
 test_output/            - Generated render output (gitignored)
 .wwebjs_auth/           - WhatsApp session files (gitignored)
 .wwebjs_cache/          - Puppeteer cache (gitignored)
@@ -107,8 +109,7 @@ Commands
     !latex / !tex / $$...$$      -> commands/latex.js -> renderer.render()
     !chem / !chemfig             -> commands/chem.js  -> renderer.renderChem()
     !tikz / tikzpicture block    -> commands/tikz.js  -> renderer.renderTikz()
-    !plot                        -> commands/plot.js  -> renderer.renderPlot()
-    !plot3d                      -> commands/plot3d.js -> renderer.renderPlot3d()
+    !plot                        -> commands/plot.js  -> renderer.renderPlot() / renderer.renderPlot3d()
     !solve                       -> commands/solve.js -> solver.solveEquation() -> renderer.render()
     !matrix                      -> commands/matrix.js -> solver.solveMatrixExpression() -> renderer.render()
     !diff                        -> commands/diff.js  -> solver.solveDerivative() -> renderer.render()
@@ -120,7 +121,7 @@ Commands
 Solver backends
     Pure JS / mathjs:
       - equations, matrices, vector differential operators
-      - many local inline helpers used by !plot and !plot3d
+      - many local inline helpers used by !plot
     Python bridge:
       - symbolic calculus fallback
       - line/surface/volume integrals
@@ -149,8 +150,7 @@ All Python subprocesses are called by `src/solver/subprocess.js` via `runSubproc
 | `$$ .. $$` anywhere in a message | none | `renderMixed()` | `bot.js` |
 | `!chem <chemfig code>` | `!chemfig` | `handleChemCommand()` | `src/commands/chem.js` |
 | `!tikz <code>` | `\begin{tikzpicture}` | `handleTikzCommand()` | `src/commands/tikz.js` |
-| `!plot <expr> [xRange] [yRange]` | none | `handlePlotCommand()` | `src/commands/plot.js` |
-| `!plot3d [-a[angle]\|-ax[angle]\|-ay[angle]\|-az[angle]] <expr> [ranges]` | none | `handlePlot3dCommand()` | `src/commands/plot3d.js` |
+| `!plot <expr> [options]` | none | `handlePlotCommand()` | `src/commands/plot.js` |
 | `!solve <equation(s)>` | none | `handleSolveCommand()` | `src/commands/solve.js` |
 | `!matrix <expression>` | none | `handleMatrixCommand()` | `src/commands/matrix.js` |
 | `!diff <expr> [variables/orders]` | none | `handleDiffCommand()` | `src/commands/diff.js` |
@@ -214,7 +214,7 @@ For 2D plotting behavior:
 
 For 3D plotting behavior:
 - parsing, sampling, coordinate conversions, vector-field generation, and animation live in `src/renderer/plot3d.js`
-- flag parsing for animation options lives in `src/commands/plot3d.js`
+- public command parsing and animation option handling live in `src/commands/plot.js`
 
 Do not try to implement major 3D math changes inside the 2D template.
 
@@ -254,6 +254,10 @@ npm test
 # Focused test scripts
 npm run test:vector
 npm run test:matrix
+npm run test:help
+npm run test:labeled
+node tests/test-help.js
+node tests/test-labeled-domains.js
 node tests/test-solver.js
 node tests/test-calculus.js
 node tests/test-ode.js
@@ -273,7 +277,7 @@ pip install sympy numpy scipy
 
 **Optional runtime dependency for animated 3D output:**
 - `ffmpeg` is used by `src/renderer/plot3d.js` to assemble MP4 animations.
-- If `ffmpeg` is unavailable, animated `!plot3d` requests gracefully fall back to a static image preview.
+- If `ffmpeg` is unavailable, animated `!plot view:3d ...` requests gracefully fall back to a static image preview.
 
 ---
 
@@ -338,11 +342,10 @@ If the new command renders media, return renderer-style objects with `success`, 
 - `await` is required for Puppeteer calls, subprocess calls, and `msg.reply()`.
 - The bot listens to both `message` (incoming) and `message_create` (messages sent by the current account). Keep command parsing centralized in `handleCommandMessage()`.
 - `src/renderer/index.js` uses a lock for shared-page rendering. Do not introduce parallel work that mutates the singleton KaTeX page outside that lock.
-- `!plot3d` does not use the shared render lock; it uses isolated pages plus a concurrency cap.
+- 3D plots requested through `!plot view:3d` do not use the shared render lock; they use isolated pages plus a concurrency cap.
 - Animated 3D renders depend on `ffmpeg`; if you are debugging animation output, check whether the environment has it installed.
 - The KaTeX HTML file written into `node_modules/katex/dist/render_temp.html` is generated at startup. Do not edit it directly.
 - Matrix literals use semicolon-separated rows: `[1, 2; 3, 4]`.
 - `src/solver/subprocess.js` calls `python`, not `python3`. Make sure `python` resolves to Python 3.
 - `python/math_utils.py` pre-maps uppercase `A-Z` to `sympy.Symbol` so SymPy does not reinterpret letters like `E` and `I`.
 - Delete `.wwebjs_auth/` to force a fresh QR scan.
-

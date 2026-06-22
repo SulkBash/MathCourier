@@ -1,6 +1,7 @@
 const math = require('../math');
 const { splitTopLevel, buildLatex } = require('../utils');
 const { extractVariables } = require('./equations');
+const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 
 const VALID_VAR_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const DEFAULT_COORDS = ['x', 'y', 'z'];
@@ -82,26 +83,6 @@ function sumNodes(nodes) {
     return math.simplify(nodes.map((node) => `(${node.toString()})`).join(' + '));
 }
 
-function findLeadingTupleEnd(text) {
-    if (!text.startsWith('(')) {
-        return -1;
-    }
-
-    let depth = 0;
-    for (let index = 0; index < text.length; index++) {
-        const char = text[index];
-        if (char === '(') {
-            depth++;
-        } else if (char === ')') {
-            depth--;
-            if (depth === 0) {
-                return index;
-            }
-        }
-    }
-
-    return -1;
-}
 
 function inferGradientVariables(exprNode) {
     const inferred = orderVariables(extractVariables(exprNode));
@@ -150,57 +131,18 @@ function inferVectorVariables(componentNodes, dimension, label) {
     );
 }
 
-function parseGradientInput(inputStr) {
-    const trimmed = String(inputStr || '').trim();
-    if (!trimmed) {
-        throw new Error('No scalar field provided. Use: !grad <expression> [variables].');
-    }
-
-    const parts = splitTopLevel(trimmed);
-    return {
-        expr: parts[0] || '',
-        variables: parts.slice(1).map((part) => part.trim()).filter(Boolean)
-    };
-}
-
-function parseVectorFieldInput(inputStr, label) {
-    const trimmed = String(inputStr || '').trim();
-    if (!trimmed) {
-        throw new Error(`No vector field provided. Use: !${label.toLowerCase()} (F_1, F_2[, F_3]) [variables].`);
-    }
-
-    const tupleEnd = findLeadingTupleEnd(trimmed);
-    if (tupleEnd === -1) {
-        throw new Error(`${label} expects a vector field written as (F_1, F_2) or (F_1, F_2, F_3).`);
-    }
-
-    const tupleText = trimmed.slice(0, tupleEnd + 1);
-    const remainder = trimmed.slice(tupleEnd + 1).trim();
-    const varsText = remainder ? remainder.replace(/^,\s*/, '') : '';
-
-    if (remainder && varsText === remainder) {
-        throw new Error(`${label} variables must come after a comma, for example: (x^2, y^2), x, y.`);
-    }
-
-    const inner = tupleText.slice(1, -1).trim();
-    const componentExprs = splitTopLevel(inner);
-
-    if (componentExprs.length < 2 || componentExprs.length > 3) {
-        throw new Error(`${label} only supports 2D or 3D vector fields.`);
-    }
-
-    return {
-        componentExprs,
-        componentNodes: componentExprs.map((expr, index) => parseNode(expr, `${label} component ${index + 1}`)),
-        variables: varsText ? splitTopLevel(varsText).map((part) => part.trim()).filter(Boolean) : []
-    };
-}
 
 function solveGradient(inputStr) {
     try {
-        const parsed = parseGradientInput(inputStr);
-        const exprNode = parseNode(parsed.expr, 'Gradient input');
-        const variables = parsed.variables.length > 0 ? validateVariables(parsed.variables, 'Gradient') : inferGradientVariables(exprNode);
+        const rawParsed = parseCommandSyntax(inputStr);
+        const parsed = normalizeAndValidate(rawParsed, 'grad');
+        if (!parsed.success) {
+            return { success: false, error: parsed.errors.join('\n') };
+        }
+
+        const exprNode = parseNode(parsed.body, 'Gradient input');
+        const parsedVars = parsed.variables.map(v => v.name);
+        const variables = parsedVars.length > 0 ? validateVariables(parsedVars, 'Gradient') : inferGradientVariables(exprNode);
 
         if (variables.length > 3) {
             return { success: false, error: 'Gradient currently supports up to three coordinate variables.' };
@@ -224,9 +166,15 @@ function solveGradient(inputStr) {
 
 function solveLaplacian(inputStr) {
     try {
-        const parsed = parseGradientInput(inputStr);
-        const exprNode = parseNode(parsed.expr, 'Laplacian input');
-        const variables = parsed.variables.length > 0 ? validateVariables(parsed.variables, 'Laplacian') : inferGradientVariables(exprNode);
+        const rawParsed = parseCommandSyntax(inputStr);
+        const parsed = normalizeAndValidate(rawParsed, 'lap');
+        if (!parsed.success) {
+            return { success: false, error: parsed.errors.join('\n') };
+        }
+
+        const exprNode = parseNode(parsed.body, 'Laplacian input');
+        const parsedVars = parsed.variables.map(v => v.name);
+        const variables = parsedVars.length > 0 ? validateVariables(parsedVars, 'Laplacian') : inferGradientVariables(exprNode);
 
         if (variables.length > 3) {
             return { success: false, error: 'Laplacian currently supports up to three coordinate variables.' };
@@ -254,11 +202,29 @@ function solveLaplacian(inputStr) {
 
 function solveDivergence(inputStr) {
     try {
-        const parsed = parseVectorFieldInput(inputStr, 'Divergence');
-        const dimension = parsed.componentNodes.length;
-        const variables = parsed.variables.length > 0
-            ? validateVariables(parsed.variables, 'Divergence')
-            : inferVectorVariables(parsed.componentNodes, dimension, 'divergence');
+        const rawParsed = parseCommandSyntax(inputStr);
+        const parsed = normalizeAndValidate(rawParsed, 'div');
+        if (!parsed.success) {
+            return { success: false, error: parsed.errors.join('\n') };
+        }
+
+        const body = parsed.body || '';
+        if (!body.startsWith('(') || !body.endsWith(')')) {
+            return { success: false, error: 'Divergence expects a vector field written as (F_1, F_2) or (F_1, F_2, F_3).' };
+        }
+
+        const inner = body.slice(1, -1).trim();
+        const componentExprs = splitTopLevel(inner);
+        if (componentExprs.length < 2 || componentExprs.length > 3) {
+            return { success: false, error: 'Divergence only supports 2D or 3D vector fields.' };
+        }
+
+        const componentNodes = componentExprs.map((expr, index) => parseNode(expr, `Divergence component ${index + 1}`));
+        const dimension = componentNodes.length;
+        const parsedVars = parsed.variables.map(v => v.name);
+        const variables = parsedVars.length > 0
+            ? validateVariables(parsedVars, 'Divergence')
+            : inferVectorVariables(componentNodes, dimension, 'divergence');
 
         if (variables.length !== dimension) {
             return {
@@ -267,7 +233,7 @@ function solveDivergence(inputStr) {
             };
         }
 
-        const derivativeTerms = parsed.componentNodes.map((node, index) => math.derivative(node, variables[index]));
+        const derivativeTerms = componentNodes.map((node, index) => math.derivative(node, variables[index]));
         const divergenceNode = sumNodes(derivativeTerms);
 
         return {
@@ -275,7 +241,7 @@ function solveDivergence(inputStr) {
             variables,
             dimension,
             latex: buildLatex([
-                `\\mathbf{F}(${variables.join(', ')}) &= ${formatTupleLatex(parsed.componentNodes)}`,
+                `\\mathbf{F}(${variables.join(', ')}) &= ${formatTupleLatex(componentNodes)}`,
                 `\\nabla \\cdot \\mathbf{F} &= ${formatNodeLatex(divergenceNode)}`
             ])
         };
@@ -286,11 +252,29 @@ function solveDivergence(inputStr) {
 
 function solveCurl(inputStr) {
     try {
-        const parsed = parseVectorFieldInput(inputStr, 'Curl');
-        const dimension = parsed.componentNodes.length;
-        const variables = parsed.variables.length > 0
-            ? validateVariables(parsed.variables, 'Curl')
-            : inferVectorVariables(parsed.componentNodes, dimension, 'curl');
+        const rawParsed = parseCommandSyntax(inputStr);
+        const parsed = normalizeAndValidate(rawParsed, 'curl');
+        if (!parsed.success) {
+            return { success: false, error: parsed.errors.join('\n') };
+        }
+
+        const body = parsed.body || '';
+        if (!body.startsWith('(') || !body.endsWith(')')) {
+            return { success: false, error: 'Curl expects a vector field written as (F_1, F_2) or (F_1, F_2, F_3).' };
+        }
+
+        const inner = body.slice(1, -1).trim();
+        const componentExprs = splitTopLevel(inner);
+        if (componentExprs.length < 2 || componentExprs.length > 3) {
+            return { success: false, error: 'Curl only supports 2D or 3D vector fields.' };
+        }
+
+        const componentNodes = componentExprs.map((expr, index) => parseNode(expr, `Curl component ${index + 1}`));
+        const dimension = componentNodes.length;
+        const parsedVars = parsed.variables.map(v => v.name);
+        const variables = parsedVars.length > 0
+            ? validateVariables(parsedVars, 'Curl')
+            : inferVectorVariables(componentNodes, dimension, 'curl');
 
         if (variables.length !== dimension) {
             return {
@@ -301,12 +285,12 @@ function solveCurl(inputStr) {
 
         let curlLatex;
         if (dimension === 2) {
-            const [pNode, qNode] = parsed.componentNodes;
+            const [pNode, qNode] = componentNodes;
             const [xVar, yVar] = variables;
             const scalarCurl = combineNodes(math.derivative(qNode, xVar), '-', math.derivative(pNode, yVar));
             curlLatex = formatNodeLatex(scalarCurl);
         } else {
-            const [f1, f2, f3] = parsed.componentNodes;
+            const [f1, f2, f3] = componentNodes;
             const [xVar, yVar, zVar] = variables;
 
             const curlComponents = [
@@ -322,7 +306,7 @@ function solveCurl(inputStr) {
             variables,
             dimension,
             latex: buildLatex([
-                `\\mathbf{F}(${variables.join(', ')}) &= ${formatTupleLatex(parsed.componentNodes)}`,
+                `\\mathbf{F}(${variables.join(', ')}) &= ${formatTupleLatex(componentNodes)}`,
                 `\\nabla \\times \\mathbf{F} &= ${curlLatex}`
             ])
         };
@@ -335,7 +319,5 @@ module.exports = {
     solveGradient,
     solveLaplacian,
     solveDivergence,
-    solveCurl,
-    parseGradientInput,
-    parseVectorFieldInput
+    solveCurl
 };

@@ -1,72 +1,39 @@
-const math = require('../math');
 const renderer = require('../renderer');
+const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 
 async function handlePlot3dCommand(input) {
-    let expr = input.trim();
-    let isAnimated = false;
-    let isCameraAnimated = false;
-    let isEvolutionAnimated = false;
-    let evolutionVar = null;
+    const rawParsed = parseCommandSyntax(input);
+    // Since this is plot3d command, force view to be 3d
+    rawParsed.options.view = '3d';
+    const parsed = normalizeAndValidate(rawParsed, 'plot');
+    if (!parsed.success) {
+        return { success: false, error: parsed.errors.join('\n') };
+    }
+
+    const expr = parsed.body;
+    if (!expr) {
+        return { success: false, error: 'No expression provided for plotting.' };
+    }
+
+    const isAnimated = !!parsed.options.camera || !!parsed.options.animate;
+    const isCameraAnimated = !!parsed.options.camera;
+    const isEvolutionAnimated = !!parsed.options.animate;
+    const evolutionVar = parsed.options.animate || null;
+    
     let animationAxis = 'z';
     let animationMode = 'swing';
     let animationAngle = null;
-    let isFlux = true;
 
-    let flagMatched = true;
-
-    while (flagMatched) {
-        flagMatched = false;
-        expr = expr.trim();
-
-        const match = expr.match(/^-a(x|y|z)?(\d+)?(?=\s|$)/i);
-        if (match) {
-            isAnimated = true;
-            isCameraAnimated = true;
-            const axis = match[1] ? match[1].toLowerCase() : 'z';
-            const angleStr = match[2];
-
-            animationAxis = axis;
-            if (angleStr) {
-                animationMode = 'orbit';
-                animationAngle = parseInt(angleStr, 10);
-            } else {
-                animationMode = 'swing';
-                animationAngle = null;
-            }
-
-            expr = expr.slice(match[0].length).trim();
-            flagMatched = true;
-            continue;
-        }
-
-        const matchEvolution = expr.match(/^-e(?:\[([a-zA-Z][a-zA-Z0-9_]*)\]|([a-zA-Z]))?(?=\s|$)/i);
-        if (matchEvolution) {
-            isAnimated = true;
-            isEvolutionAnimated = true;
-            evolutionVar = (matchEvolution[1] || matchEvolution[2] || '').toLowerCase() || null;
-            expr = expr.slice(matchEvolution[0].length).trim();
-            flagMatched = true;
-        }
+    if (parsed.options.camera) {
+        animationAxis = parsed.options.camera.axis;
+        animationAngle = parsed.options.camera.angle;
+        animationMode = parsed.options.camera.angle !== null ? 'orbit' : 'swing';
     }
 
-    const rangeMatches = [...expr.matchAll(/\[([^\]]+)\]/g)];
-    const domains = [];
-
-    for (const match of rangeMatches) {
-        try {
-            const parts = match[1].split(',');
-            const lo = math.evaluate(parts[0].trim());
-            const hi = math.evaluate(parts[1].trim());
-            if (typeof lo === 'number' && typeof hi === 'number' && !isNaN(lo) && !isNaN(hi) && isFinite(lo) && isFinite(hi) && lo < hi) {
-                domains.push([lo, hi]);
-            }
-            expr = expr.replace(match[0], '');
-        } catch (e) {
-            console.warn('Failed to parse domain:', e.message);
-        }
+    const labeledDomains = {};
+    for (const r of parsed.ranges) {
+        labeledDomains[r.name] = [r.min, r.max];
     }
-
-    expr = expr.trim();
 
     const opts = {
         isAnimated,
@@ -76,11 +43,11 @@ async function handlePlot3dCommand(input) {
         animationMode,
         animationAxis,
         animationAngle,
-        isFlux
+        labeledDomains,
+        kind: parsed.options.kind || undefined,
+        variables: parsed.variables.map((entry) => entry.name),
+        isFlux: true
     };
-    if (domains.length > 0) {
-        opts.domains = domains;
-    }
 
     return await renderer.renderPlot3d(expr, opts);
 }

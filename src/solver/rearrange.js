@@ -1,18 +1,29 @@
 const path = require('path');
 const { runSubprocess } = require('./subprocess');
+const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 
 async function rearrangeEquation(inputStr) {
-    const remainder = inputStr.trim();
-    const match = remainder.match(/^([\s\S]+?)\bfor\b([\s\S]+)$/i);
-    if (!match) {
-        return {
-            success: false,
-            error: 'Invalid format. Use: !desp <equation> for <variable>\nExample: !desp E = m * c^2 for c'
-        };
-    }
+    let equation = '';
+    let variable = '';
 
-    const equation = match[1].trim();
-    const variable = match[2].trim();
+    // First try V2 parser
+    const rawParsed = parseCommandSyntax(inputStr);
+    const parsed = normalizeAndValidate(rawParsed, 'desp');
+    if (parsed.success && parsed.variables.length === 1) {
+        equation = parsed.body;
+        variable = parsed.variables[0].name;
+    } else {
+        // Fallback to legacy syntax
+        const match = inputStr.trim().match(/^([\s\S]+?)\bfor\b([\s\S]+)$/i);
+        if (!match) {
+            return {
+                success: false,
+                error: 'Invalid format. Use: !desp <equation> vars:c  or  !desp <equation> for c'
+            };
+        }
+        equation = match[1].trim();
+        variable = match[2].trim();
+    }
 
     if (!equation) {
         return { success: false, error: 'No equation provided.' };

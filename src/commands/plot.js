@@ -1,46 +1,73 @@
-const math = require('../math');
 const renderer = require('../renderer');
+const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 
 async function handlePlotCommand(input) {
-    let expr = input.trim();
-    let isAnimated = false;
-    let animationVar = null;
-
-    // Preferred evolution flag: -e, -et, -e[t], etc. Legacy -a/-ax/-at still work.
-    const matchAnim = expr.match(/^-(?:e(?:\[([a-zA-Z][a-zA-Z0-9_]*)\]|([a-zA-Z]))?|a([a-zA-Z])?)(?=\s|$)/i);
-    if (matchAnim) {
-        isAnimated = true;
-        animationVar = (matchAnim[1] || matchAnim[2] || matchAnim[3] || '').toLowerCase() || null;
-        expr = expr.slice(matchAnim[0].length).trim();
+    const rawParsed = parseCommandSyntax(input);
+    const parsed = normalizeAndValidate(rawParsed, 'plot');
+    if (!parsed.success) {
+        return { success: false, error: parsed.errors.join('\n') };
     }
 
-    const rangeMatches = [...expr.matchAll(/\[([^\]]+)\]/g)];
-    const domains = [];
+    const expr = parsed.body;
+    if (!expr) {
+        return { success: false, error: 'No expression provided for plotting.' };
+    }
 
-    for (const match of rangeMatches) {
-        try {
-            const parts = match[1].split(',');
-            const lo = math.evaluate(parts[0].trim());
-            const hi = math.evaluate(parts[1].trim());
-            if (typeof lo === 'number' && typeof hi === 'number' && !isNaN(lo) && !isNaN(hi) && isFinite(lo) && isFinite(hi) && lo < hi) {
-                domains.push([lo, hi]);
-            }
-            expr = expr.replace(match[0], '');
-        } catch (e) {
-            console.warn('Failed to parse domain:', e.message);
+    const view = parsed.options.view || '2d';
+
+    if (view === '3d') {
+        const isAnimated = !!parsed.options.camera || !!parsed.options.animate;
+        const isCameraAnimated = !!parsed.options.camera;
+        const isEvolutionAnimated = !!parsed.options.animate;
+        const evolutionVar = parsed.options.animate || null;
+        
+        let animationAxis = 'z';
+        let animationMode = 'swing';
+        let animationAngle = null;
+
+        if (parsed.options.camera) {
+            animationAxis = parsed.options.camera.axis;
+            animationAngle = parsed.options.camera.angle;
+            animationMode = parsed.options.camera.angle !== null ? 'orbit' : 'swing';
         }
+
+        const labeledDomains = {};
+        for (const r of parsed.ranges) {
+            labeledDomains[r.name] = [r.min, r.max];
+        }
+
+        const opts = {
+            isAnimated,
+            isCameraAnimated,
+            isEvolutionAnimated,
+            evolutionVar,
+            animationMode,
+            animationAxis,
+            animationAngle,
+            labeledDomains,
+            kind: parsed.options.kind || undefined,
+            variables: parsed.variables.map((entry) => entry.name),
+            isFlux: true
+        };
+
+        return await renderer.renderPlot3d(expr, opts);
     }
 
-    expr = expr.trim();
+    // view: 2d
+    const isAnimated = !!parsed.options.animate;
+    const animationVar = parsed.options.animate || null;
+    const labeledDomains = {};
+    for (const r of parsed.ranges) {
+        labeledDomains[r.name] = [r.min, r.max];
+    }
 
     const opts = {
         isAnimated,
-        animationVar
+        animationVar,
+        labeledDomains,
+        kind: parsed.options.kind || undefined,
+        variables: parsed.variables.map((entry) => entry.name)
     };
-
-    if (domains.length > 0) {
-        opts.domains = domains;
-    }
 
     return await renderer.renderPlot(expr, opts);
 }

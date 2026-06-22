@@ -16,7 +16,7 @@ const cases = [
     },
     {
         name: 'Gradient respects explicit 2D variables',
-        run: () => solver.solveGradient('x^2 + y^2, x, y'),
+        run: () => solver.solveGradient('x^2 + y^2 vars:{x, y}'),
         verify: (result) => {
             assert.strictEqual(result.success, true);
             assert.deepStrictEqual(result.variables, ['x', 'y']);
@@ -26,7 +26,7 @@ const cases = [
     },
     {
         name: 'Laplacian handles a 2D scalar field',
-        run: () => solver.solveLaplacian('x^2 + y^2, x, y'),
+        run: () => solver.solveLaplacian('x^2 + y^2 vars:{x, y}'),
         verify: (result) => {
             assert.strictEqual(result.success, true);
             assert.deepStrictEqual(result.variables, ['x', 'y']);

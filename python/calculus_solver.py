@@ -386,10 +386,32 @@ def handle_surface_integral(input_data):
     if len(range_data) != 2:
         raise ValueError("Surface integrals require two parameter ranges.")
 
-    first_lower = parse_math_expr(str(range_data[0]["lower"]), call_dict)
-    first_upper = parse_math_expr(str(range_data[0]["upper"]), call_dict)
-    second_lower = parse_math_expr(str(range_data[1]["lower"]), call_dict)
-    second_upper = parse_math_expr(str(range_data[1]["upper"]), call_dict)
+    first_range = None
+    second_range = None
+
+    # Try matching by label names
+    for r in range_data:
+        label = r.get("label")
+        if label == first_param.name:
+            first_range = r
+        elif label == second_param.name:
+            second_range = r
+
+    # Fallback to positional matching for unassigned ones
+    for r in range_data:
+        if r.get("label") is None:
+            if not first_range:
+                first_range = r
+            elif not second_range:
+                second_range = r
+
+    if not first_range or not second_range:
+        raise ValueError("Could not map parameter ranges. Make sure they are provided positionally or match u and v.")
+
+    first_lower = parse_math_expr(str(first_range["lower"]), call_dict)
+    first_upper = parse_math_expr(str(first_range["upper"]), call_dict)
+    second_lower = parse_math_expr(str(second_range["lower"]), call_dict)
+    second_upper = parse_math_expr(str(second_range["upper"]), call_dict)
 
     substitution_map = {
         coords["x"]: surface_components[0],
@@ -463,13 +485,40 @@ def handle_volume_integral(input_data):
     if len(range_data) != 3:
         raise ValueError("Volume integrals require exactly three ranges.")
 
+    x_range = None
+    y_range = None
+    z_range = None
+
+    # Try matching by label names
+    for r in range_data:
+        label = r.get("label")
+        if label == "x":
+            x_range = r
+        elif label == "y":
+            y_range = r
+        elif label == "z":
+            z_range = r
+
+    # Fallback to positional matching for unassigned ones
+    for r in range_data:
+        if r.get("label") is None:
+            if not x_range:
+                x_range = r
+            elif not y_range:
+                y_range = r
+            elif not z_range:
+                z_range = r
+
+    if not x_range or not y_range or not z_range:
+        raise ValueError("Could not map volume integral ranges. Make sure they are provided positionally or match x, y, and z.")
+
     expr_parsed = parse_math_expr(expr_str, call_dict)
-    x_lower = parse_math_expr(str(range_data[0]["lower"]), call_dict)
-    x_upper = parse_math_expr(str(range_data[0]["upper"]), call_dict)
-    y_lower = parse_math_expr(str(range_data[1]["lower"]), call_dict)
-    y_upper = parse_math_expr(str(range_data[1]["upper"]), call_dict)
-    z_lower = parse_math_expr(str(range_data[2]["lower"]), call_dict)
-    z_upper = parse_math_expr(str(range_data[2]["upper"]), call_dict)
+    x_lower = parse_math_expr(str(x_range["lower"]), call_dict)
+    x_upper = parse_math_expr(str(x_range["upper"]), call_dict)
+    y_lower = parse_math_expr(str(y_range["lower"]), call_dict)
+    y_upper = parse_math_expr(str(y_range["upper"]), call_dict)
+    z_lower = parse_math_expr(str(z_range["lower"]), call_dict)
+    z_upper = parse_math_expr(str(z_range["upper"]), call_dict)
 
     integrand, result, relation = evaluate_definite_integral(
         expr_parsed,

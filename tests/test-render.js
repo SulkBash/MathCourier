@@ -134,32 +134,43 @@ async function runTests() {
 
     const handlePlotCommand = require('../src/commands/plot');
     await runTest('Plot command handle parametric Lissajous', () =>
-        handlePlotCommand('(cos(3*t), sin(2*t)) [0, 2*pi]'));
+        handlePlotCommand('(cos(3*t), sin(2*t)) kind:parametric t:[0, 2*pi]'));
 
     await runTest('Plot command handle implicit polar lemniscate', () =>
-        handlePlotCommand('r^2 = 9 * cos(2*theta) [-4, 4] [-4, 4]'));
+        handlePlotCommand('r^2 = 9 * cos(2*theta) kind:polar theta:[0, 2*pi] x:[-4, 4] y:[-4, 4]'));
+
+    await runTest('Plot command handle scalar with custom horizontal variable', () =>
+        handlePlotCommand('cos(t) vars:{t} t:[0, 2*pi] y:[-2, 2]'));
+
+    await runTest('Plot command handle 3D scalar surface with custom vars', () =>
+        handlePlotCommand('cos(t)*sin(s) view:3d kind:surface vars:{t, s} t:[-3, 3] s:[-3, 3]'));
+
+    await runTest('Plot command handle 3D embedded explicit 2D curve', () =>
+        handlePlotCommand('y = sin(x) view:3d x:[-10, 10] y:[-2, 2]'));
+
+    await runTest('Plot command handle 3D embedded implicit 2D curve', () =>
+        handlePlotCommand('x^2 + y^2 = 1 view:3d x:[-2, 2] y:[-2, 2]'));
 
     await runTest('Plot3d laplacian surface', () =>
         renderer.renderPlot3d('z = lap("x^2 + y^2", x, y)', { xDomain: [-3, 3], yDomain: [-3, 3], zDomain: [0, 8] }));
 
-    const handlePlot3dCommand = require('../src/commands/plot3d');
-    await runTest('Plot3d parametric torus surface', () =>
-        handlePlot3dCommand('(cos(u)*(2 + cos(v)), sin(u)*(2 + cos(v)), sin(v)) [0, 2*pi] [0, 2*pi]'));
+    await runTest('Plot command handle 3D parametric torus surface', () =>
+        handlePlotCommand('(cos(u)*(2 + cos(v)), sin(u)*(2 + cos(v)), sin(v)) view:3d kind:surface vars:{u, v} u:[0, 2*pi] v:[0, 2*pi]'));
 
-    await runTest('Plot3d explicit cylindrical surface (cylinder)', () =>
-        handlePlot3dCommand('r = 3 [-5, 5]'));
+    await runTest('Plot command handle 3D explicit cylindrical surface (cylinder)', () =>
+        handlePlotCommand('r = 3 view:3d kind:surface z:[-5, 5]'));
 
-    await runTest('Plot3d explicit spherical surface (bumpy sphere)', () =>
-        handlePlot3dCommand('r = 2 + 0.5 * sin(6*theta) * sin(6*phi)'));
+    await runTest('Plot command handle 3D explicit spherical surface (bumpy sphere)', () =>
+        handlePlotCommand('r = 2 + 0.5 * sin(6*theta) * sin(6*phi) view:3d kind:surface'));
 
-    await runTest('Plot3d implicit spherical surface (lemniscate)', () =>
-        handlePlot3dCommand('r^2 = 4 * cos(2*theta)'));
+    await runTest('Plot command handle 3D implicit sphere', () =>
+        handlePlotCommand('x^2 + y^2 + z^2 = 1 view:3d x:[-2, 2] y:[-2, 2] z:[-2, 2]'));
 
-    await runTest('Plot3d cylindrical vector field', () =>
-        handlePlot3dCommand('F(r, theta, z) = (0, r, 0.2) [1, 5] [0, 2*pi] [-2, 2]'));
+    await runTest('Plot command handle 3D cylindrical vector field', () =>
+        handlePlotCommand('F(r, theta, z) = (0, r, 0.2) view:3d kind:vector vars:{r, theta, z} r:[1, 5] theta:[0, 2*pi] z:[-2, 2]'));
 
-    await runTest('Plot3d spherical vector field', () =>
-        handlePlot3dCommand('F(r, theta, phi) = (1/r^2, 0, 0) [1, 4]'));
+    await runTest('Plot command handle 3D spherical vector field', () =>
+        handlePlotCommand('F(r, theta, phi) = (1/r^2, 0, 0) view:3d kind:vector vars:{r, theta, phi} r:[1, 4] theta:[0, pi] phi:[0, 2*pi]'));
 
     await runTest('Plot factorial y = x!', () =>
         renderer.renderPlot('y = x!', { xDomain: [-5, 5], yDomain: [-10, 10] }));

@@ -6,31 +6,31 @@ const path = require('path');
 const testCases = [
     {
         name: '1. Heat Equation (3D Static)',
-        input: 'du/dt = 0.5 * d2u/dx2, u(x,0) = sin(x), u(0,t)=0, u(pi,t)=0 [0, pi] [0, 2]'
+        input: 'du/dt = 0.5 * d2u/dx2 ic:{u(x,0) = sin(x)} bc:{u(0,t)=0; u(pi,t)=0} x:[0, pi] t:[0, 2]'
     },
     {
         name: '2. Heat Equation (3D rotating anim -ay)',
-        input: '-ay du/dt = 0.5 * d2u/dx2, u(x,0) = sin(x), u(0,t)=0, u(pi,t)=0 [0, pi] [0, 2]'
+        input: 'du/dt = 0.5 * d2u/dx2 ic:{u(x,0) = sin(x)} bc:{u(0,t)=0; u(pi,t)=0} camera:y x:[0, pi] t:[0, 2]'
     },
     {
         name: '3. Heat Equation (2D Static Slices)',
-        input: '-2d du/dt = 0.5 * d2u/dx2, u(x,0) = sin(x), u(0,t)=0, u(pi,t)=0 [0, pi] [0, 2]'
+        input: 'du/dt = 0.5 * d2u/dx2 ic:{u(x,0) = sin(x)} bc:{u(0,t)=0; u(pi,t)=0} view:2d x:[0, pi] t:[0, 2]'
     },
     {
         name: '4. Heat Equation (2D Time Evolution Anim)',
-        input: '-2d -a du/dt = 0.5 * d2u/dx2, u(x,0) = sin(x), u(0,t)=0, u(pi,t)=0 [0, pi] [0, 2]'
+        input: 'du/dt = 0.5 * d2u/dx2 ic:{u(x,0) = sin(x)} bc:{u(0,t)=0; u(pi,t)=0} view:2d camera:z x:[0, pi] t:[0, 2]'
     },
     {
         name: '5. Wave Equation (3D Static)',
-        input: 'd2u/dt2 = 4 * d2u/dx2, u(x,0) = sin(x), du/dt(x,0)=0, u(0,t)=0, u(pi,t)=0 [0, pi] [0, 3]'
+        input: 'd2u/dt2 = 4 * d2u/dx2 ic:{u(x,0) = sin(x); du/dt(x,0)=0} bc:{u(0,t)=0; u(pi,t)=0} x:[0, pi] t:[0, 3]'
     },
     {
         name: '6. Wave Equation (2D Time Evolution Anim)',
-        input: '-2d -a d2u/dt2 = 4 * d2u/dx2, u(x,0) = sin(x), du/dt(x,0)=0, u(0,t)=0, u(pi,t)=0 [0, pi] [0, 3]'
+        input: 'd2u/dt2 = 4 * d2u/dx2 ic:{u(x,0) = sin(x); du/dt(x,0)=0} bc:{u(0,t)=0; u(pi,t)=0} view:2d camera:z x:[0, pi] t:[0, 3]'
     },
     {
         name: '7. Damped Wave Equation (3D Static)',
-        input: 'd2u/dt2 = 4 * d2u/dx2 - 0.5 * du/dt, u(x,0) = sin(x), du/dt(x,0)=0, u(0,t)=0, u(pi,t)=0 [0, pi] [0, 4]'
+        input: 'd2u/dt2 = 4 * d2u/dx2 - 0.5 * du/dt ic:{u(x,0) = sin(x); du/dt(x,0)=0} bc:{u(0,t)=0; u(pi,t)=0} x:[0, pi] t:[0, 4]'
     }
 ];
 

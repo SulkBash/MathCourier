@@ -3,32 +3,32 @@ const solver = require('../src/solver');
 const testCases = [
     // 1. Differentiation tests (Pure JS and Fallback)
     { type: 'diff', input: 'x^2 * sin(x)' },
-    { type: 'diff', input: 'u^3 - u * y, u' },
-    { type: 'diff', input: 'sin(t) t' },
-    { type: 'diff', input: 'erf(x) x' }, // Should trigger SymPy fallback as mathjs does not support erf
-    { type: 'diff', input: 'besselj(2, z), z' }, // Should trigger SymPy fallback
-    { type: 'diff', input: 'x^3 * y^2, x, 2, y' }, // Mixed partial higher order
-    { type: 'diff', input: 'x^4, x, 3' }, // Single variable higher order
-    { type: 'diff', input: 'x^2 * y, x, y' }, // Mixed partial first order
+    { type: 'diff', input: 'u^3 - u * y vars:u' },
+    { type: 'diff', input: 'sin(t) vars:t' },
+    { type: 'diff', input: 'erf(x) vars:x' }, // Should trigger SymPy fallback as mathjs does not support erf
+    { type: 'diff', input: 'besselj(2, z) vars:z' }, // Should trigger SymPy fallback
+    { type: 'diff', input: 'x^3 * y^2 vars:{x:2, y}' }, // Mixed partial higher order
+    { type: 'diff', input: 'x^4 vars:{x:3}' }, // Single variable higher order
+    { type: 'diff', input: 'x^2 * y vars:{x, y}' }, // Mixed partial first order
 
     // 2. Integration tests (SymPy)
     { type: 'int', input: 'sin(x)' },
-    { type: 'int', input: 'x^2 x' },
-    { type: 'int', input: 'sin(x) x 0 pi' },
-    { type: 'int', input: 'exp(-x^2) x 0 inf' },
-    { type: 'int', input: 'sin(cos(x)) x 0 1' }, // unevaluated symbolically, falls back to numerical
-    { type: 'int', input: 'x^2 + y, x' }, // parameters
-    { type: 'int', input: 'x * y, x, y' }, // Double indefinite
-    { type: 'int', input: 'x^2 + y^2, x, 0, 1, y, 0, 2' }, // Double definite
-    { type: 'int', input: 'x * y * z, x, 0, 1, y, 0, 1, z, 0, 1' }, // Triple definite
+    { type: 'int', input: 'x^2 vars:x' },
+    { type: 'int', input: 'sin(x) x:[0, pi]' },
+    { type: 'int', input: 'exp(-x^2) x:[0, inf]' },
+    { type: 'int', input: 'sin(cos(x)) x:[0, 1]' }, // unevaluated symbolically, falls back to numerical
+    { type: 'int', input: 'x^2 + y vars:x' }, // parameters
+    { type: 'int', input: 'x * y vars:{x, y}' }, // Double indefinite
+    { type: 'int', input: 'x^2 + y^2 x:[0, 1] y:[0, 2]' }, // Double definite
+    { type: 'int', input: 'x * y * z x:[0, 1] y:[0, 1] z:[0, 1]' }, // Triple definite
 
     // 3. Vector / multivariable field integrals
-    { type: 'int', input: 'line (-y, x) path (cos(t), sin(t)) [0, 2*pi]' },
-    { type: 'int', input: 'line x^2 + y^2 path (cos(t), sin(t)) [0, 2*pi]' },
-    { type: 'int', input: 'line exp(sin(x^2)) path (t, 0) [0, 1]' }, // Numeric fallback
-    { type: 'int', input: 'surface (0, 0, z) surface (sin(u)*cos(v), sin(u)*sin(v), cos(u)) [0, pi] [0, 2*pi]' },
-    { type: 'int', input: 'surface 1 surface (u, v, 0) [0, 1] [0, 1]' },
-    { type: 'int', input: 'volume x*y*z [0, 1] [0, 2] [0, 3]' }
+    { type: 'int', input: '(-y, x) kind:line param:{cos(t), sin(t)} t:[0, 2*pi]' },
+    { type: 'int', input: 'x^2 + y^2 kind:line param:{cos(t), sin(t)} t:[0, 2*pi]' },
+    { type: 'int', input: 'exp(sin(x^2)) kind:line param:{t, 0} t:[0, 1]' }, // Numeric fallback
+    { type: 'int', input: '(0, 0, z) kind:surface param:{sin(u)*cos(v), sin(u)*sin(v), cos(u)} u:[0, pi] v:[0, 2*pi]' },
+    { type: 'int', input: '1 kind:surface param:{u, v, 0} u:[0, 1] v:[0, 1]' },
+    { type: 'int', input: 'x*y*z kind:volume x:[0, 1] y:[0, 2] z:[0, 3]' }
 ];
 
 async function runTests() {

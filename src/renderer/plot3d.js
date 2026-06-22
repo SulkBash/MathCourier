@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { formatVarToTex } = require('../utils');
+const { analyze3dPlot } = require('../plot-semantics');
 const ZERO_TOLERANCE = 1e-9;
 const MAX_CONCURRENT_PLOT3D = Math.max(1, Number(config.bot?.plot3dMaxConcurrency) || 3);
 const DEFAULT_ANIMATION_FRAMES = Math.max(6, Number(config.bot?.plot3dAnimationFrames) || 12);
@@ -229,24 +230,28 @@ function createRandomStreamlineSeeds(xDomain, yDomain, zDomain, count = 180) {
     return seeds;
 }
 
-function getPlot3dTraceVariables({ isVectorField, isParametricSurface, isExplicitPolarSurface, isParametricCurve, coordSystem }) {
-    if (isParametricSurface) {
-        return ['u', 'v'];
+function getPlot3dTraceVariables(semantics) {
+    switch (semantics.family) {
+        case 'vector':
+            return semantics.coordVars || [];
+        case 'surface-parametric':
+        case 'surface-polar':
+            return semantics.paramVars || [];
+        case 'curve-parametric':
+            return semantics.paramVar ? [semantics.paramVar] : [];
+        case 'surface-explicit':
+            return semantics.surfaceVars || [];
+        case 'surface-implicit':
+            return semantics.coordVars || [];
+        case 'curve-explicit-2d':
+            return [semantics.independentVar, semantics.dependentVar].filter(Boolean);
+        case 'curve-implicit-2d':
+            return semantics.coordVars || [];
+        case 'curve-polar-2d':
+            return semantics.angleVar ? [semantics.angleVar] : [];
+        default:
+            return ['x', 'y', 'z'];
     }
-
-    if (isExplicitPolarSurface) {
-        return coordSystem === 'spherical' ? ['theta', 'phi'] : ['theta', 'z'];
-    }
-
-    if (isParametricCurve) {
-        return ['t'];
-    }
-
-    if (isVectorField) {
-        return ['x', 'y', 'z'];
-    }
-
-    return ['x', 'y', 'z'];
 }
 
 function getDefaultPlot3dEvolutionVar(expr, traceVars) {
@@ -256,40 +261,15 @@ function getDefaultPlot3dEvolutionVar(expr, traceVars) {
     return traceVars[0] || 't';
 }
 
-function resolvePlot3dTraceBounds(tracingVar, domainInfo, coordSystem) {
-    switch (tracingVar) {
-        case 'x':
-            return domainInfo.xDomain || null;
-        case 'y':
-            return domainInfo.yDomain || null;
-        case 'z':
-            if (domainInfo.parameterDomain2 && coordSystem === 'cylindrical') {
-                return domainInfo.parameterDomain2;
-            }
-            return domainInfo.zDomain || null;
-        case 'u':
-        case 'theta':
-            return domainInfo.parameterDomain1 || null;
-        case 'v':
-        case 'phi':
-            return domainInfo.parameterDomain2 || null;
-        case 't':
-            return domainInfo.parameterDomain1 || null;
-        default:
-            return null;
-    }
+function resolvePlot3dTraceBounds(tracingVar, domainInfo) {
+    return domainInfo.traceDomainMap[tracingVar] || null;
 }
 
 function resolvePlot3dDomains({
     customOptions,
     domains,
     graphStyle,
-    coordSystem,
-    isVectorField,
-    isParametricSurface,
-    isExplicitPolarSurface,
-    isParametricCurve,
-    isImplicitEquation,
+    semantics,
     hasEvolutionSweep
 }) {
     const defaultEvolutionDomain = [0, 2 * Math.PI];
@@ -304,8 +284,36 @@ function resolvePlot3dDomains({
             parameterDomain1: null,
             parameterDomain2: null,
             evolutionDomain: null,
-            providedDomains: { x: true, y: true, z: true }
+            providedDomains: { x: true, y: true, z: true },
+            traceDomainMap: {}
         };
+    }
+
+    const labeled = customOptions.labeledDomains || {};
+    let positionalConsumed = 0;
+    const providedDomains = { x: false, y: false, z: false };
+
+    function resolveDomainForVar(varNames, fallbackDefault) {
+        const names = Array.isArray(varNames) ? varNames : [varNames];
+        for (const name of names) {
+            if (labeled[name]) {
+                if (['x', 'y', 'z'].includes(name)) {
+                    providedDomains[name] = true;
+                }
+                return labeled[name];
+            }
+        }
+        if (positionalConsumed < domains.length) {
+            const domain = domains[positionalConsumed];
+            positionalConsumed++;
+            for (const name of names) {
+                if (['x', 'y', 'z'].includes(name)) {
+                    providedDomains[name] = true;
+                }
+            }
+            return domain;
+        }
+        return typeof fallbackDefault === 'function' ? fallbackDefault() : fallbackDefault;
     }
 
     let xDomain;
@@ -314,65 +322,89 @@ function resolvePlot3dDomains({
     let parameterDomain1 = null;
     let parameterDomain2 = null;
     let evolutionDomain = null;
-    const providedDomains = { x: false, y: false, z: false };
+    const traceDomainMap = {};
 
-    if (isVectorField) {
-        xDomain = domains.length >= 1 ? domains[0] : defaultXDomain;
-        yDomain = domains.length >= 2 ? domains[1] : [...xDomain];
-        zDomain = domains.length >= 3 ? domains[2] : [...xDomain];
-        evolutionDomain = hasEvolutionSweep ? (domains.length >= 4 ? domains[3] : defaultEvolutionDomain) : null;
-        providedDomains.x = domains.length >= 1;
-        providedDomains.y = domains.length >= 2;
-        providedDomains.z = domains.length >= 3;
-    } else if (isParametricSurface || isExplicitPolarSurface) {
+    const evolutionVar = customOptions.evolutionVar || 't';
+
+    if (semantics.family === 'vector') {
+        xDomain = resolveDomainForVar(semantics.coordVars[0], defaultXDomain);
+        yDomain = resolveDomainForVar(semantics.coordVars[1], () => [...xDomain]);
+        zDomain = resolveDomainForVar(semantics.coordVars[2], () => [...xDomain]);
+        traceDomainMap[semantics.coordVars[0]] = xDomain;
+        traceDomainMap[semantics.coordVars[1]] = yDomain;
+        traceDomainMap[semantics.coordVars[2]] = zDomain;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
+    } else if (semantics.family === 'surface-parametric' || semantics.family === 'surface-polar') {
+        const coordSystem = semantics.coordSystem || 'cartesian';
         const defaultU = coordSystem === 'spherical' ? [0, Math.PI] : [0, 2 * Math.PI];
         const defaultV = coordSystem === 'spherical'
             ? [0, 2 * Math.PI]
             : (coordSystem === 'cylindrical' ? [-5, 5] : [0, 2 * Math.PI]);
 
-        parameterDomain1 = domains.length >= 1 ? domains[0] : defaultU;
-        parameterDomain2 = domains.length >= 2 ? domains[1] : defaultV;
-        evolutionDomain = hasEvolutionSweep ? (domains.length >= 3 ? domains[2] : defaultEvolutionDomain) : null;
+        parameterDomain1 = resolveDomainForVar(semantics.paramVars[0], defaultU);
+        parameterDomain2 = resolveDomainForVar(semantics.paramVars[1], defaultV);
+        traceDomainMap[semantics.paramVars[0]] = parameterDomain1;
+        traceDomainMap[semantics.paramVars[1]] = parameterDomain2;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
 
-        const displayOffset = hasEvolutionSweep ? 3 : 2;
-        xDomain = domains.length >= displayOffset + 1 ? domains[displayOffset] : defaultXDomain;
-        yDomain = domains.length >= displayOffset + 2 ? domains[displayOffset + 1] : [...xDomain];
-        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : null;
-        providedDomains.x = domains.length >= displayOffset + 1;
-        providedDomains.y = domains.length >= displayOffset + 2;
-        providedDomains.z = domains.length >= displayOffset + 3;
-    } else if (isParametricCurve) {
-        parameterDomain1 = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
-        evolutionDomain = hasEvolutionSweep ? (domains.length >= 2 ? domains[1] : defaultEvolutionDomain) : null;
+        xDomain = resolveDomainForVar('x', defaultXDomain);
+        yDomain = resolveDomainForVar('y', () => [...xDomain]);
+        zDomain = resolveDomainForVar('z', null);
+    } else if (semantics.family === 'curve-parametric') {
+        parameterDomain1 = resolveDomainForVar(semantics.paramVar, [0, 2 * Math.PI]);
+        traceDomainMap[semantics.paramVar] = parameterDomain1;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
 
-        const displayOffset = hasEvolutionSweep ? 2 : 1;
-        xDomain = domains.length >= displayOffset + 1 ? domains[displayOffset] : defaultXDomain;
-        yDomain = domains.length >= displayOffset + 2 ? domains[displayOffset + 1] : [...xDomain];
-        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : null;
-        providedDomains.x = domains.length >= displayOffset + 1;
-        providedDomains.y = domains.length >= displayOffset + 2;
-        providedDomains.z = domains.length >= displayOffset + 3;
-    } else if (isImplicitEquation) {
-        xDomain = domains.length >= 1 ? domains[0] : defaultXDomain;
-        yDomain = domains.length >= 2 ? domains[1] : defaultYDomain;
-        zDomain = domains.length >= 3 ? domains[2] : null;
-        evolutionDomain = hasEvolutionSweep ? (domains.length >= 4 ? domains[3] : defaultEvolutionDomain) : null;
-        providedDomains.x = domains.length >= 1;
-        providedDomains.y = domains.length >= 2;
-        providedDomains.z = domains.length >= 3;
-    } else {
-        xDomain = domains.length >= 1 ? domains[0] : defaultXDomain;
-        yDomain = domains.length >= 2 ? domains[1] : defaultYDomain;
-        if (hasEvolutionSweep) {
-            evolutionDomain = domains.length >= 3 ? domains[2] : defaultEvolutionDomain;
-            zDomain = domains.length >= 4 ? domains[3] : null;
-            providedDomains.z = domains.length >= 4;
-        } else {
-            zDomain = domains.length >= 3 ? domains[2] : null;
-            providedDomains.z = domains.length >= 3;
+        xDomain = resolveDomainForVar('x', defaultXDomain);
+        yDomain = resolveDomainForVar('y', () => [...xDomain]);
+        zDomain = resolveDomainForVar('z', [-1, 1]);
+    } else if (semantics.family === 'surface-implicit') {
+        xDomain = resolveDomainForVar(semantics.coordVars[0], defaultXDomain);
+        yDomain = resolveDomainForVar(semantics.coordVars[1], defaultYDomain);
+        zDomain = resolveDomainForVar(semantics.coordVars[2], null);
+        traceDomainMap[semantics.coordVars[0]] = xDomain;
+        traceDomainMap[semantics.coordVars[1]] = yDomain;
+        if (zDomain) {
+            traceDomainMap[semantics.coordVars[2]] = zDomain;
         }
-        providedDomains.x = domains.length >= 1;
-        providedDomains.y = domains.length >= 2;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
+    } else if (semantics.family === 'surface-explicit') {
+        xDomain = resolveDomainForVar(semantics.surfaceVars[0], defaultXDomain);
+        yDomain = resolveDomainForVar(semantics.surfaceVars[1], defaultYDomain);
+        zDomain = resolveDomainForVar('z', null);
+        traceDomainMap[semantics.surfaceVars[0]] = xDomain;
+        traceDomainMap[semantics.surfaceVars[1]] = yDomain;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
+    } else if (semantics.family === 'curve-explicit-2d') {
+        xDomain = resolveDomainForVar(semantics.independentVar, defaultXDomain);
+        yDomain = resolveDomainForVar(semantics.dependentVar, defaultYDomain);
+        zDomain = resolveDomainForVar('z', [-1, 1]);
+        traceDomainMap[semantics.independentVar] = xDomain;
+        traceDomainMap[semantics.dependentVar] = yDomain;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
+    } else if (semantics.family === 'curve-implicit-2d') {
+        xDomain = resolveDomainForVar(semantics.coordVars[0], defaultXDomain);
+        yDomain = resolveDomainForVar(semantics.coordVars[1], defaultYDomain);
+        zDomain = resolveDomainForVar('z', [-1, 1]);
+        traceDomainMap[semantics.coordVars[0]] = xDomain;
+        traceDomainMap[semantics.coordVars[1]] = yDomain;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
+    } else if (semantics.family === 'curve-polar-2d') {
+        parameterDomain1 = resolveDomainForVar(semantics.angleVar, [0, 2 * Math.PI]);
+        xDomain = resolveDomainForVar('x', defaultXDomain);
+        yDomain = resolveDomainForVar('y', defaultYDomain);
+        zDomain = resolveDomainForVar('z', [-1, 1]);
+        traceDomainMap[semantics.angleVar] = parameterDomain1;
+        evolutionDomain = hasEvolutionSweep ? resolveDomainForVar(evolutionVar, defaultEvolutionDomain) : null;
+    } else {
+        xDomain = resolveDomainForVar('x', defaultXDomain);
+        yDomain = resolveDomainForVar('y', defaultYDomain);
+        if (hasEvolutionSweep) {
+            evolutionDomain = resolveDomainForVar(evolutionVar, defaultEvolutionDomain);
+            zDomain = resolveDomainForVar('z', null);
+        } else {
+            zDomain = resolveDomainForVar('z', null);
+        }
     }
 
     return {
@@ -382,7 +414,8 @@ function resolvePlot3dDomains({
         parameterDomain1,
         parameterDomain2,
         evolutionDomain,
-        providedDomains
+        providedDomains,
+        traceDomainMap
     };
 }
 
@@ -574,8 +607,9 @@ function getCoordinateSystem(expr, components = null) {
     return 'cartesian';
 }
 
-function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
+function sampleVectorField3d(components, opts, coordSystem = 'cartesian', coordVars = ['x', 'y', 'z']) {
     const [xExpr, yExpr, zExpr] = components;
+    const [xVar, yVar, zVar] = coordVars;
     const xCompiled = math.compile(preprocessExpr(xExpr));
     const yCompiled = math.compile(preprocessExpr(yExpr));
     const zCompiled = math.compile(preprocessExpr(zExpr));
@@ -606,7 +640,7 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
                     if (coordSystem === 'cylindrical') {
                         const r = Math.sqrt(x*x + y*y);
                         const theta = Math.atan2(y, x);
-                        const scope = mergeEvalScope(opts, { r, theta, z });
+                        const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta });
                         const Fr = toReal(xCompiled.evaluate(scope));
                         const Ftheta = toReal(yCompiled.evaluate(scope));
                         const Fz = toReal(zCompiled.evaluate(scope));
@@ -618,7 +652,7 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
                         const r = Math.sqrt(x*x + y*y + z*z);
                         const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
                         const phi = Math.atan2(y, x);
-                        const scope = mergeEvalScope(opts, { r, theta, phi });
+                        const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta, phi });
                         const Fr = toReal(xCompiled.evaluate(scope));
                         const Ftheta = toReal(yCompiled.evaluate(scope));
                         const Fphi = toReal(zCompiled.evaluate(scope));
@@ -627,7 +661,7 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
                         vVal = Fr * Math.sin(theta) * Math.sin(phi) + Ftheta * Math.cos(theta) * Math.sin(phi) + Fphi * Math.cos(phi);
                         wVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
                     } else {
-                        const scope = mergeEvalScope(opts, { x, y, z });
+                        const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z });
                         uVal = toReal(xCompiled.evaluate(scope));
                         vVal = toReal(yCompiled.evaluate(scope));
                         wVal = toReal(zCompiled.evaluate(scope));
@@ -667,8 +701,9 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian') {
     };
 }
 
-function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
+function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVars = ['x', 'y', 'z']) {
     const [xExpr, yExpr, zExpr] = components;
+    const [xVar, yVar, zVar] = coordVars;
     const xCompiled = math.compile(preprocessExpr(xExpr));
     const yCompiled = math.compile(preprocessExpr(yExpr));
     const zCompiled = math.compile(preprocessExpr(zExpr));
@@ -687,7 +722,7 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
             if (coordSystem === 'cylindrical') {
                 const r = Math.sqrt(x*x + y*y);
                 const theta = Math.atan2(y, x);
-                const scope = mergeEvalScope(opts, { r, theta, z });
+                const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta });
                 const Fr = toReal(xCompiled.evaluate(scope));
                 const Ftheta = toReal(yCompiled.evaluate(scope));
                 const Fz = toReal(zCompiled.evaluate(scope));
@@ -699,7 +734,7 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
                 const r = Math.sqrt(x*x + y*y + z*z);
                 const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
                 const phi = Math.atan2(y, x);
-                const scope = mergeEvalScope(opts, { r, theta, phi });
+                const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta, phi });
                 const Fr = toReal(xCompiled.evaluate(scope));
                 const Ftheta = toReal(yCompiled.evaluate(scope));
                 const Fphi = toReal(zCompiled.evaluate(scope));
@@ -708,7 +743,7 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian') {
                 vVal = Fr * Math.sin(theta) * Math.sin(phi) + Ftheta * Math.cos(theta) * Math.sin(phi) + Fphi * Math.cos(phi);
                 wVal = Fr * Math.cos(theta) - Ftheta * Math.sin(theta);
             } else {
-                const scope = mergeEvalScope(opts, { x, y, z });
+                const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z });
                 uVal = toReal(xCompiled.evaluate(scope));
                 vVal = toReal(yCompiled.evaluate(scope));
                 wVal = toReal(zCompiled.evaluate(scope));
@@ -1040,6 +1075,213 @@ function buildExplicitSurfaceFromLinearZ(combinedExpr, opts) {
     };
 }
 
+function sampleExplicitPlaneCurve3d(rhsExpr, independentVar, dependentVar, opts) {
+    const compiled = math.compile(preprocessExpr(rhsExpr));
+    const [xMin, xMax] = opts.xDomain;
+    const [yMin, yMax] = opts.yDomain;
+    const steps = 400;
+    const step = (xMax - xMin) / steps;
+    const points = [];
+
+    function evalAt(x) {
+        try {
+            const scope = mergeEvalScope(opts, { x, [independentVar]: x });
+            const value = toReal(compiled.evaluate(scope));
+            if (!isNaN(value) && isFinite(value) && !isTracingLimited(opts, dependentVar, value)) {
+                return value;
+            }
+        } catch (_) { }
+        return null;
+    }
+
+    const maxDepth = 12;
+    const minXDist = (xMax - xMin) / 1000000;
+    const yRange = yMax - yMin;
+    const threshY = yRange * 0.01;
+    const nearDomain = (y) => y !== null && y >= yMin - yRange && y <= yMax + yRange;
+
+    function subdivide(x1, y1, x2, y2, depth) {
+        let shouldSplit = false;
+        let yMid = null;
+        const xMid = (x1 + x2) / 2;
+
+        if (depth < maxDepth && Math.abs(x2 - x1) >= minXDist) {
+            yMid = evalAt(xMid);
+
+            if (y1 === null && y2 === null) {
+                if (yMid !== null) shouldSplit = true;
+            } else if (y1 === null || y2 === null) {
+                shouldSplit = true;
+            } else {
+                const diff = Math.abs(y1 - y2);
+                if (diff > threshY && (nearDomain(y1) || nearDomain(y2) || nearDomain(yMid))) {
+                    shouldSplit = true;
+                }
+            }
+        }
+
+        if (shouldSplit) {
+            subdivide(x1, y1, xMid, yMid, depth + 1);
+            subdivide(xMid, yMid, x2, y2, depth + 1);
+        } else {
+            points.push({ x: x2, y: y2 });
+        }
+    }
+
+    const yStart = evalAt(xMin);
+    points.push({ x: xMin, y: yStart });
+
+    const limitX = isTracingLimited(opts, independentVar, xMax) ? opts.tracingLimit : xMax;
+    for (let i = 0; i < steps; i++) {
+        const x1 = xMin + i * step;
+        const x2 = xMin + (i + 1) * step;
+        if (x2 > limitX) break;
+        const y1 = points[points.length - 1].y;
+        const y2 = evalAt(x2);
+        subdivide(x1, y1, x2, y2, 0);
+    }
+
+    return {
+        x: points.map((point) => point.x),
+        y: points.map((point) => point.y),
+        z: points.map(() => 0)
+    };
+}
+
+function samplePolarPlaneCurve3d(rhsExpr, angleVar, opts) {
+    const compiled = math.compile(preprocessExpr(rhsExpr));
+    const [thetaMin, thetaMax] = opts.parameterDomain1 || [0, 2 * Math.PI];
+    const steps = 500;
+    const step = (thetaMax - thetaMin) / steps;
+    const x = [];
+    const y = [];
+    const z = [];
+    const limitTheta = isTracingLimited(opts, angleVar, thetaMax) ? opts.tracingLimit : thetaMax;
+
+    for (let i = 0; i <= steps; i++) {
+        const theta = thetaMin + i * step;
+        if (theta > limitTheta) break;
+
+        try {
+            const scope = mergeEvalScope(opts, { theta, [angleVar]: theta });
+            const rValue = toReal(compiled.evaluate(scope));
+            if (!isNaN(rValue) && isFinite(rValue)) {
+                x.push(rValue * Math.cos(theta));
+                y.push(rValue * Math.sin(theta));
+                z.push(0);
+            } else {
+                x.push(null);
+                y.push(null);
+                z.push(null);
+            }
+        } catch (_) {
+            x.push(null);
+            y.push(null);
+            z.push(null);
+        }
+    }
+
+    return { x, y, z };
+}
+
+function sampleImplicitPlaneCurve3d(lhsExpr, rhsExpr, coordVars, opts, extraScope = () => ({})) {
+    const combined = `(${preprocessExpr(lhsExpr)}) - (${preprocessExpr(rhsExpr)})`;
+    const compiled = math.compile(combined);
+    const [xVar, yVar] = coordVars;
+    const [xMin, xMax] = opts.xDomain;
+    const [yMin, yMax] = opts.yDomain;
+    const steps = 150;
+    const xStep = (xMax - xMin) / steps;
+    const yStep = (yMax - yMin) / steps;
+    const X = [];
+    const Y = [];
+
+    for (let i = 0; i <= steps; i++) {
+        X.push(xMin + i * xStep);
+        Y.push(yMin + i * yStep);
+    }
+
+    const V = [];
+    for (let i = 0; i <= steps; i++) {
+        const row = [];
+        const x = X[i];
+        const skipX = isTracingLimited(opts, xVar, x);
+        for (let j = 0; j <= steps; j++) {
+            const y = Y[j];
+            const skipY = isTracingLimited(opts, yVar, y);
+            if (skipX || skipY) {
+                row.push(NaN);
+                continue;
+            }
+
+            try {
+                const r = Math.sqrt(x * x + y * y);
+                const theta = Math.atan2(y, x);
+                const scope = mergeEvalScope(opts, Object.assign({
+                    x,
+                    y,
+                    [xVar]: x,
+                    [yVar]: y,
+                    r,
+                    theta
+                }, extraScope(theta)));
+                const value = toReal(compiled.evaluate(scope));
+                row.push(!isNaN(value) && isFinite(value) ? value : NaN);
+            } catch (_) {
+                row.push(NaN);
+            }
+        }
+        V.push(row);
+    }
+
+    const lineX = [];
+    const lineY = [];
+    const lineZ = [];
+
+    for (let i = 0; i < steps; i++) {
+        for (let j = 0; j < steps; j++) {
+            const v00 = V[i][j];
+            const v10 = V[i + 1][j];
+            const v11 = V[i + 1][j + 1];
+            const v01 = V[i][j + 1];
+
+            if (isNaN(v00) || isNaN(v10) || isNaN(v11) || isNaN(v01)) {
+                continue;
+            }
+
+            const crossings = [];
+            if (v00 * v10 <= 0 && v00 !== v10) {
+                const t = -v00 / (v10 - v00);
+                crossings.push({ x: X[i] + t * (X[i + 1] - X[i]), y: Y[j] });
+            }
+            if (v10 * v11 <= 0 && v10 !== v11) {
+                const t = -v10 / (v11 - v10);
+                crossings.push({ x: X[i + 1], y: Y[j] + t * (Y[j + 1] - Y[j]) });
+            }
+            if (v01 * v11 <= 0 && v01 !== v11) {
+                const t = -v01 / (v11 - v01);
+                crossings.push({ x: X[i] + t * (X[i + 1] - X[i]), y: Y[j + 1] });
+            }
+            if (v00 * v01 <= 0 && v00 !== v01) {
+                const t = -v00 / (v01 - v00);
+                crossings.push({ x: X[i], y: Y[j] + t * (Y[j + 1] - Y[j]) });
+            }
+
+            if (crossings.length === 2) {
+                lineX.push(crossings[0].x, crossings[1].x, null);
+                lineY.push(crossings[0].y, crossings[1].y, null);
+                lineZ.push(0, 0, null);
+            } else if (crossings.length === 4) {
+                lineX.push(crossings[0].x, crossings[1].x, null, crossings[2].x, crossings[3].x, null);
+                lineY.push(crossings[0].y, crossings[1].y, null, crossings[2].y, crossings[3].y, null);
+                lineZ.push(0, 0, null, 0, 0, null);
+            }
+        }
+    }
+
+    return { x: lineX, y: lineY, z: lineZ };
+}
+
 function buildTempVideoPath() {
     const suffix = `${process.pid}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     return path.join(os.tmpdir(), `plot3d_rotation_${suffix}.mp4`);
@@ -1127,20 +1369,12 @@ function buildPlot3dScene(context, opts) {
     const {
         customOptions,
         expr,
-        namedVectorField,
-        bareTuple,
-        coordSystem,
-        isVectorField,
-        isParametricSurface,
-        isExplicitPolarSurface,
-        isParametricCurve,
-        isImplicitEquation,
-        lhsVal,
-        rhsVal,
+        semantics,
         parameterDomain1,
         parameterDomain2,
         providedDomains
     } = context;
+    const coordSystem = semantics.coordSystem || 'cartesian';
 
     const getBounds = (arr, fallback) => {
         if (arr.length === 0) return fallback;
@@ -1163,17 +1397,20 @@ function buildPlot3dScene(context, opts) {
         };
     }
 
-    if (isVectorField) {
+    if (semantics.family === 'vector') {
         const isFlux = customOptions.isFlux || false;
         type = isFlux ? 'flux3d' : 'vector3d';
-        const fieldName = namedVectorField ? namedVectorField.name : 'F';
-        const components = namedVectorField ? namedVectorField.components : bareTuple;
+        const fieldName = semantics.funcName || 'F';
+        const components = semantics.components;
+        const [xVar, yVar, zVar] = semantics.coordVars;
 
         if (!opts.zDomain) {
             opts.zDomain = [...opts.xDomain];
         }
 
-        plotData = isFlux ? sampleFluxLines3d(components, opts, coordSystem) : sampleVectorField3d(components, opts, coordSystem);
+        plotData = isFlux
+            ? sampleFluxLines3d(components, opts, coordSystem, semantics.coordVars)
+            : sampleVectorField3d(components, opts, coordSystem, semantics.coordVars);
         if (!plotData) {
             return {
                 success: false,
@@ -1189,11 +1426,11 @@ function buildPlot3dScene(context, opts) {
             const texV = math.parse(vExpr).toTex();
             const texW = math.parse(wExpr).toTex();
             if (coordSystem === 'cylindrical') {
-                latexText = `\\vec{${fieldName}}(r,\\theta,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                latexText = `\\vec{${fieldName}}(${xVar},${yVar},${zVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
             } else if (coordSystem === 'spherical') {
-                latexText = `\\vec{${fieldName}}(r,\\theta,\\phi) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                latexText = `\\vec{${fieldName}}(${xVar},${yVar},${zVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
             } else {
-                latexText = `\\vec{${fieldName}}(x,y,z) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                latexText = `\\vec{${fieldName}}(${xVar},${yVar},${zVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
             }
         } catch (e) {
             latexText = `\\vec{${fieldName}} = \\left( ${components.join(', ')} \\right)`;
@@ -1202,9 +1439,10 @@ function buildPlot3dScene(context, opts) {
         return { success: true, type, plotData, latexText };
     }
 
-    if (isParametricSurface) {
+    if (semantics.family === 'surface-parametric') {
         type = 'surface';
-        const [xExpr, yExpr, zExpr] = bareTuple.map((value) => value.trim());
+        const [xExpr, yExpr, zExpr] = semantics.components.map((value) => value.trim());
+        const [uVar, vVar] = semantics.paramVars;
         const xCompiled = math.compile(preprocessExpr(xExpr));
         const yCompiled = math.compile(preprocessExpr(yExpr));
         const zCompiled = math.compile(preprocessExpr(zExpr));
@@ -1226,7 +1464,7 @@ function buildPlot3dScene(context, opts) {
             const rowZ = [];
             for (let i = 0; i <= gridSteps; i++) {
                 const u = uMin + i * uStep;
-                if (isTracingLimited(opts, 'u', u) || isTracingLimited(opts, 'v', v)) {
+                if (isTracingLimited(opts, uVar, u) || isTracingLimited(opts, vVar, v)) {
                     rowX.push(null);
                     rowY.push(null);
                     rowZ.push(null);
@@ -1234,7 +1472,7 @@ function buildPlot3dScene(context, opts) {
                 }
 
                 try {
-                    const scope = mergeEvalScope(opts, { u, v });
+                    const scope = mergeEvalScope(opts, { u, v, [uVar]: u, [vVar]: v });
                     const xVal = toReal(xCompiled.evaluate(scope));
                     const yVal = toReal(yCompiled.evaluate(scope));
                     const zVal = toReal(zCompiled.evaluate(scope));
@@ -1275,17 +1513,18 @@ function buildPlot3dScene(context, opts) {
             const texX = math.parse(xExpr).toTex();
             const texY = math.parse(yExpr).toTex();
             const texZ = math.parse(zExpr).toTex();
-            latexText = `\\vec{r}(u,v) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
+            latexText = `\\vec{r}(${uVar},${vVar}) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
         } catch (e) {
-            latexText = `\\vec{r}(u,v) = \\left( ${xExpr},\\ ${yExpr},\\ ${zExpr} \\right)`;
+            latexText = `\\vec{r}(${uVar},${vVar}) = \\left( ${xExpr},\\ ${yExpr},\\ ${zExpr} \\right)`;
         }
 
         return { success: true, type, plotData, latexText };
     }
 
-    if (isExplicitPolarSurface) {
+    if (semantics.family === 'surface-polar') {
         type = 'surface';
-        const rCompiled = math.compile(preprocessExpr(rhsVal));
+        const rCompiled = math.compile(preprocessExpr(semantics.rhs));
+        const [uVar, vVar] = semantics.paramVars;
         const [uMin, uMax] = parameterDomain1;
         const [vMin, vMax] = parameterDomain2;
         const gridSteps = 40;
@@ -1304,8 +1543,8 @@ function buildPlot3dScene(context, opts) {
             for (let i = 0; i <= gridSteps; i++) {
                 const u = uMin + i * uStep;
                 const shouldTraceSkip = coordSystem === 'spherical'
-                    ? isTracingLimited(opts, 'theta', u) || isTracingLimited(opts, 'phi', v)
-                    : isTracingLimited(opts, 'theta', u) || isTracingLimited(opts, 'z', v);
+                    ? isTracingLimited(opts, uVar, u) || isTracingLimited(opts, vVar, v)
+                    : isTracingLimited(opts, uVar, u) || isTracingLimited(opts, vVar, v);
                 if (shouldTraceSkip) {
                     rowX.push(null);
                     rowY.push(null);
@@ -1320,7 +1559,7 @@ function buildPlot3dScene(context, opts) {
                     let zVal;
 
                     if (coordSystem === 'spherical') {
-                        const scope = mergeEvalScope(opts, { theta: u, phi: v });
+                        const scope = mergeEvalScope(opts, { theta: u, phi: v, [uVar]: u, [vVar]: v });
                         rVal = toReal(rCompiled.evaluate(scope));
                         if (!isNaN(rVal) && isFinite(rVal)) {
                             xVal = rVal * Math.sin(u) * Math.cos(v);
@@ -1328,7 +1567,7 @@ function buildPlot3dScene(context, opts) {
                             zVal = rVal * Math.cos(u);
                         }
                     } else {
-                        const scope = mergeEvalScope(opts, { theta: u, z: v });
+                        const scope = mergeEvalScope(opts, { theta: u, z: v, [uVar]: u, [vVar]: v });
                         rVal = toReal(rCompiled.evaluate(scope));
                         if (!isNaN(rVal) && isFinite(rVal)) {
                             xVal = rVal * Math.cos(u);
@@ -1371,18 +1610,19 @@ function buildPlot3dScene(context, opts) {
         if (!providedDomains.z && !opts.zDomain) opts.zDomain = getBounds(flatZ, [-5, 5]);
 
         try {
-            const texR = math.parse(rhsVal).toTex();
-            latexText = `r = ${texR}`;
+            const texR = math.parse(semantics.rhs).toTex();
+            latexText = `${semantics.lhs} = ${texR}`;
         } catch (e) {
-            latexText = `r = ${rhsVal}`;
+            latexText = `${semantics.lhs} = ${semantics.rhs}`;
         }
 
         return { success: true, type, plotData, latexText };
     }
 
-    if (isParametricCurve) {
+    if (semantics.family === 'curve-parametric') {
         type = 'curve';
-        const [xExpr, yExpr, zExpr] = bareTuple.map((value) => value.trim());
+        const [xExpr, yExpr, zExpr] = semantics.components.map((value) => value.trim());
+        const paramVar = semantics.paramVar;
         const xCompiled = math.compile(preprocessExpr(xExpr));
         const yCompiled = math.compile(preprocessExpr(yExpr));
         const zCompiled = math.compile(preprocessExpr(zExpr));
@@ -1390,7 +1630,7 @@ function buildPlot3dScene(context, opts) {
         const [tMin, tMax] = parameterDomain1 || [0, 2 * Math.PI];
         const steps = 250;
         const tStep = (tMax - tMin) / steps;
-        const limitT = (opts.tracingVar === 't' && opts.tracingLimit !== undefined) ? Math.min(opts.tracingLimit, tMax) : tMax;
+        const limitT = (opts.tracingVar === paramVar && opts.tracingLimit !== undefined) ? Math.min(opts.tracingLimit, tMax) : tMax;
 
         const xVals = [];
         const yVals = [];
@@ -1401,7 +1641,7 @@ function buildPlot3dScene(context, opts) {
             if (t > limitT) break;
 
             try {
-                const scope = mergeEvalScope(opts, { t });
+                const scope = mergeEvalScope(opts, { t, [paramVar]: t });
                 const x = toReal(xCompiled.evaluate(scope));
                 const y = toReal(yCompiled.evaluate(scope));
                 const z = toReal(zCompiled.evaluate(scope));
@@ -1431,22 +1671,111 @@ function buildPlot3dScene(context, opts) {
             const texX = math.parse(xExpr).toTex();
             const texY = math.parse(yExpr).toTex();
             const texZ = math.parse(zExpr).toTex();
-            latexText = `\\vec{r}(t) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
+            latexText = `\\vec{r}(${paramVar}) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
         } catch (e) {
-            latexText = `\\vec{r}(t) = \\left( ${xExpr}, ${yExpr}, ${zExpr} \\right)`;
+            latexText = `\\vec{r}(${paramVar}) = \\left( ${xExpr}, ${yExpr}, ${zExpr} \\right)`;
         }
 
         return { success: true, type, plotData, latexText };
     }
 
-    let lhs = lhsVal;
-    let rhs = rhsVal;
-    if (!expr.includes('=')) {
-        lhs = 'z';
-        rhs = expr;
+    if (semantics.family === 'curve-explicit-2d') {
+        type = 'curve';
+        plotData = sampleExplicitPlaneCurve3d(
+            semantics.rhs,
+            semantics.independentVar,
+            semantics.dependentVar,
+            opts
+        );
+
+        const finiteX = plotData.x.filter((value) => value !== null && isFinite(value));
+        const finiteY = plotData.y.filter((value) => value !== null && isFinite(value));
+        if (finiteX.length === 0) {
+            return {
+                success: false,
+                error: 'No valid real numbers were computed for this curve. Check if the function is defined on the given domain.'
+            };
+        }
+
+        if (!providedDomains.x) opts.xDomain = getBounds(finiteX, [-5, 5]);
+        if (!providedDomains.y) opts.yDomain = getBounds(finiteY, [-5, 5]);
+        if (!providedDomains.z && !opts.zDomain) opts.zDomain = [-0.5, 0.5];
+
+        try {
+            latexText = `${semantics.lhs} = ${math.parse(semantics.rhs).toTex()}`;
+        } catch (e) {
+            latexText = `${semantics.lhs} = ${semantics.rhs}`;
+        }
+
+        return { success: true, type, plotData, latexText };
     }
 
-    if (isImplicitEquation) {
+    if (semantics.family === 'curve-polar-2d') {
+        type = 'curve';
+        plotData = samplePolarPlaneCurve3d(semantics.rhs, semantics.angleVar, Object.assign({}, opts, {
+            parameterDomain1
+        }));
+
+        const finiteX = plotData.x.filter((value) => value !== null && isFinite(value));
+        const finiteY = plotData.y.filter((value) => value !== null && isFinite(value));
+        if (finiteX.length === 0) {
+            return {
+                success: false,
+                error: 'No valid real numbers were computed for this curve. Check if the function is defined on the given domain.'
+            };
+        }
+
+        if (!providedDomains.x) opts.xDomain = getBounds(finiteX, [-5, 5]);
+        if (!providedDomains.y) opts.yDomain = getBounds(finiteY, [-5, 5]);
+        if (!providedDomains.z && !opts.zDomain) opts.zDomain = [-0.5, 0.5];
+
+        try {
+            latexText = `${semantics.lhs} = ${math.parse(semantics.rhs).toTex()}`;
+        } catch (e) {
+            latexText = `${semantics.lhs} = ${semantics.rhs}`;
+        }
+
+        return { success: true, type, plotData, latexText };
+    }
+
+    if (semantics.family === 'curve-implicit-2d') {
+        type = 'curve';
+        plotData = sampleImplicitPlaneCurve3d(
+            semantics.lhs,
+            semantics.rhs,
+            semantics.coordVars,
+            opts,
+            semantics.polar
+                ? (theta) => ({ [semantics.angleVar]: theta })
+                : undefined
+        );
+
+        const finiteX = plotData.x.filter((value) => value !== null && isFinite(value));
+        const finiteY = plotData.y.filter((value) => value !== null && isFinite(value));
+        if (finiteX.length === 0) {
+            return {
+                success: false,
+                error: 'No valid real numbers were computed for this curve. Check if the relation is defined on the given domains.'
+            };
+        }
+
+        if (!providedDomains.x) opts.xDomain = getBounds(finiteX, [-5, 5]);
+        if (!providedDomains.y) opts.yDomain = getBounds(finiteY, [-5, 5]);
+        if (!providedDomains.z && !opts.zDomain) opts.zDomain = [-0.5, 0.5];
+
+        try {
+            latexText = `${math.parse(semantics.lhs).toTex()} = ${math.parse(semantics.rhs).toTex()}`;
+        } catch (e) {
+            latexText = `${semantics.lhs} = ${semantics.rhs}`;
+        }
+
+        return { success: true, type, plotData, latexText };
+    }
+
+    if (semantics.family === 'surface-implicit') {
+        const lhs = semantics.lhs;
+        const rhs = semantics.rhs;
+        const [xVar, yVar, zVar] = semantics.coordVars;
         const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
         const projectedSurface = buildExplicitSurfaceFromLinearZ(combined, opts);
 
@@ -1496,13 +1825,33 @@ function buildPlot3dScene(context, opts) {
                             const r = Math.sqrt(x*x + y*y + z*z);
                             const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
                             const phi = Math.atan2(y, x);
-                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta, phi })));
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                                x, y, z,
+                                [xVar]: x,
+                                [yVar]: y,
+                                [zVar]: z,
+                                r,
+                                theta,
+                                phi
+                            })));
                         } else if (coordSystem === 'cylindrical') {
                             const r = Math.sqrt(x*x + y*y);
                             const theta = Math.atan2(y, x);
-                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta })));
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                                x, y, z,
+                                [xVar]: x,
+                                [yVar]: y,
+                                [zVar]: z,
+                                r,
+                                theta
+                            })));
                         } else {
-                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z })));
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                                x, y, z,
+                                [xVar]: x,
+                                [yVar]: y,
+                                [zVar]: z
+                            })));
                         }
                     } catch (e) { }
                     col.push(!isNaN(val) && isFinite(val) ? val : NaN);
@@ -1630,13 +1979,33 @@ function buildPlot3dScene(context, opts) {
                             const r = Math.sqrt(x*x + y*y + z*z);
                             const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
                             const phi = Math.atan2(y, x);
-                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta, phi })));
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                                x, y, z,
+                                [xVar]: x,
+                                [yVar]: y,
+                                [zVar]: z,
+                                r,
+                                theta,
+                                phi
+                            })));
                         } else if (coordSystem === 'cylindrical') {
                             const r = Math.sqrt(x*x + y*y);
                             const theta = Math.atan2(y, x);
-                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z, r, theta })));
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                                x, y, z,
+                                [xVar]: x,
+                                [yVar]: y,
+                                [zVar]: z,
+                                r,
+                                theta
+                            })));
                         } else {
-                            val = toReal(compiled.evaluate(mergeEvalScope(opts, { x, y, z })));
+                            val = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                                x, y, z,
+                                [xVar]: x,
+                                [yVar]: y,
+                                [zVar]: z
+                            })));
                         }
                         valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
                     } catch (e) {
@@ -1658,6 +2027,9 @@ function buildPlot3dScene(context, opts) {
     }
 
     type = 'surface';
+    const lhs = semantics.lhs || 'z';
+    const rhs = semantics.rhs;
+    const [surfaceVarX, surfaceVarY] = semantics.surfaceVars || ['x', 'y'];
     const compiled = math.compile(preprocessExpr(rhs));
     const xMin = opts.xDomain[0];
     const xMax = opts.xDomain[1];
@@ -1682,7 +2054,7 @@ function buildPlot3dScene(context, opts) {
         const yValue = yGrid[j];
         for (let i = 0; i <= gridSteps; i++) {
             const xValue = xGrid[i];
-            if (isTracingLimited(opts, 'x', xValue) || isTracingLimited(opts, 'y', yValue)) {
+            if (isTracingLimited(opts, surfaceVarX, xValue) || isTracingLimited(opts, surfaceVarY, yValue)) {
                 row.push(null);
                 continue;
             }
@@ -1692,9 +2064,21 @@ function buildPlot3dScene(context, opts) {
                 if (coordSystem === 'cylindrical') {
                     const r = Math.sqrt(xValue*xValue + yValue*yValue);
                     const theta = Math.atan2(yValue, xValue);
-                    zValue = toReal(compiled.evaluate(mergeEvalScope(opts, { x: xValue, y: yValue, r, theta })));
+                    zValue = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                        x: xValue,
+                        y: yValue,
+                        [surfaceVarX]: xValue,
+                        [surfaceVarY]: yValue,
+                        r,
+                        theta
+                    })));
                 } else {
-                    zValue = toReal(compiled.evaluate(mergeEvalScope(opts, { x: xValue, y: yValue })));
+                    zValue = toReal(compiled.evaluate(mergeEvalScope(opts, {
+                        x: xValue,
+                        y: yValue,
+                        [surfaceVarX]: xValue,
+                        [surfaceVarY]: yValue
+                    })));
                 }
 
                 const ok = !isNaN(zValue) && isFinite(zValue) && !isTracingLimited(opts, 'z', zValue);
@@ -1724,9 +2108,9 @@ function buildPlot3dScene(context, opts) {
     }
 
     try {
-        latexText = `z = ${math.parse(rhs).toTex()}`;
+        latexText = `${lhs} = ${math.parse(rhs).toTex()}`;
     } catch (e) {
-        latexText = `z = ${rhs}`;
+        latexText = `${lhs} = ${rhs}`;
     }
 
     return { success: true, type, plotData, latexText };
@@ -1744,44 +2128,15 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         const expr = rawExpr.trim();
         const graphStyle = config.style.graph || {};
         const domains = customOptions.domains || [];
-        const namedVectorField = parseNamedVectorField(expr);
-        const bareTuple = namedVectorField ? null : parseVectorTuple(expr, 3);
-        const coordSystem = getCoordinateSystem(expr, namedVectorField ? namedVectorField.components : bareTuple);
-        const isBareVectorField = bareTuple && shouldTreatBareTupleAsVector(bareTuple, domains.length);
-        const isVectorField = namedVectorField || isBareVectorField;
-        const hasUV = bareTuple && bareTuple.some((component) => expressionUsesAnySymbol(component, ['u', 'v']));
-        const isParametricSurface = bareTuple && hasUV && !isVectorField;
-        const isParametricCurve = bareTuple && !hasUV && !isVectorField;
-
-        let lhsVal = '';
-        let rhsVal = '';
-        let isExplicitPolarSurface = false;
-        if (expr.includes('=')) {
-            const eqIdx = expr.indexOf('=');
-            lhsVal = expr.substring(0, eqIdx).trim();
-            rhsVal = expr.substring(eqIdx + 1).trim();
-            if (lhsVal.toLowerCase() === 'r') {
-                isExplicitPolarSurface = true;
-            }
-        }
-
-        const isImplicitEquation = !customOptions.pdeData &&
-            !isVectorField &&
-            !isParametricSurface &&
-            !isParametricCurve &&
-            !isExplicitPolarSurface &&
-            expr.includes('=') &&
-            lhsVal.toLowerCase() !== 'z';
+        const semantics = analyze3dPlot(expr, {
+            kind: customOptions.kind,
+            variables: customOptions.variables,
+            labeledDomains: customOptions.labeledDomains
+        });
 
         const evolutionRequested = Boolean(customOptions.isEvolutionAnimated);
         const cameraAnimationRequested = Boolean(customOptions.isCameraAnimated || (customOptions.isAnimated && !evolutionRequested));
-        const traceVars = getPlot3dTraceVariables({
-            isVectorField,
-            isParametricSurface,
-            isExplicitPolarSurface,
-            isParametricCurve,
-            coordSystem
-        });
+        const traceVars = getPlot3dTraceVariables(semantics);
 
         let evolutionVar = evolutionRequested ? normalizeAnimationIdentifier(customOptions.evolutionVar) : null;
         if (evolutionRequested && !evolutionVar) {
@@ -1794,18 +2149,13 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             customOptions,
             domains,
             graphStyle,
-            coordSystem,
-            isVectorField,
-            isParametricSurface,
-            isExplicitPolarSurface,
-            isParametricCurve,
-            isImplicitEquation,
+            semantics,
             hasEvolutionSweep
         });
 
         let aspectmode = customOptions.aspectmode;
         if (!aspectmode) {
-            if (isParametricSurface || isParametricCurve || isExplicitPolarSurface) {
+            if (['surface-parametric', 'curve-parametric', 'surface-polar'].includes(semantics.family)) {
                 aspectmode = 'manual';
             } else if (cameraAnimationRequested || evolutionRequested) {
                 aspectmode = 'cube';
@@ -1834,7 +2184,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             camera: buildDefaultCamera(),
             aspectmode,
             evalScope: customOptions.evalScope,
-            streamlineSeeds: isVectorField && (customOptions.isFlux !== false)
+            streamlineSeeds: semantics.family === 'vector' && (customOptions.isFlux !== false)
                 ? createRandomStreamlineSeeds(domainInfo.xDomain, domainInfo.yDomain, domainInfo.zDomain)
                 : undefined
         };
@@ -1842,16 +2192,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         const plotContext = {
             customOptions,
             expr,
-            namedVectorField,
-            bareTuple,
-            coordSystem,
-            isVectorField,
-            isParametricSurface,
-            isExplicitPolarSurface,
-            isParametricCurve,
-            isImplicitEquation,
-            lhsVal,
-            rhsVal,
+            semantics,
             parameterDomain1: domainInfo.parameterDomain1,
             parameterDomain2: domainInfo.parameterDomain2,
             providedDomains: domainInfo.providedDomains
@@ -1863,7 +2204,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             const totalFrames = DEFAULT_ANIMATION_FRAMES;
             const frameBuffers = [];
             const traceBounds = isTracingMode
-                ? resolvePlot3dTraceBounds(evolutionVar, domainInfo, coordSystem)
+                ? resolvePlot3dTraceBounds(evolutionVar, domainInfo)
                 : null;
             const evolutionDomain = hasEvolutionSweep ? domainInfo.evolutionDomain : null;
 

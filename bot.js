@@ -4,7 +4,6 @@ const renderer = require('./src/renderer');
 const config = require('./config');
 
 const handlePlotCommand = require('./src/commands/plot');
-const handlePlot3dCommand = require('./src/commands/plot3d');
 const handleOdeCommand = require('./src/commands/ode');
 const handlePdeCommand = require('./src/commands/pde');
 const helpText = require('./src/commands/help');
@@ -142,16 +141,18 @@ async function handleCommandMessage(msg) {
     if (!msg.body || typeof msg.body !== 'string') return;
 
     const body = msg.body.trim();
-    if (body.startsWith('*LaTeX Render Bot Help Menu*')) return;
+    if (typeof helpText.isHelpText === 'function' && helpText.isHelpText(body)) return;
 
     if (body.startsWith('!') || body.includes('$$')) {
         const snippet = body.substring(0, 40).replace(/\n/g, ' ');
         console.log(`msg from [${msg.author || msg.from}]: "${snippet}${body.length > 40 ? '...' : ''}"`);
     }
 
-    if (body.toLowerCase() === '!help') {
+    const helpInput = parseCommand(body, '!help');
+    if (body.toLowerCase() === '!help' || helpInput !== null) {
         try {
-            await msg.reply(helpText);
+            const targetCmd = helpInput ? helpInput.trim() : '';
+            await msg.reply(helpText(targetCmd));
         } catch (err) {
             console.error('Failed to send help message:', err.message);
         }
@@ -159,14 +160,13 @@ async function handleCommandMessage(msg) {
     }
 
     let triggered = false;
-    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'plot3d' | 'solve' | 'matrix' | 'grad' | 'lap' | 'div' | 'curl' | 'mixed'
+    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'solve' | 'matrix' | 'grad' | 'lap' | 'div' | 'curl' | 'mixed'
     let input = '';
 
     const latexInput = parseCommand(body, '!latex') || parseCommand(body, '!tex');
     const chemInput = parseCommand(body, '!chem') || parseCommand(body, '!chemfig');
     const tikzInput = parseCommand(body, '!tikz');
     const plotInput = parseCommand(body, '!plot');
-    const plot3dInput = parseCommand(body, '!plot3d');
     const solveInput = parseCommand(body, '!solve');
     const matrixInput = parseCommand(body, '!matrix');
     const odeInput = parseCommand(body, '!ode');
@@ -187,8 +187,6 @@ async function handleCommandMessage(msg) {
         triggered = true; mode = 'tikz'; input = tikzInput;
     } else if (plotInput) {
         triggered = true; mode = 'plot'; input = plotInput;
-    } else if (plot3dInput) {
-        triggered = true; mode = 'plot3d'; input = plot3dInput;
     } else if (solveInput) {
         triggered = true; mode = 'solve'; input = solveInput;
     } else if (matrixInput) {
@@ -252,8 +250,6 @@ async function handleCommandMessage(msg) {
             result = await executeRegistryCommand(mode, input);
         } else if (mode === 'plot') {
             result = await handlePlotCommand(input);
-        } else if (mode === 'plot3d') {
-            result = await handlePlot3dCommand(input);
         } else if (mode === 'ode') {
             result = await handleOdeCommand(input);
         } else if (mode === 'pde') {

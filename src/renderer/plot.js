@@ -2,6 +2,7 @@ const math = require('../math');
 const config = require('../../config');
 const katexModule = require('./katex');
 const { formatVarToTex } = require('../utils');
+const { analyze2dPlot, extractExpressionVariables } = require('../plot-semantics');
 
 // Coerce mathjs result to a plain number, returning NaN for complex/invalid values
 function toReal(val) {
@@ -224,7 +225,292 @@ function parseNamedVectorField(expr) {
     };
 }
 
+function parseSingleExpressionStructured(expr, opts) {
+    const semantics = opts.semantics || analyze2dPlot(expr, opts);
+    const mainStatement = expr.trim();
+    let type = '';
+    let plotData = null;
+    let latexText = '';
+    let label = mainStatement;
+
+    if (semantics.family === 'vector') {
+        type = 'vector';
+        const [uExpr, vExpr] = semantics.components;
+        const [xVar, yVar] = semantics.coordVars;
+        const uCompiled = math.compile(preprocessExpr(uExpr));
+        const vCompiled = math.compile(preprocessExpr(vExpr));
+
+        const steps = 16;
+        const [xMin, xMax] = opts.xDomain;
+        const [yMin, yMax] = opts.yDomain;
+        const xStep = (xMax - xMin) / steps;
+        const yStep = (yMax - yMin) / steps;
+        const points = [];
+        let maxMag = 0;
+
+        for (let i = 0; i <= steps; i++) {
+            const x = xMin + i * xStep;
+            if (opts.tracingVar === xVar && opts.tracingLimit !== undefined && x > opts.tracingLimit) {
+                continue;
+            }
+            for (let j = 0; j <= steps; j++) {
+                const y = yMin + j * yStep;
+                if (opts.tracingVar === yVar && opts.tracingLimit !== undefined && y > opts.tracingLimit) {
+                    continue;
+                }
+                try {
+                    const scope = Object.assign(
+                        { x, y, [xVar]: x, [yVar]: y },
+                        opts.evalScope || {}
+                    );
+                    const u = toReal(uCompiled.evaluate(scope));
+                    const v = toReal(vCompiled.evaluate(scope));
+                    if (!isNaN(u) && isFinite(u) && !isNaN(v) && isFinite(v)) {
+                        const mag = Math.sqrt(u * u + v * v);
+                        if (mag > maxMag) maxMag = mag;
+                        points.push({ x, y, u, v, mag });
+                    }
+                } catch (_) { }
+            }
+        }
+
+        plotData = {
+            points: points.map((pt) => ({
+                x: pt.x,
+                y: pt.y,
+                u: pt.u,
+                v: pt.v,
+                norm: maxMag > 0 ? pt.mag / maxMag : 0
+            })),
+            scale: maxMag > 0 ? (xStep * 0.9) / maxMag : 0
+        };
+
+        try {
+            latexText = `\\vec{${semantics.funcName}}(${xVar},${yVar}) = \\begin{pmatrix} ${math.parse(uExpr).toTex()} \\\\ ${math.parse(vExpr).toTex()} \\end{pmatrix}`;
+        } catch (_) {
+            latexText = `\\vec{${semantics.funcName}}(${xVar},${yVar}) = \\left( ${uExpr}, ${vExpr} \\right)`;
+        }
+    } else if (semantics.family === 'parametric') {
+        type = 'parametric';
+        const [xExpr, yExpr] = semantics.components;
+        const paramVar = semantics.parameterVar;
+        const xCompiled = math.compile(preprocessExpr(xExpr));
+        const yCompiled = math.compile(preprocessExpr(yExpr));
+        const points = [];
+        const [tMin, tMax] = opts.parameterDomain || [0, 2 * Math.PI];
+        const steps = 500;
+        const step = (tMax - tMin) / steps;
+        const limitT = (opts.tracingVar === paramVar && opts.tracingLimit !== undefined) ? opts.tracingLimit : tMax;
+
+        for (let i = 0; i <= steps; i++) {
+            const t = tMin + i * step;
+            if (t > limitT) break;
+            try {
+                const scope = Object.assign({ t, [paramVar]: t }, opts.evalScope || {});
+                const xVal = toReal(xCompiled.evaluate(scope));
+                const yVal = toReal(yCompiled.evaluate(scope));
+                if (typeof xVal === 'number' && !isNaN(xVal) && isFinite(xVal) &&
+                    typeof yVal === 'number' && !isNaN(yVal) && isFinite(yVal)) {
+                    points.push({ x: xVal, y: yVal });
+                } else {
+                    points.push({ x: null, y: null });
+                }
+            } catch (_) {
+                points.push({ x: null, y: null });
+            }
+        }
+
+        plotData = points;
+        try {
+            latexText = `\\left( ${math.parse(xExpr).toTex()},\\ ${math.parse(yExpr).toTex()} \\right)`;
+        } catch (_) {
+            latexText = `\\left( ${xExpr},\\ ${yExpr} \\right)`;
+        }
+    } else if (semantics.family === 'polar') {
+        type = 'polar';
+        const angleVar = semantics.angleVar;
+        const rCompiled = math.compile(preprocessExpr(semantics.rhs));
+        const points = [];
+        const [thetaMin, thetaMax] = opts.parameterDomain || [0, 2 * Math.PI];
+        const steps = 500;
+        const step = (thetaMax - thetaMin) / steps;
+        const limitTheta = (opts.tracingVar === angleVar && opts.tracingLimit !== undefined) ? opts.tracingLimit : thetaMax;
+
+        for (let i = 0; i <= steps; i++) {
+            const theta = thetaMin + i * step;
+            if (theta > limitTheta) break;
+            try {
+                const scope = Object.assign({ theta, [angleVar]: theta }, opts.evalScope || {});
+                const rVal = toReal(rCompiled.evaluate(scope));
+                if (typeof rVal === 'number' && !isNaN(rVal) && isFinite(rVal)) {
+                    points.push({
+                        x: rVal * Math.cos(theta),
+                        y: rVal * Math.sin(theta)
+                    });
+                } else {
+                    points.push({ x: null, y: null });
+                }
+            } catch (_) {
+                points.push({ x: null, y: null });
+            }
+        }
+
+        plotData = points;
+        try {
+            latexText = `${semantics.lhs || 'r'} = ${math.parse(semantics.rhs).toTex()}`;
+        } catch (_) {
+            latexText = `${semantics.lhs || 'r'} = ${semantics.rhs}`;
+        }
+    } else if (semantics.family === 'explicit') {
+        type = 'explicit';
+        const independentVar = semantics.independentVar;
+        const dependentVar = semantics.dependentVar || 'y';
+        const compiled = math.compile(preprocessExpr(semantics.rhs));
+        const points = [];
+        const [xMin, xMax] = opts.xDomain;
+        const [yMin, yMax] = opts.yDomain;
+        const steps = 400;
+        const step = (xMax - xMin) / steps;
+
+        function evalAt(x) {
+            try {
+                const scope = Object.assign({ x, [independentVar]: x }, opts.evalScope || {});
+                const val = toReal(compiled.evaluate(scope));
+                if (typeof val === 'number' && !isNaN(val) && isFinite(val)) {
+                    if (opts.tracingVar === dependentVar && opts.tracingLimit !== undefined && val > opts.tracingLimit) {
+                        return null;
+                    }
+                    return val;
+                }
+            } catch (_) { }
+            return null;
+        }
+
+        const maxDepth = 12;
+        const minXDist = (xMax - xMin) / 1000000;
+        const yRange = yMax - yMin;
+        const threshY = yRange * 0.01;
+        const nearDomain = (y) => y !== null && y >= yMin - yRange && y <= yMax + yRange;
+
+        function subdivide(x1, y1, x2, y2, depth) {
+            let shouldSplit = false;
+            let yMid = null;
+            const xMid = (x1 + x2) / 2;
+
+            if (depth < maxDepth && Math.abs(x2 - x1) >= minXDist) {
+                yMid = evalAt(xMid);
+
+                if (y1 === null && y2 === null) {
+                    if (yMid !== null) shouldSplit = true;
+                } else if (y1 === null || y2 === null) {
+                    shouldSplit = true;
+                } else {
+                    const diff = Math.abs(y1 - y2);
+                    if (diff > threshY && (nearDomain(y1) || nearDomain(y2) || nearDomain(yMid))) {
+                        shouldSplit = true;
+                    }
+                }
+            }
+
+            if (shouldSplit) {
+                subdivide(x1, y1, xMid, yMid, depth + 1);
+                subdivide(xMid, yMid, x2, y2, depth + 1);
+            } else {
+                points.push({ x: x2, y: y2 });
+            }
+        }
+
+        const yStart = evalAt(xMin);
+        points.push({ x: xMin, y: yStart });
+
+        const limitX = (opts.tracingVar === independentVar && opts.tracingLimit !== undefined) ? opts.tracingLimit : xMax;
+        for (let i = 0; i < steps; i++) {
+            const x1 = xMin + i * step;
+            const x2 = xMin + (i + 1) * step;
+            if (x2 > limitX) break;
+            const y1 = points[points.length - 1].y;
+            const y2 = evalAt(x2);
+            subdivide(x1, y1, x2, y2, 0);
+        }
+
+        plotData = points;
+        try {
+            latexText = `${semantics.lhs || dependentVar} = ${math.parse(semantics.rhs).toTex()}`;
+        } catch (_) {
+            latexText = `${semantics.lhs || dependentVar} = ${semantics.rhs}`;
+        }
+    } else {
+        type = 'implicit';
+        const lhs = semantics.lhs;
+        const rhs = semantics.rhs;
+        const [xVar, yVar] = semantics.coordVars || ['x', 'y'];
+        const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+        const compiled = math.compile(combined);
+        const steps = 150;
+        const [xMin, xMax] = opts.xDomain;
+        const [yMin, yMax] = opts.yDomain;
+        const xStep = (xMax - xMin) / steps;
+        const yStep = (yMax - yMin) / steps;
+
+        const X = [];
+        const Y = [];
+        for (let i = 0; i <= steps; i++) {
+            X.push(xMin + i * xStep);
+            Y.push(yMin + i * yStep);
+        }
+
+        const V = [];
+        for (let i = 0; i <= steps; i++) {
+            const row = [];
+            const x = X[i];
+            const skipX = opts.tracingVar === xVar && opts.tracingLimit !== undefined && x > opts.tracingLimit;
+            for (let j = 0; j <= steps; j++) {
+                const y = Y[j];
+                const skipY = opts.tracingVar === yVar && opts.tracingLimit !== undefined && y > opts.tracingLimit;
+                if (skipX || skipY) {
+                    row.push(NaN);
+                    continue;
+                }
+
+                let val = NaN;
+                try {
+                    const r = Math.sqrt(x * x + y * y);
+                    const theta = Math.atan2(y, x);
+                    const scope = Object.assign(
+                        { x, y, [xVar]: x, [yVar]: y, r, theta },
+                        semantics.family === 'implicit-polar'
+                            ? { [semantics.angleVar]: theta }
+                            : null,
+                        opts.evalScope || {}
+                    );
+                    const res = toReal(compiled.evaluate(scope));
+                    if (typeof res === 'number' && !isNaN(res) && isFinite(res)) {
+                        val = res;
+                    }
+                } catch (_) {
+                    val = NaN;
+                }
+                row.push(val);
+            }
+            V.push(row);
+        }
+
+        plotData = { X, Y, V };
+        try {
+            latexText = `${math.parse(lhs).toTex()} = ${math.parse(rhs).toTex()}`;
+        } catch (_) {
+            latexText = `${lhs} = ${rhs}`;
+        }
+    }
+
+    return { type, data: plotData, latexText, label };
+}
+
 function parseSingleExpression(expr, opts) {
+    if (opts && opts.semanticMode) {
+        return parseSingleExpressionStructured(expr, opts);
+    }
+
     let isImplicit = false;
     let isVector = false;
     let lhs = '';
@@ -580,28 +866,70 @@ async function renderPlot(rawExpr, customOptions = {}) {
             return { success: false, error: 'No expressions to plot.' };
         }
 
-        // Detection helper for parametric and polar
+        const semantics = parts.length === 1
+            ? analyze2dPlot(parts[0], {
+                kind: customOptions.kind,
+                variables: customOptions.variables,
+                labeledDomains: customOptions.labeledDomains
+            })
+            : null;
+
+        const traceVars = semantics
+            ? (() => {
+                switch (semantics.family) {
+                    case 'parametric':
+                        return [semantics.parameterVar];
+                    case 'polar':
+                    case 'implicit-polar':
+                        return [semantics.angleVar];
+                    case 'vector':
+                    case 'implicit':
+                        return semantics.coordVars || [];
+                    case 'explicit':
+                        return [semantics.independentVar, semantics.dependentVar].filter(Boolean);
+                    default:
+                        return [];
+                }
+            })()
+            : [];
+
         let isParametricOrPolar = false;
-        for (const part of parts) {
-            const trimmed = part.toLowerCase();
-            const tuple = parseVectorTuple(part, 2);
-            const isParametric = tuple && tuple.some(comp => /\bt\b/i.test(comp));
-            const isPolar = trimmed.startsWith('r=') || trimmed.includes('r =') || /\btheta\b/i.test(trimmed);
-            if (isParametric || isPolar) {
-                isParametricOrPolar = true;
-                break;
+        if (semantics) {
+            isParametricOrPolar = ['parametric', 'polar', 'implicit-polar'].includes(semantics.family);
+        } else {
+            for (const part of parts) {
+                const trimmed = part.toLowerCase();
+                const tuple = parseVectorTuple(part, 2);
+                const isParametric = tuple && tuple.some(comp => /\bt\b/i.test(comp));
+                const isPolar = trimmed.startsWith('r=') || trimmed.includes('r =') || /\btheta\b/i.test(trimmed);
+                if (isParametric || isPolar) {
+                    isParametricOrPolar = true;
+                    break;
+                }
             }
         }
 
         const isAnimated = customOptions.isAnimated || false;
         let animVar = customOptions.animationVar;
         if (isAnimated && !animVar) {
-            // Auto-detect: if expression contains 't' and it's not parametric/polar, default to 't' (parameter sweep)
-            const hasT = parts.some(part => /\bt\b/i.test(part));
-            if (hasT && !isParametricOrPolar) {
-                animVar = 't';
+            if (semantics) {
+                const exprVars = extractExpressionVariables(parts[0]);
+                const semanticVars = new Set([
+                    ...(semantics.coordVars || []),
+                    ...(semantics.parameterVar ? [semantics.parameterVar] : []),
+                    ...(semantics.angleVar ? [semantics.angleVar] : []),
+                    ...(semantics.independentVar ? [semantics.independentVar] : []),
+                    ...(semantics.dependentVar ? [semantics.dependentVar] : [])
+                ]);
+                const sweepVar = exprVars.find((name) => !semanticVars.has(name));
+                animVar = sweepVar || traceVars[0] || 'x';
             } else {
-                animVar = 'x';
+                const hasT = parts.some(part => /\bt\b/i.test(part));
+                if (hasT && !isParametricOrPolar) {
+                    animVar = 't';
+                } else {
+                    animVar = 'x';
+                }
             }
         }
 
@@ -609,7 +937,9 @@ async function renderPlot(rawExpr, customOptions = {}) {
         let tracingVar = null;
         if (isAnimated) {
             let indepVars = [];
-            if (isParametricOrPolar) {
+            if (semantics) {
+                indepVars = traceVars;
+            } else if (isParametricOrPolar) {
                 indepVars = ['t', 'theta'];
             } else {
                 indepVars = ['x', 'y'];
@@ -621,50 +951,88 @@ async function renderPlot(rawExpr, customOptions = {}) {
         }
 
         const domains = customOptions.domains || [];
+        const labeled = customOptions.labeledDomains || {};
+        let positionalConsumed = 0;
+
+        function resolveDomainForVar(varNames, fallbackDefault) {
+            const names = Array.isArray(varNames) ? varNames : [varNames];
+            for (const name of names) {
+                if (labeled[name]) {
+                    return labeled[name];
+                }
+            }
+            if (positionalConsumed < domains.length) {
+                const domain = domains[positionalConsumed];
+                positionalConsumed++;
+                return domain;
+            }
+            return typeof fallbackDefault === 'function' ? fallbackDefault() : fallbackDefault;
+        }
+
         let xDomain, yDomain, parameterDomain, paramDomain;
         const graphStyle = config.style.graph || {};
 
-        if (isAnimated && !isTracingMode) {
-            // Parameter Sweep Mode
+        if (semantics) {
+            const defaultX = graphStyle.defaultXDomain || [-10, 10];
+            const defaultY = graphStyle.defaultYDomain || [-10, 10];
+
+            if (semantics.family === 'parametric') {
+                parameterDomain = resolveDomainForVar(semantics.parameterVar, [0, 2 * Math.PI]);
+                xDomain = resolveDomainForVar('x', defaultX);
+                yDomain = resolveDomainForVar('y', defaultY);
+            } else if (semantics.family === 'polar' || semantics.family === 'implicit-polar') {
+                parameterDomain = resolveDomainForVar(semantics.angleVar, [0, 2 * Math.PI]);
+                xDomain = resolveDomainForVar('x', defaultX);
+                yDomain = resolveDomainForVar('y', defaultY);
+            } else if (semantics.family === 'vector' || semantics.family === 'implicit') {
+                xDomain = resolveDomainForVar(semantics.coordVars[0], defaultX);
+                yDomain = resolveDomainForVar(semantics.coordVars[1], defaultY);
+            } else {
+                xDomain = resolveDomainForVar(semantics.independentVar, defaultX);
+                yDomain = resolveDomainForVar(semantics.dependentVar, defaultY);
+            }
+
+            if (isAnimated && !isTracingMode) {
+                paramDomain = resolveDomainForVar(animVar || 't', [0, 2 * Math.PI]);
+            } else {
+                paramDomain = null;
+            }
+        } else if (isAnimated && !isTracingMode) {
             if (isParametricOrPolar) {
-                parameterDomain = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
-                if (domains.length >= 2) {
-                    paramDomain = domains[1];
-                    xDomain = domains.length >= 3 ? domains[2] : (graphStyle.defaultXDomain || [-10, 10]);
-                    yDomain = domains.length >= 4 ? domains[3] : (domains.length === 3 ? domains[2] : (graphStyle.defaultYDomain || [-10, 10]));
-                } else {
-                    paramDomain = [0, 2 * Math.PI];
-                    xDomain = graphStyle.defaultXDomain || [-10, 10];
-                    yDomain = graphStyle.defaultYDomain || [-10, 10];
-                }
+                parameterDomain = resolveDomainForVar(['t', 'theta'], [0, 2 * Math.PI]);
+                paramDomain = resolveDomainForVar(animVar || 't', [0, 2 * Math.PI]);
+
+                const hasPosForX = (labeled['x'] !== undefined) || (positionalConsumed < domains.length);
+                xDomain = resolveDomainForVar('x', graphStyle.defaultXDomain || [-10, 10]);
+
+                const hasPosForY = (labeled['y'] !== undefined) || (positionalConsumed < domains.length);
+                yDomain = resolveDomainForVar('y', () => {
+                    if (hasPosForX && !hasPosForY) return [...xDomain];
+                    return graphStyle.defaultYDomain || [-10, 10];
+                });
             } else {
                 parameterDomain = null;
-                xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
-                if (domains.length >= 2) {
-                    paramDomain = domains[1];
-                    yDomain = domains.length >= 3 ? domains[2] : (graphStyle.defaultYDomain || [-10, 10]);
-                } else {
-                    paramDomain = [0, 2 * Math.PI];
-                    yDomain = graphStyle.defaultYDomain || [-10, 10];
-                }
+                xDomain = resolveDomainForVar('x', graphStyle.defaultXDomain || [-10, 10]);
+                paramDomain = resolveDomainForVar(animVar || 't', [0, 2 * Math.PI]);
+                yDomain = resolveDomainForVar('y', graphStyle.defaultYDomain || [-10, 10]);
             }
         } else {
-            // Static or Tracing Mode (no separate animation parameter)
             paramDomain = null;
             if (isParametricOrPolar) {
-                parameterDomain = domains.length >= 1 ? domains[0] : [0, 2 * Math.PI];
-                xDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultXDomain || [-10, 10]);
-                if (domains.length >= 3) {
-                    yDomain = domains[2];
-                } else if (domains.length === 2) {
-                    yDomain = domains[1];
-                } else {
-                    yDomain = graphStyle.defaultYDomain || [-10, 10];
-                }
+                parameterDomain = resolveDomainForVar(['t', 'theta'], [0, 2 * Math.PI]);
+
+                const hasPosForX = (labeled['x'] !== undefined) || (positionalConsumed < domains.length);
+                xDomain = resolveDomainForVar('x', graphStyle.defaultXDomain || [-10, 10]);
+
+                const hasPosForY = (labeled['y'] !== undefined) || (positionalConsumed < domains.length);
+                yDomain = resolveDomainForVar('y', () => {
+                    if (hasPosForX && !hasPosForY) return [...xDomain];
+                    return graphStyle.defaultYDomain || [-10, 10];
+                });
             } else {
                 parameterDomain = null;
-                xDomain = domains.length >= 1 ? domains[0] : (graphStyle.defaultXDomain || [-10, 10]);
-                yDomain = domains.length >= 2 ? domains[1] : (graphStyle.defaultYDomain || [-10, 10]);
+                xDomain = resolveDomainForVar('x', graphStyle.defaultXDomain || [-10, 10]);
+                yDomain = resolveDomainForVar('y', graphStyle.defaultYDomain || [-10, 10]);
             }
         }
 
@@ -679,7 +1047,25 @@ async function renderPlot(rawExpr, customOptions = {}) {
                 let traceMax = null;
 
                 if (isTracingMode) {
-                    if (tracingVar === 'x') {
+                    if (semantics && semantics.family === 'parametric' && tracingVar === semantics.parameterVar) {
+                        traceMin = parameterDomain[0];
+                        traceMax = parameterDomain[1];
+                    } else if (semantics && (semantics.family === 'polar' || semantics.family === 'implicit-polar') && tracingVar === semantics.angleVar) {
+                        traceMin = parameterDomain[0];
+                        traceMax = parameterDomain[1];
+                    } else if (semantics && (semantics.family === 'vector' || semantics.family === 'implicit') && tracingVar === semantics.coordVars[0]) {
+                        traceMin = xDomain[0];
+                        traceMax = xDomain[1];
+                    } else if (semantics && (semantics.family === 'vector' || semantics.family === 'implicit') && tracingVar === semantics.coordVars[1]) {
+                        traceMin = yDomain[0];
+                        traceMax = yDomain[1];
+                    } else if (semantics && semantics.family === 'explicit' && tracingVar === semantics.independentVar) {
+                        traceMin = xDomain[0];
+                        traceMax = xDomain[1];
+                    } else if (semantics && semantics.family === 'explicit' && tracingVar === semantics.dependentVar) {
+                        traceMin = yDomain[0];
+                        traceMax = yDomain[1];
+                    } else if (tracingVar === 'x') {
                         traceMin = xDomain[0];
                         traceMax = xDomain[1];
                     } else if (tracingVar === 'y') {
@@ -694,7 +1080,9 @@ async function renderPlot(rawExpr, customOptions = {}) {
                     const staticOpts = {
                         xDomain,
                         yDomain,
-                        parameterDomain
+                        parameterDomain,
+                        semanticMode: !!semantics,
+                        semantics
                     };
 
                     let parsedPlots = [];
@@ -792,7 +1180,10 @@ async function renderPlot(rawExpr, customOptions = {}) {
                     if (parts.length === 1) {
                         let parsed;
                         try {
-                            parsed = parseSingleExpression(parts[0], opts);
+                            parsed = parseSingleExpression(parts[0], Object.assign({}, opts, {
+                                semanticMode: !!semantics,
+                                semantics
+                            }));
                         } catch (err) {
                             return { success: false, error: `Parsing error in expression: ${err.message}` };
                         }
@@ -889,7 +1280,10 @@ async function renderPlot(rawExpr, customOptions = {}) {
             if (parts.length === 1) {
                 let parsed;
                 try {
-                    parsed = parseSingleExpression(parts[0], opts);
+                    parsed = parseSingleExpression(parts[0], Object.assign({}, opts, {
+                        semanticMode: !!semantics,
+                        semantics
+                    }));
                 } catch (err) {
                     return { success: false, error: `Parsing error in expression: ${err.message}` };
                 }

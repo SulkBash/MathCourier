@@ -7,7 +7,9 @@
     "start": "node bot.js",
     "test": "node tests/test-render.js",
     "test:vector": "node tests/test-vector.js",
-    "test:matrix": "node tests/test-matrix.js"
+    "test:matrix": "node tests/test-matrix.js",
+    "test:help": "node tests/test-help.js",
+    "test:labeled": "node tests/test-labeled-domains.js"
   },
   "dependencies": {
     "katex": "^0.16.9",

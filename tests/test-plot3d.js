@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const renderer = require('../src/renderer');
-const handlePlot3dCommand = require('../src/commands/plot3d');
+const handlePlotCommand = require('../src/commands/plot');
 
 const OUTPUT_DIR = path.join(__dirname, '../test_output');
 
@@ -62,90 +62,90 @@ async function runTests() {
     }
 
     await runTest('3D Static Surface Explicit', () =>
-        handlePlot3dCommand('z = sin(x) * cos(y) [-3, 3] [-3, 3]')
+        handlePlotCommand('z = sin(x) * cos(y) view:3d x:[-3, 3] y:[-3, 3]')
     );
 
     await runTest('3D Static Surface Integral', () =>
-        handlePlot3dCommand('z = integ("cos(t)*y", "t", 0, x) [-5, 5] [-5, 5]')
+        handlePlotCommand('z = integ("cos(t)*y", "t", 0, x) view:3d x:[-5, 5] y:[-5, 5]')
     );
 
     await runTest('3D Static Parametric Curve', () =>
-        handlePlot3dCommand('(sin(t), cos(t), t) [0, 6*pi]')
+        handlePlotCommand('(sin(t), cos(t), t) view:3d kind:curve vars:{t} t:[0, 6*pi]')
     );
 
     await runTest('3D Delimited Parametric Curve', () =>
-        handlePlot3dCommand('-a -e[t] (sin(t), cos(t), t/3) [0, 6*pi] [-4,4]')
+        handlePlotCommand('(sin(t), cos(t), t/3) view:3d kind:curve vars:{t} camera:z animate:t t:[0, 6*pi] z:[-4, 4]')
     );
 
     await runTest('3D Static Implicit Sphere', () =>
-        handlePlot3dCommand('x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+        handlePlotCommand('x^2 + y^2 + z^2 = 1 view:3d x:[-6, 6] y:[-6, 6] z:[-6, 6]')
     );
 
     await runTest('3D Static Surface From Linear Z Equation', () =>
-        handlePlot3dCommand('4x^3 + 2yx + z = 0 [-10, 10] [-10, 10]')
+        handlePlotCommand('4x^3 + 2yx + z = 0 view:3d x:[-10, 10] y:[-10, 10]')
     );
 
     await runTest('3D Animated Implicit Sphere', () =>
-        handlePlot3dCommand('-a x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+        handlePlotCommand('x^2 + y^2 + z^2 = 1 view:3d camera:z x:[-6, 6] y:[-6, 6] z:[-6, 6]')
     );
 
     await runTest('3D Animated Surface Explicit', () =>
-        handlePlot3dCommand('-a z = sin(x) * cos(y) [-3, 3] [-3, 3]')
+        handlePlotCommand('z = sin(x) * cos(y) view:3d camera:z x:[-3, 3] y:[-3, 3]')
     );
 
     await runTest('3D Animated Full Orbit Sphere', () =>
-        handlePlot3dCommand('-a360 x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+        handlePlotCommand('x^2 + y^2 + z^2 = 1 view:3d camera:z360 x:[-6, 6] y:[-6, 6] z:[-6, 6]')
     );
 
     await runTest('3D Animated Swing X Axis Sphere', () =>
-        handlePlot3dCommand('-ax x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+        handlePlotCommand('x^2 + y^2 + z^2 = 1 view:3d camera:x x:[-6, 6] y:[-6, 6] z:[-6, 6]')
     );
 
     await runTest('3D Animated Orbit Y Axis 180 Degrees Sphere', () =>
-        handlePlot3dCommand('-ay180 x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+        handlePlotCommand('x^2 + y^2 + z^2 = 1 view:3d camera:y180 x:[-6, 6] y:[-6, 6] z:[-6, 6]')
     );
 
     await runTest('3D Animated Orbit Z Axis 360 Degrees Sphere', () =>
-        handlePlot3dCommand('-az360 x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
+        handlePlotCommand('x^2 + y^2 + z^2 = 1 view:3d camera:z360 x:[-6, 6] y:[-6, 6] z:[-6, 6]')
     );
 
     await runTest('3D Evolution Surface Sweep', () =>
-        handlePlot3dCommand('-e[t] z = sin(x - t) * cos(y) [-3, 3] [-3, 3] [0, 2*pi] [-1.2, 1.2]')
+        handlePlotCommand('z = sin(x - t) * cos(y) view:3d animate:t x:[-3, 3] y:[-3, 3] t:[0, 2*pi] z:[-1.2, 1.2]')
     );
 
     await runTest('3D Evolution Parametric Curve Trace', () =>
-        handlePlot3dCommand('-et (sin(t), cos(t), t/3) [0, 6*pi]')
+        handlePlotCommand('(sin(t), cos(t), t/3) view:3d kind:curve vars:{t} animate:t t:[0, 6*pi]')
     );
 
     await runTest('3D Combined Camera And Evolution Surface', () =>
-        handlePlot3dCommand('-a -e[t] z = sin(x - t) * cos(y) [-3, 3] [-3, 3] [0, 2*pi] [-1.2, 1.2]')
+        handlePlotCommand('z = sin(x - t) * cos(y) view:3d camera:z animate:t x:[-3, 3] y:[-3, 3] t:[0, 2*pi] z:[-1.2, 1.2]')
     );
 
     await runParallelTests('3D Parallel Animated Requests', [
         {
             name: 'surface',
-            fn: () => handlePlot3dCommand('-a z = sin(x) * cos(y) [-3, 3] [-3, 3]')
+            fn: () => handlePlotCommand('z = sin(x) * cos(y) view:3d camera:z x:[-3, 3] y:[-3, 3]')
         },
         {
             name: 'curve',
-            fn: () => handlePlot3dCommand('-a (sin(t), cos(t), t) [0, 6*pi]')
+            fn: () => handlePlotCommand('(sin(t), cos(t), t) view:3d kind:curve vars:{t} camera:z t:[0, 6*pi]')
         }
     ]);
 
     await runTest('3D Static Vector Field Streamlines Default', () =>
-        handlePlot3dCommand('F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
+        handlePlotCommand('F(x,y,z) = (-y, x, z/2) view:3d kind:vector vars:{x, y, z} x:[-4, 4] y:[-4, 4] z:[-4, 4]')
     );
 
     await runTest('3D Animated Vector Field Streamlines Default', () =>
-        handlePlot3dCommand('-a F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]')
+        handlePlotCommand('F(x,y,z) = (-y, x, z/2) view:3d kind:vector vars:{x, y, z} camera:z x:[-4, 4] y:[-4, 4] z:[-4, 4]')
     );
 
     await runTest('3D Evolution Vector Field Streamlines Sweep', () =>
-        handlePlot3dCommand('-e[a] F(x,y,z) = (-y, x, a*z/2) [-4, 4] [-4, 4] [-4, 4] [0, 2]')
+        handlePlotCommand('F(x,y,z) = (-y, x, a*z/2) view:3d kind:vector vars:{x, y, z} animate:a x:[-4, 4] y:[-4, 4] z:[-4, 4] a:[0, 2]')
     );
 
     await runTest('3D Evolution Vector Field Spherical Sweep over Phi', () =>
-        handlePlot3dCommand('-e[phi] F(r, theta, phi) = (1/(r^2 + 0.1), 0.25*sin(phi), 0) [1, 5] [1, 5] [1, 5] [0, 2*pi]')
+        handlePlotCommand('F(r, theta, phi) = (1/(r^2 + 0.1), 0.25*sin(phi), 0) view:3d kind:vector vars:{r, theta, phi} animate:phi r:[1, 5] theta:[0, pi] phi:[0, 2*pi]')
     );
 
     console.log('\nShutting down renderer...');

@@ -4,16 +4,16 @@ const fs = require('fs');
 const path = require('path');
 
 const testCases = [
-    { name: '1. Standard Equation (E = m * c^2 for c)', input: 'E = m * c^2 for c' },
-    { name: '2. Gas Law (PV = nRT for T)', input: 'PV = nRT for T' },
-    { name: '3. Quadratic (y = a*x^2 + b*x + c for x)', input: 'y = a*x^2 + b*x + c for x' },
-    { name: '4. Trigonometry (sin(theta) = x / r for theta)', input: 'sin(theta) = x / r for theta' },
-    { name: '5. Gravitation (F = G * m_1 * m_2 / r^2 for r)', input: 'F = G * m_1 * m_2 / r^2 for r' },
-    { name: '6. Pythagorean (a^2 + b^2 = c^2 for a)', input: 'a^2 + b^2 = c^2 for a' },
-    { name: '7. Calculus Derivative (deriv("x^3", "x", x) = y for x)', input: 'deriv("x^3", "x", x) = y for x' },
-    { name: '8. Calculus Integral (integ("t^2", "t", 0, x) = y for x)', input: 'integ("t^2", "t", 0, x) = y for x' },
+    { name: '1. Standard Equation (E = m * c^2 vars:c)', input: 'E = m * c^2 vars:c' },
+    { name: '2. Gas Law (PV = nRT vars:T)', input: 'PV = nRT vars:T' },
+    { name: '3. Quadratic (y = a*x^2 + b*x + c vars:x)', input: 'y = a*x^2 + b*x + c vars:x' },
+    { name: '4. Trigonometry (sin(theta) = x / r vars:theta)', input: 'sin(theta) = x / r vars:theta' },
+    { name: '5. Gravitation (F = G * m_1 * m_2 / r^2 vars:r)', input: 'F = G * m_1 * m_2 / r^2 vars:r' },
+    { name: '6. Pythagorean (a^2 + b^2 = c^2 for a)', input: 'a^2 + b^2 = c^2 for a' }, // legacy fallback check
+    { name: '7. Calculus Derivative (deriv("x^3", "x", x) = y vars:x)', input: 'deriv("x^3", "x", x) = y vars:x' },
+    { name: '8. Calculus Integral (integ("t^2", "t", 0, x) = y vars:x)', input: 'integ("t^2", "t", 0, x) = y vars:x' },
     { name: '9. Error Case: Missing Target Variable', input: 'E = m * c^2' },
-    { name: '10. Error Case: No Solution / Mismatch', input: 'sin(x) = y for z' }
+    { name: '10. Error Case: No Solution / Mismatch', input: 'sin(x) = y vars:z' }
 ];
 
 async function runTests() {

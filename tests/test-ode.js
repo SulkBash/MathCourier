@@ -5,28 +5,28 @@ const path = require('path');
 
 const testCases = [
     // 1. Simple First-Order (Hybrid -> Symbolic)
-    { name: '1. First-Order ODE (Symbolic)', input: 'dy/dx = -y, y(0) = 1 [-5, 5]' },
+    { name: '1. First-Order ODE (Symbolic)', input: 'dy/dx = -y ic:{y(0)=1} x:[-5, 5]' },
     
     // 2. Forced Symbolic (Symbolic-Only)
-    { name: '2. Forced Symbolic ODE', input: '-s dy/dx = x * y, y(0) = 2 [-3, 3]' },
+    { name: '2. Forced Symbolic ODE', input: 'dy/dx = x * y mode:sym ic:{y(0)=2} x:[-3, 3]' },
     
     // 3. Higher-Order ODE (Symbolic)
-    { name: '3. Second-Order ODE (y\'\' + y = 0)', input: 'y\'\' + y = 0, y(0) = 1, y\'(0) = 0 [-10, 10]' },
+    { name: '3. Second-Order ODE (y\'\' + y = 0)', input: 'y\'\' + y = 0 ic:{y(0)=1; y\'(0)=0} x:[-10, 10]' },
     
     // 4. System of ODEs (Symbolic)
-    { name: '4. System of ODEs (Circular)', input: 'dx/dt = -y; dy/dt = x, x(0) = 1, y(0) = 0 [-6.28, 6.28]' },
+    { name: '4. System of ODEs (Circular)', input: 'dx/dt = -y; dy/dt = x ic:{x(0)=1; y(0)=0} t:[-6.28, 6.28]' },
     
     // 5. Numerical Fallback (No Analytical Solution)
-    { name: '5. Numerical Fallback ODE (y\' = y^2 + x)', input: 'dy/dx = y^2 + x, y(0) = 1 [0, 1.2]' },
+    { name: '5. Numerical Fallback ODE (y\' = y^2 + x)', input: 'dy/dx = y^2 + x ic:{y(0)=1} x:[0, 1.2]' },
     
     // 6. Forced Numerical (Numerical-Only)
-    { name: '6. Forced Numerical ODE', input: '-n dy/dx = -y, y(0) = 1 [-5, 5]' },
+    { name: '6. Forced Numerical ODE', input: 'dy/dx = -y mode:num ic:{y(0)=1} x:[-5, 5]' },
     
     // 7. Error case: Missing Initial Condition
     { name: '7. Error Case (Missing IC)', input: 'dy/dx = -y' },
     
     // 8. Error case: Var mismatch
-    { name: '8. Error Case (Variable Mismatch)', input: 'dy/dx = -y, z(0) = 1' }
+    { name: '8. Error Case (Variable Mismatch)', input: 'dy/dx = -y ic:{z(0)=1}' }
 ];
 
 async function runTests() {
