@@ -102,7 +102,23 @@ function buildLatex(lines) {
     return '\\begin{aligned}\n' + lines.join(' \\\\\n') + '\n\\end{aligned}';
 }
 
+const GREEK_LETTERS = new Set([
+    'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta',
+    'iota', 'kappa', 'lambda', 'mu', 'nu', 'xi', 'pi', 'rho', 'sigma',
+    'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega'
+]);
+
+function formatVarToTex(variableName) {
+    if (!variableName) return '';
+    const lower = variableName.toLowerCase();
+    if (GREEK_LETTERS.has(lower)) {
+        return '\\' + lower;
+    }
+    return variableName;
+}
+
 module.exports = {
     splitTopLevel,
-    buildLatex
+    buildLatex,
+    formatVarToTex
 };

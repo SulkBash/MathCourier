@@ -43,8 +43,9 @@ module.exports = {
         plot3dAnimationFps: 8,
         plot3dAnimationBaseAngleDegrees: 45,
         plot3dAnimationSwingDegrees: 30,
-        plot3dAnimationCameraRadius: 1.6,
-        plot3dAnimationCameraHeight: 1.1
+        plot3dAnimationCameraRadius: 1.85,
+        plot3dAnimationCameraHeight: 1.1,
+        plot3dCameraCenterZ: -0.12
     },
 
     puppeteer: {

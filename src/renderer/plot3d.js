@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { formatVarToTex } = require('../utils');
 const ZERO_TOLERANCE = 1e-9;
 const MAX_CONCURRENT_PLOT3D = Math.max(1, Number(config.bot?.plot3dMaxConcurrency) || 3);
 const DEFAULT_ANIMATION_FRAMES = Math.max(6, Number(config.bot?.plot3dAnimationFrames) || 12);
@@ -14,6 +15,7 @@ const DEFAULT_ANIMATION_BASE_ANGLE_DEGREES = Number(config.bot?.plot3dAnimationB
 const DEFAULT_ANIMATION_SWING_DEGREES = Math.max(5, Math.min(44, Number(config.bot?.plot3dAnimationSwingDegrees) || 30));
 const DEFAULT_ANIMATION_CAMERA_RADIUS = Math.max(0.8, Number(config.bot?.plot3dAnimationCameraRadius) || 1.6);
 const DEFAULT_ANIMATION_CAMERA_HEIGHT = Math.max(0.4, Number(config.bot?.plot3dAnimationCameraHeight) || 1.1);
+const DEFAULT_PLOT3D_CAMERA_CENTER_Z = Number(config.bot?.plot3dCameraCenterZ) || 0;
 
 let activePlot3dJobs = 0;
 const plot3dWaitQueue = [];
@@ -100,7 +102,7 @@ function buildCameraForAngle(theta) {
             z: DEFAULT_ANIMATION_CAMERA_HEIGHT
         },
         up: { x: 0, y: 0, z: 1 },
-        center: { x: 0, y: 0, z: 0 }
+        center: { x: 0, y: 0, z: DEFAULT_PLOT3D_CAMERA_CENTER_Z }
     };
 }
 
@@ -124,7 +126,7 @@ function buildSwingCamera(progress, axis = 'z', customAngle = null) {
     return {
         eye: rotateAroundAxis(eye_0, axis, alpha),
         up: rotateAroundAxis(up_0, axis, alpha),
-        center: { x: 0, y: 0, z: 0 }
+        center: { x: 0, y: 0, z: DEFAULT_PLOT3D_CAMERA_CENTER_Z }
     };
 }
 
@@ -143,7 +145,7 @@ function buildOrbitCamera(progress, axis = 'z', customAngle = null) {
     return {
         eye: rotateAroundAxis(eye_0, axis, alpha),
         up: rotateAroundAxis(up_0, axis, alpha),
-        center: { x: 0, y: 0, z: 0 }
+        center: { x: 0, y: 0, z: DEFAULT_PLOT3D_CAMERA_CENTER_Z }
     };
 }
 
@@ -163,7 +165,7 @@ function normalizeAnimationIdentifier(identifier) {
 }
 
 function mergeEvalScope(opts, localScope = {}) {
-    return Object.assign({}, opts.evalScope || {}, localScope);
+    return Object.assign({}, localScope, opts.evalScope || {});
 }
 
 function cloneDomain(domain) {
@@ -206,7 +208,8 @@ function appendEvolutionLatex(latexText, evolutionVar, evolutionValue) {
     if (!evolutionVar || typeof evolutionValue !== 'number' || !isFinite(evolutionValue)) {
         return latexText;
     }
-    return `${latexText}\\quad (${evolutionVar} = ${evolutionValue.toFixed(2)})`;
+    const formattedVar = formatVarToTex(evolutionVar);
+    return `${latexText}\\quad (${formattedVar} = ${evolutionValue.toFixed(2)})`;
 }
 
 function createRandomStreamlineSeeds(xDomain, yDomain, zDomain, count = 180) {
@@ -1795,6 +1798,15 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             hasEvolutionSweep
         });
 
+        let aspectmode = customOptions.aspectmode;
+        if (!aspectmode) {
+            if (isParametricSurface || isParametricCurve || isExplicitPolarSurface) {
+                aspectmode = 'manual';
+            } else if (cameraAnimationRequested || evolutionRequested) {
+                aspectmode = 'cube';
+            }
+        }
+
         const baseOpts = {
             width: graphStyle.width || 600,
             height: graphStyle.height || 450,
@@ -1815,6 +1827,8 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             animationAxis: customOptions.animationAxis || 'z',
             animationAngle: customOptions.animationAngle || null,
             camera: buildDefaultCamera(),
+            aspectmode,
+            evalScope: customOptions.evalScope,
             streamlineSeeds: isVectorField && (customOptions.isFlux !== false)
                 ? createRandomStreamlineSeeds(domainInfo.xDomain, domainInfo.yDomain, domainInfo.zDomain)
                 : undefined
@@ -1848,6 +1862,11 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 : null;
             const evolutionDomain = hasEvolutionSweep ? domainInfo.evolutionDomain : null;
 
+            const scenes = [];
+            let globalXMin = Infinity, globalXMax = -Infinity;
+            let globalYMin = Infinity, globalYMax = -Infinity;
+            let globalZMin = Infinity, globalZMax = -Infinity;
+
             for (let f = 0; f < totalFrames; f++) {
                 const frameOpts = clonePlot3dOptions(baseOpts);
                 const evolutionProgress = totalFrames === 1 ? 1 : (f + 1) / totalFrames;
@@ -1877,13 +1896,52 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                     return { success: false, error: scene.error };
                 }
 
+                if (frameOpts.xDomain) {
+                    globalXMin = Math.min(globalXMin, frameOpts.xDomain[0]);
+                    globalXMax = Math.max(globalXMax, frameOpts.xDomain[1]);
+                }
+                if (frameOpts.yDomain) {
+                    globalYMin = Math.min(globalYMin, frameOpts.yDomain[0]);
+                    globalYMax = Math.max(globalYMax, frameOpts.yDomain[1]);
+                }
+                if (frameOpts.zDomain) {
+                    globalZMin = Math.min(globalZMin, frameOpts.zDomain[0]);
+                    globalZMax = Math.max(globalZMax, frameOpts.zDomain[1]);
+                }
+
+                scenes.push({ scene, frameOpts, evolutionValue });
+            }
+
+            const finalXDomain = (globalXMin < globalXMax) ? [globalXMin, globalXMax] : baseOpts.xDomain;
+            const finalYDomain = (globalYMin < globalYMax) ? [globalYMin, globalYMax] : baseOpts.yDomain;
+            const finalZDomain = (globalZMin < globalZMax) ? [globalZMin, globalZMax] : baseOpts.zDomain;
+
+            let finalAspectRatio = baseOpts.aspectratio;
+            if (baseOpts.aspectmode === 'manual' && !finalAspectRatio) {
+                const dx = Math.abs(finalXDomain[1] - finalXDomain[0]) || 1;
+                const dy = Math.abs(finalYDomain[1] - finalYDomain[0]) || 1;
+                const dz = Math.abs(finalZDomain[1] - finalZDomain[0]) || 1;
+                const maxSpan = Math.max(dx, dy, dz);
+                finalAspectRatio = {
+                    x: dx / maxSpan,
+                    y: dy / maxSpan,
+                    z: dz / maxSpan
+                };
+            }
+
+            for (const item of scenes) {
+                if (finalXDomain) item.frameOpts.xDomain = finalXDomain;
+                if (finalYDomain) item.frameOpts.yDomain = finalYDomain;
+                if (finalZDomain) item.frameOpts.zDomain = finalZDomain;
+                if (finalAspectRatio) item.frameOpts.aspectratio = finalAspectRatio;
+
                 const frameLatex = hasEvolutionSweep
-                    ? appendEvolutionLatex(scene.latexText, evolutionVar, evolutionValue)
-                    : scene.latexText;
+                    ? appendEvolutionLatex(item.scene.latexText, evolutionVar, item.evolutionValue)
+                    : item.scene.latexText;
 
                 const renderResult = await page.evaluate((lat, t, pData, opt) => {
                     return window.renderGraph3d(lat, t, pData, opt);
-                }, frameLatex, scene.type, scene.plotData, frameOpts);
+                }, frameLatex, item.scene.type, item.scene.plotData, item.frameOpts);
 
                 if (!renderResult.success) {
                     return { success: false, error: renderResult.error };
@@ -1924,6 +1982,18 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         const scene = buildPlot3dScene(plotContext, opts);
         if (!scene.success) {
             return { success: false, error: scene.error };
+        }
+
+        if (opts.aspectmode === 'manual' && !opts.aspectratio) {
+            const dx = Math.abs(opts.xDomain[1] - opts.xDomain[0]) || 1;
+            const dy = Math.abs(opts.yDomain[1] - opts.yDomain[0]) || 1;
+            const dz = Math.abs(opts.zDomain[1] - opts.zDomain[0]) || 1;
+            const maxSpan = Math.max(dx, dy, dz);
+            opts.aspectratio = {
+                x: dx / maxSpan,
+                y: dy / maxSpan,
+                z: dz / maxSpan
+            };
         }
 
         const renderResult = await page.evaluate((lat, t, pData, opt) => {

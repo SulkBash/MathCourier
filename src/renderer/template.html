@@ -816,7 +816,7 @@
         if (!container) {
           container = document.createElement('div');
           container.id = 'plotly-graph';
-          container.style.marginTop = '16px';
+          container.style.margin = '16px auto 0 auto';
           container.style.display = 'block';
           container.style.borderRadius = '8px';
           const watermarkDiv = document.getElementById('watermark');
@@ -831,6 +831,35 @@
       } catch (err) {
         return { success: false, error: err.message };
       }
+    }
+
+    function get3dGridStep(domain) {
+      if (!domain || !Array.isArray(domain) || domain.length < 2) return 1;
+      const range = Math.abs(domain[1] - domain[0]);
+      if (!range || !isFinite(range)) return 1;
+
+      const roughStep = range / 6;
+      const p10 = Math.pow(10, Math.floor(Math.log10(roughStep)));
+      const ratio = roughStep / p10;
+
+      if (ratio < 1.5) return p10;
+      if (ratio < 3.5) return p10 * 2;
+      if (ratio < 7.5) return p10 * 5;
+      return p10 * 10;
+    }
+
+    function build3dAxisLayout(domain, options) {
+      return {
+        gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
+        color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
+        backgroundcolor: 'transparent',
+        showbackground: false,
+        zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
+        range: domain,
+        tickmode: 'linear',
+        tick0: 0,
+        dtick: get3dGridStep(domain)
+      };
     }
 
     function drawGraph3d(container, type, data, options) {
@@ -948,31 +977,11 @@
         plot_bgcolor: 'transparent',
         showlegend: false,
         scene: {
-          aspectmode: type === 'vector3d' ? 'cube' : 'auto',
-          xaxis: {
-            gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
-            color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
-            backgroundcolor: 'transparent',
-            showbackground: false,
-            zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
-            range: options.xDomain
-          },
-          yaxis: {
-            gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
-            color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
-            backgroundcolor: 'transparent',
-            showbackground: false,
-            zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
-            range: options.yDomain
-          },
-          zaxis: {
-            gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
-            color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
-            backgroundcolor: 'transparent',
-            showbackground: false,
-            zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
-            range: options.zDomain
-          },
+          aspectmode: options.aspectmode || (type === 'vector3d' ? 'cube' : 'auto'),
+          aspectratio: options.aspectratio,
+          xaxis: build3dAxisLayout(options.xDomain, options),
+          yaxis: build3dAxisLayout(options.yDomain, options),
+          zaxis: build3dAxisLayout(options.zDomain, options),
           camera: options.camera || {
             eye: { x: 1.5, y: 1.5, z: 1.25 },
             up: { x: 0, y: 0, z: 1 },

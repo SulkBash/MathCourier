@@ -1,6 +1,7 @@
 const math = require('../math');
 const config = require('../../config');
 const katexModule = require('./katex');
+const { formatVarToTex } = require('../utils');
 
 // Coerce mathjs result to a plain number, returning NaN for complex/invalid values
 function toReal(val) {
@@ -800,7 +801,8 @@ async function renderPlot(rawExpr, customOptions = {}) {
                         latexText = parsed.latexText;
                         if (!isTracingMode) {
                             const val = opts.evalScope[animVar];
-                            latexText += `\\quad (${animVar} = ${val.toFixed(2)})`;
+                            const formattedVar = formatVarToTex(animVar);
+                            latexText += `\\quad (${formattedVar} = ${val.toFixed(2)})`;
                         }
                     } else {
                         type = 'multi';
@@ -819,7 +821,8 @@ async function renderPlot(rawExpr, customOptions = {}) {
                         latexText = latexParts.join(',\\quad ');
                         if (!isTracingMode) {
                             const val = opts.evalScope[animVar];
-                            latexText += `\\quad (${animVar} = ${val.toFixed(2)})`;
+                            const formattedVar = formatVarToTex(animVar);
+                            latexText += `\\quad (${formattedVar} = ${val.toFixed(2)})`;
                         }
                     }
 
