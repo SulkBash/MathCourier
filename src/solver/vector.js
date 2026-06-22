@@ -1,14 +1,11 @@
 const math = require('../math');
-const { splitTopLevel } = require('./calculus');
+const { splitTopLevel, buildLatex } = require('../utils');
 const { extractVariables } = require('./equations');
 
 const VALID_VAR_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const DEFAULT_COORDS = ['x', 'y', 'z'];
 const VARIABLE_PREFERENCE = ['x', 'y', 'z', 'r', 'theta', 'phi', 'u', 'v', 'w', 's', 't'];
 
-function buildLatex(lines) {
-    return '\\begin{aligned}\n' + lines.join(' \\\\\n') + '\n\\end{aligned}';
-}
 
 function orderVariables(variableNames) {
     const seen = new Set();

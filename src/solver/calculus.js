@@ -2,29 +2,8 @@ const math = require('../math');
 const path = require('path');
 const { runSubprocess } = require('./subprocess');
 const { extractVariables } = require('./equations');
+const { splitTopLevel } = require('../utils');
 
-function splitTopLevel(str) {
-    const parts = [];
-    let current = '';
-    let depth = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str[i];
-        if (char === '(' || char === '[' || char === '{') {
-            depth++;
-            current += char;
-        } else if (char === ')' || char === ']' || char === '}') {
-            depth--;
-            current += char;
-        } else if (char === ',' && depth === 0) {
-            parts.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
-    }
-    parts.push(current.trim());
-    return parts.filter(Boolean);
-}
 
 function findTopLevelToken(str, token) {
     const lower = str.toLowerCase();

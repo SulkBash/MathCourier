@@ -5,21 +5,11 @@ const config = require('./config');
 
 const handlePlotCommand = require('./src/commands/plot');
 const handlePlot3dCommand = require('./src/commands/plot3d');
-const handleSolveCommand = require('./src/commands/solve');
-const handleMatrixCommand = require('./src/commands/matrix');
-const handleRearrangeCommand = require('./src/commands/desp');
-const handleDiffCommand = require('./src/commands/diff');
-const handleIntCommand = require('./src/commands/int');
 const handleOdeCommand = require('./src/commands/ode');
 const handlePdeCommand = require('./src/commands/pde');
-const handleGradCommand = require('./src/commands/grad');
-const handleLapCommand = require('./src/commands/lap');
-const handleDivCommand = require('./src/commands/div');
-const handleCurlCommand = require('./src/commands/curl');
-const handleLatexCommand = require('./src/commands/latex');
-const handleChemCommand = require('./src/commands/chem');
-const handleTikzCommand = require('./src/commands/tikz');
 const helpText = require('./src/commands/help');
+const solver = require('./src/solver');
+
 const READY_WATCHDOG_MS = 45000;
 
 const client = new Client({
@@ -106,6 +96,36 @@ client.on('ready', async () => {
         console.error('Renderer initialization failed:', err);
     }
 });
+
+const COMMAND_REGISTRY = {
+    'latex': { handler: async (input) => renderer.render(input, true) },
+    'chem':  { handler: async (input) => renderer.renderChem(input) },
+    'tikz':  { handler: async (input) => renderer.renderTikz(input) },
+    'solve':  { solver: solver.solveEquation },
+    'matrix': { solver: solver.solveMatrixExpression },
+    'desp':   { solver: solver.rearrangeEquation },
+    'diff':   { solver: solver.solveDerivative },
+    'int':    { solver: solver.solveIntegral },
+    'grad':   { solver: solver.solveGradient },
+    'lap':    { solver: solver.solveLaplacian },
+    'div':    { solver: solver.solveDivergence },
+    'curl':   { solver: solver.solveCurl }
+};
+
+async function executeRegistryCommand(commandName, input) {
+    const cmd = COMMAND_REGISTRY[commandName];
+    if (!cmd) return { success: false, error: 'Unknown command' };
+
+    if (cmd.handler) {
+        return await cmd.handler(input);
+    }
+
+    const res = await cmd.solver(input);
+    if (!res.success) {
+        return { success: false, error: res.error };
+    }
+    return await renderer.render(res.latex, true);
+}
 
 /**
  * Checks if `body` starts with `prefix + ' '` and returns the text after it,
@@ -228,40 +248,20 @@ async function handleCommandMessage(msg) {
         }
 
         let result;
-        if (mode === 'chem') {
-            result = await handleChemCommand(input);
-        } else if (mode === 'tikz') {
-            result = await handleTikzCommand(input);
+        if (COMMAND_REGISTRY[mode]) {
+            result = await executeRegistryCommand(mode, input);
         } else if (mode === 'plot') {
             result = await handlePlotCommand(input);
         } else if (mode === 'plot3d') {
             result = await handlePlot3dCommand(input);
-        } else if (mode === 'solve') {
-            result = await handleSolveCommand(input);
-        } else if (mode === 'matrix') {
-            result = await handleMatrixCommand(input);
         } else if (mode === 'ode') {
             result = await handleOdeCommand(input);
         } else if (mode === 'pde') {
             result = await handlePdeCommand(input);
-        } else if (mode === 'desp') {
-            result = await handleRearrangeCommand(input);
-        } else if (mode === 'diff') {
-            result = await handleDiffCommand(input);
-        } else if (mode === 'int') {
-            result = await handleIntCommand(input);
-        } else if (mode === 'grad') {
-            result = await handleGradCommand(input);
-        } else if (mode === 'lap') {
-            result = await handleLapCommand(input);
-        } else if (mode === 'div') {
-            result = await handleDivCommand(input);
-        } else if (mode === 'curl') {
-            result = await handleCurlCommand(input);
-        } else if (mode === 'latex') {
-            result = await handleLatexCommand(input);
-        } else {
+        } else if (mode === 'mixed') {
             result = await renderMixed(input);
+        } else {
+            result = { success: false, error: 'Unknown command mode.' };
         }
 
         if (result.success && result.data) {

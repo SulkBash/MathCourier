@@ -1,4 +1,5 @@
 const { create, all } = require('mathjs');
+const { splitTopLevel } = require('./utils');
 const math = create(all);
 
 function digamma(x) {
@@ -61,66 +62,6 @@ polygamma.toTex = function (node, options) {
     return `\\psi^{(${nTex})}\\left(${xTex}\\right)`;
 };
 
-function splitTopLevel(text, delimiter = ',') {
-    const parts = [];
-    let current = '';
-    let depth = 0;
-    let inQuotes = false;
-    let quoteChar = null;
-
-    for (let i = 0; i < text.length; i++) {
-        const char = text[i];
-
-        if (inQuotes) {
-            current += char;
-            if (char === '\\' && i + 1 < text.length) {
-                current += text[i + 1];
-                i++;
-            } else if (char === quoteChar) {
-                inQuotes = false;
-                quoteChar = null;
-            }
-            continue;
-        }
-
-        if (char === '"' || char === '\'') {
-            inQuotes = true;
-            quoteChar = char;
-            current += char;
-            continue;
-        }
-
-        if (char === '(' || char === '[' || char === '{') {
-            depth++;
-            current += char;
-            continue;
-        }
-
-        if (char === ')' || char === ']' || char === '}') {
-            depth = Math.max(0, depth - 1);
-            current += char;
-            continue;
-        }
-
-        if (char === delimiter && depth === 0) {
-            const part = current.trim();
-            if (part) {
-                parts.push(part);
-            }
-            current = '';
-            continue;
-        }
-
-        current += char;
-    }
-
-    const tail = current.trim();
-    if (tail) {
-        parts.push(tail);
-    }
-
-    return parts;
-}
 
 function cloneScope(scope) {
     const localScope = new Map();
@@ -434,16 +375,7 @@ const deriv = function (args, math, scope) {
 
     const derivativeNode = math.derivative(exprStr, varName);
 
-    const localScope = new Map();
-    if (scope && typeof scope.forEach === 'function') {
-        scope.forEach((value, key) => {
-            localScope.set(key, value);
-        });
-    } else if (scope && typeof scope === 'object') {
-        Object.keys(scope).forEach(key => {
-            localScope.set(key, scope[key]);
-        });
-    }
+    const localScope = cloneScope(scope);
     localScope.set(varName, val);
 
     return derivativeNode.evaluate(localScope);
@@ -465,16 +397,7 @@ const integ = function (args, math, scope) {
 
     const compiled = math.compile(exprStr);
 
-    const localScope = new Map();
-    if (scope && typeof scope.forEach === 'function') {
-        scope.forEach((value, key) => {
-            localScope.set(key, value);
-        });
-    } else if (scope && typeof scope === 'object') {
-        Object.keys(scope).forEach(key => {
-            localScope.set(key, scope[key]);
-        });
-    }
+    const localScope = cloneScope(scope);
 
     const f = (val) => {
         localScope.set(varName, val);
