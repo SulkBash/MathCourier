@@ -337,7 +337,7 @@ function resolvePlot3dDomains({
         const displayOffset = hasEvolutionSweep ? 3 : 2;
         xDomain = domains.length >= displayOffset + 1 ? domains[displayOffset] : defaultXDomain;
         yDomain = domains.length >= displayOffset + 2 ? domains[displayOffset + 1] : [...xDomain];
-        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : [...xDomain];
+        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : null;
         providedDomains.x = domains.length >= displayOffset + 1;
         providedDomains.y = domains.length >= displayOffset + 2;
         providedDomains.z = domains.length >= displayOffset + 3;
@@ -348,7 +348,7 @@ function resolvePlot3dDomains({
         const displayOffset = hasEvolutionSweep ? 2 : 1;
         xDomain = domains.length >= displayOffset + 1 ? domains[displayOffset] : defaultXDomain;
         yDomain = domains.length >= displayOffset + 2 ? domains[displayOffset + 1] : [...xDomain];
-        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : [...xDomain];
+        zDomain = domains.length >= displayOffset + 3 ? domains[displayOffset + 2] : null;
         providedDomains.x = domains.length >= displayOffset + 1;
         providedDomains.y = domains.length >= displayOffset + 2;
         providedDomains.z = domains.length >= displayOffset + 3;
@@ -533,10 +533,15 @@ function expressionUsesAnySymbol(expr, symbolNames) {
 function shouldTreatBareTupleAsVector(components, domainsCount) {
     const hasUV = components.some(c => expressionUsesAnySymbol(c, ['u', 'v']));
     if (hasUV) return false;
+    const hasT = components.some(c => expressionUsesAnySymbol(c, ['t']));
+    const hasXYZ = components.some(c => expressionUsesAnySymbol(c, ['x', 'y', 'z', 'r', 'theta', 'phi']));
+    if (hasT && !hasXYZ) {
+        return false;
+    }
     if (domainsCount >= 2) {
         return true;
     }
-    return components.some((component) => expressionUsesAnySymbol(component, ['x', 'y', 'z', 'r', 'theta', 'phi']));
+    return hasXYZ;
 }
 
 function getCoordinateSystem(expr, components = null) {

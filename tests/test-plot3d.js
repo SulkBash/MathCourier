@@ -73,6 +73,10 @@ async function runTests() {
         handlePlot3dCommand('(sin(t), cos(t), t) [0, 6*pi]')
     );
 
+    await runTest('3D Delimited Parametric Curve', () =>
+        handlePlot3dCommand('-a -e[t] (sin(t), cos(t), t/3) [0, 6*pi] [-4,4]')
+    );
+
     await runTest('3D Static Implicit Sphere', () =>
         handlePlot3dCommand('x^2 + y^2 + z^2 = 1 [-6, 6] [-6, 6]')
     );
