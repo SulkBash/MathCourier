@@ -823,10 +823,14 @@
           mathDiv.parentNode.insertBefore(container, watermarkDiv);
         }
 
-        container.style.width = (options.width || 600) + 'px';
+        const baseWidth = options.width || 600;
+        const renderWidth = baseWidth + Math.max(48, Math.round(baseWidth * 0.12));
+        const renderOptions = Object.assign({}, options, { renderWidth });
+
+        container.style.width = renderWidth + 'px';
         container.style.height = (options.height || 450) + 'px';
 
-        await drawGraph3d(container, type, data, options);
+        await drawGraph3d(container, type, data, renderOptions);
         return { success: true };
       } catch (err) {
         return { success: false, error: err.message };
@@ -849,6 +853,7 @@
     }
 
     function build3dAxisLayout(domain, options) {
+      const tickSize = Math.max(10, Math.round(Math.min(options.renderWidth || options.width || 600, options.height || 450) * 0.018));
       return {
         gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
         color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)',
@@ -856,6 +861,10 @@
         showbackground: false,
         zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
         range: domain,
+        tickfont: {
+          size: tickSize,
+          color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)'
+        },
         tickmode: 'linear',
         tick0: 0,
         dtick: get3dGridStep(domain)
@@ -866,6 +875,13 @@
       if (typeof Plotly === 'undefined') {
         throw new Error('Plotly.js is not loaded.');
       }
+
+      const width = options.renderWidth || options.width || 600;
+      const height = options.height || 450;
+      const sceneInsetLeft = Math.max(0.06, 42 / width);
+      const sceneInsetRight = Math.max(0.015, 10 / width);
+      const sceneInsetBottom = Math.max(0.055, 28 / height);
+      const sceneInsetTop = Math.max(0.02, 10 / height);
 
       let trace;
       if (type === 'surface') {
@@ -970,13 +986,17 @@
       }
 
       const layout = {
-        width: options.width || 600,
-        height: options.height || 450,
+        width,
+        height,
         margin: { l: 0, r: 0, b: 0, t: 0 },
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
         showlegend: false,
         scene: {
+          domain: {
+            x: [sceneInsetLeft, 1 - sceneInsetRight],
+            y: [sceneInsetBottom, 1 - sceneInsetTop]
+          },
           aspectmode: options.aspectmode || (type === 'vector3d' ? 'cube' : 'auto'),
           aspectratio: options.aspectratio,
           xaxis: build3dAxisLayout(options.xDomain, options),
