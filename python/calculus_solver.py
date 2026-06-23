@@ -257,11 +257,17 @@ def handle_standard_integral(expr_str, args_input):
 
     if result.has(sympy.Integral):
         if has_limits:
-            eval_res = result.evalf()
-            if eval_res.is_number and not eval_res.has(sympy.Integral):
-                result_latex = sympy.latex(eval_res.evalf(8))
-                relation = "\\approx"
-            else:
+            eval_success = False
+            try:
+                eval_res = result.evalf()
+                if eval_res.is_number and not eval_res.has(sympy.Integral):
+                    result_latex = sympy.latex(eval_res.evalf(8))
+                    relation = "\\approx"
+                    eval_success = True
+            except Exception:
+                pass
+
+            if not eval_success:
                 if HAS_SCIPY:
                     try:
                         bounds = numeric_bounds(int_args)

@@ -6,9 +6,9 @@ console.log('--- STARTING HELP TESTS ---');
 // Test 1: General help
 const genHelp = getHelp();
 assert(genHelp.includes('*LaTeX Render Bot Help*'));
-assert(genHelp.includes('not Python-style function calls'));
+assert(genHelp.includes('Type `!command` followed by a space and the content you want to send.'));
 assert(!genHelp.includes('!plot3d'));
-assert(genHelp.includes('view:3d'));
+assert(genHelp.includes('`view`'));
 console.log('PASS: General help retrieves the new overview');
 
 // Test 2: Specific help for !plot3d aliases to !plot
@@ -45,15 +45,18 @@ console.log('PASS: Grouping resolution (grad -> vector) works');
 // Test 7: Syntax alias
 const rangesHelp = getHelp('ranges');
 assert(rangesHelp.includes('*Syntax Basics*'));
-assert(rangesHelp.includes('Use `!plot y = sin(x)`, not `!plot(y = sin(x))`.'));
+assert(rangesHelp.includes('`!plot y = sin(x)`'));
+assert(rangesHelp.includes('`!plot(y = sin(x))`'));
 console.log('PASS: Syntax aliases resolve correctly');
 
 // Test 8: Integration help mentions labeled field-integral ranges
 const intHelp = getHelp('int');
-assert(intHelp.includes('Definite: `!int sin(x) x:[0, pi]`'));
+assert(intHelp.includes('Omit `vars` to auto-detect when there is one variable'));
 assert(intHelp.includes('x:[0, 1]'));
+assert(intHelp.includes('!int x^2 + y vars:x'));
+assert(intHelp.includes('scalar fields or vector fields'));
 assert(intHelp.includes('!int x*y*z kind:volume x:[0, 1] y:[0, 2] z:[0, 3]'));
-console.log('PASS: Integration help mentions labeled ranges clearly');
+console.log('PASS: Integration help covers safer vars guidance and field-integral examples');
 
 // Test 9: Help text detection for bot self-messages
 assert.strictEqual(getHelp.isHelpText(getHelp()), true);

@@ -120,6 +120,24 @@ runTest('Vars normalization: single and grouped', () => {
     ]);
 });
 
+runTest('Vars validation rejects invalid or command-mismatched orders', () => {
+    const invalidOrderParsed = parseCommandSyntax('x^2 vars:{x:0}');
+    const invalidOrderNormalized = normalizeAndValidate(invalidOrderParsed, 'diff');
+    assert(!invalidOrderNormalized.success, 'Should fail for zero-order derivative');
+    assert(
+        invalidOrderNormalized.errors.some(e => e.includes('positive integer')),
+        'Missing positive integer validation error'
+    );
+
+    const intOrderParsed = parseCommandSyntax('x^2 vars:{x:2}');
+    const intOrderNormalized = normalizeAndValidate(intOrderParsed, 'int');
+    assert(!intOrderNormalized.success, 'Should fail for derivative-style order markers in !int');
+    assert(
+        intOrderNormalized.errors.some(e => e.includes('only supports order markers')),
+        'Missing !diff-only order marker error'
+    );
+});
+
 runTest('Ranges evaluation and normalization', () => {
     // Valid numbers and pi evaluation
     const p1 = parseCommandSyntax('sin(x) x:[-5, 5] t:[0, 2*pi]');

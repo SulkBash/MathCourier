@@ -10,6 +10,32 @@ function runCalculusSubprocess(payload) {
     return runSubprocess(pyScriptPath, payload);
 }
 
+function inferDefaultVariable(exprStr, actionLabel) {
+    try {
+        const node = math.parse(exprStr);
+        const vars = extractVariables(node);
+
+        if (vars.length === 0) {
+            return { success: true, variable: 'x' };
+        }
+
+        if (vars.length === 1) {
+            return { success: true, variable: vars[0] };
+        }
+
+        if (vars.includes('x')) {
+            return { success: true, variable: 'x' };
+        }
+
+        return {
+            success: false,
+            error: `Could not infer a single variable for ${actionLabel}. Found multiple variables (${vars.join(', ')}). Use vars:<name> or vars:{...}.`
+        };
+    } catch (err) {
+        return { success: true, variable: 'x' };
+    }
+}
+
 function solveDerivative(inputStr) {
     const rawParsed = parseCommandSyntax(inputStr);
     const parsed = normalizeAndValidate(rawParsed, 'diff');
@@ -31,13 +57,11 @@ function solveDerivative(inputStr) {
             }
         }
     } else {
-        try {
-            const node = math.parse(exprStr);
-            const vars = extractVariables(node);
-            args = [vars.length === 1 ? vars[0] : 'x'];
-        } catch (e) {
-            args = ['x'];
+        const inferred = inferDefaultVariable(exprStr, 'differentiation');
+        if (!inferred.success) {
+            return Promise.resolve({ success: false, error: inferred.error });
         }
+        args = [inferred.variable];
     }
 
     // Fast path with mathjs only if it's a single first-order derivative (e.g. ['x'])
@@ -135,13 +159,11 @@ function solveIntegral(inputStr) {
             variable: v.name
         }));
     } else {
-        try {
-            const node = math.parse(exprStr);
-            const vars = extractVariables(node);
-            args = [{ variable: vars.length === 1 ? vars[0] : 'x' }];
-        } catch (e) {
-            args = [{ variable: 'x' }];
+        const inferred = inferDefaultVariable(exprStr, 'integration');
+        if (!inferred.success) {
+            return Promise.resolve({ success: false, error: inferred.error });
         }
+        args = [{ variable: inferred.variable }];
     }
 
     return runCalculusSubprocess({

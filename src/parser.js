@@ -308,6 +308,10 @@ function normalizeAndValidate(parsed, commandName) {
             if (orderMatch) {
                 name = orderMatch[1];
                 order = parseInt(orderMatch[2], 10);
+                if (!Number.isInteger(order) || order < 1) {
+                    errors.push(`Invalid derivative order for "${name}": expected a positive integer.`);
+                    continue;
+                }
             }
 
             if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name)) {
@@ -527,6 +531,8 @@ function normalizeAndValidate(parsed, commandName) {
         if (variables.length !== 1) {
             errors.push('Command "!desp" requires exactly one variable in "vars".');
         }
+    } else if (normCmd !== 'diff' && variables.some((variable) => variable.order !== 1)) {
+        errors.push(`Option "vars" only supports order markers like x:2 for command "!diff".`);
     } else if (normCmd === 'ode') {
         if (!parsed.options.hasOwnProperty('ic')) {
             errors.push('Command "!ode" requires initial conditions "ic:{...}".');
