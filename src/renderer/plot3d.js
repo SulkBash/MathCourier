@@ -2157,7 +2157,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         if (!aspectmode) {
             if (['surface-parametric', 'curve-parametric', 'surface-polar'].includes(semantics.family)) {
                 aspectmode = 'manual';
-            } else if (cameraAnimationRequested || evolutionRequested) {
+            } else {
                 aspectmode = 'cube';
             }
         }
