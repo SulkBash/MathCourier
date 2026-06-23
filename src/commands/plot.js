@@ -47,7 +47,10 @@ async function handlePlotCommand(input) {
             labeledDomains,
             kind: parsed.options.kind || undefined,
             variables: parsed.variables.map((entry) => entry.name),
-            isFlux: true
+            isFlux: true,
+            xlim: parsed.options.xlim,
+            ylim: parsed.options.ylim,
+            zlim: parsed.options.zlim
         };
 
         return await renderer.renderPlot3d(expr, opts);
@@ -66,7 +69,9 @@ async function handlePlotCommand(input) {
         animationVar,
         labeledDomains,
         kind: parsed.options.kind || undefined,
-        variables: parsed.variables.map((entry) => entry.name)
+        variables: parsed.variables.map((entry) => entry.name),
+        xlim: parsed.options.xlim,
+        ylim: parsed.options.ylim
     };
 
     return await renderer.renderPlot(expr, opts);

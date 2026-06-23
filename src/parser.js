@@ -2,7 +2,7 @@ const math = require('./math');
 const { splitTopLevel } = require('./utils');
 
 // Predefined command keywords that are not range variables
-const KEYWORDS = new Set(['vars', 'kind', 'animate', 'camera', 'mode', 'view', 'ic', 'bc', 'param', 'phase']);
+const KEYWORDS = new Set(['vars', 'kind', 'animate', 'camera', 'mode', 'view', 'ic', 'bc', 'param', 'phase', 'xlim', 'ylim', 'zlim']);
 
 /**
  * Parses an input string according to the Command Syntax V2 spec.
@@ -328,20 +328,23 @@ function normalizeAndValidate(parsed, commandName) {
                 continue;
             }
 
+            const isIntCmd = (normCmd === 'int');
             const [minExpr, maxExpr] = val;
             let min, max;
-
             const evalScope = { inf: Infinity, infinity: Infinity };
+
             try {
                 const evalMin = math.evaluate(minExpr, evalScope);
                 const numMin = (evalMin && typeof evalMin.toNumber === 'function') ? evalMin.toNumber() : Number(evalMin);
                 if (typeof numMin === 'number' && !isNaN(numMin)) {
                     min = numMin;
-                } else {
+                } else if (!isIntCmd) {
                     errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
                 }
             } catch (err) {
-                errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
+                if (!isIntCmd) {
+                    errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
+                }
             }
 
             try {
@@ -349,15 +352,17 @@ function normalizeAndValidate(parsed, commandName) {
                 const numMax = (evalMax && typeof evalMax.toNumber === 'function') ? evalMax.toNumber() : Number(evalMax);
                 if (typeof numMax === 'number' && !isNaN(numMax)) {
                     max = numMax;
-                } else {
+                } else if (!isIntCmd) {
                     errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
                 }
             } catch (err) {
-                errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
+                if (!isIntCmd) {
+                    errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
+                }
             }
 
-            if (min !== undefined && max !== undefined) {
-                if (min >= max) {
+            if (isIntCmd || (min !== undefined && max !== undefined)) {
+                if (!isIntCmd && min >= max) {
                     errors.push(`Range minimum (${min}) must be less than maximum (${max}) for variable "${key}".`);
                 } else {
                     ranges.push({ name: key, min, max, minExpr, maxExpr });
@@ -467,6 +472,53 @@ function normalizeAndValidate(parsed, commandName) {
             errors.push('Option "phase" must contain two distinct variables.');
         } else {
             normalizedOptions.phase = phaseParts;
+        }
+    }
+
+    // 8.5. Process display range options (xlim, ylim, zlim)
+    for (const key of ['xlim', 'ylim', 'zlim']) {
+        if (parsed.options.hasOwnProperty(key)) {
+            const val = parsed.options[key];
+            if (!Array.isArray(val)) {
+                errors.push(`Option "${key}" is expected to be a range option of the form ${key}:[min, max].`);
+                continue;
+            }
+
+            const [minExpr, maxExpr] = val;
+            let min, max;
+            const evalScope = { inf: Infinity, infinity: Infinity };
+
+            try {
+                const evalMin = math.evaluate(minExpr, evalScope);
+                const numMin = (evalMin && typeof evalMin.toNumber === 'function') ? evalMin.toNumber() : Number(evalMin);
+                if (typeof numMin === 'number' && !isNaN(numMin)) {
+                    min = numMin;
+                } else {
+                    errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
+                }
+            } catch (err) {
+                errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
+            }
+
+            try {
+                const evalMax = math.evaluate(maxExpr, evalScope);
+                const numMax = (evalMax && typeof evalMax.toNumber === 'function') ? evalMax.toNumber() : Number(evalMax);
+                if (typeof numMax === 'number' && !isNaN(numMax)) {
+                    max = numMax;
+                } else {
+                    errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
+                }
+            } catch (err) {
+                errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
+            }
+
+            if (min !== undefined && max !== undefined) {
+                if (min >= max) {
+                    errors.push(`Range minimum (${min}) must be less than maximum (${max}) for option "${key}".`);
+                } else {
+                    normalizedOptions[key] = [min, max];
+                }
+            }
         }
     }
 

@@ -233,6 +233,27 @@ runTest('Phase option validation and normalization', () => {
     assert(malformedNormalized.errors.some(e => e.includes('exactly two variables')), 'Missing phase arity error');
 });
 
+runTest('Display range options (xlim, ylim, zlim) validation and normalization', () => {
+    const p1 = parseCommandSyntax('sin(x) x:[0, 5] xlim:[-10, 10] ylim:[-2, 2] zlim:[-5, 5]');
+    const n1 = normalizeAndValidate(p1, 'plot');
+    assert(n1.success, n1.errors.join(', '));
+    assertDeepEqual(n1.options.xlim, [-10, 10]);
+    assertDeepEqual(n1.options.ylim, [-2, 2]);
+    assertDeepEqual(n1.options.zlim, [-5, 5]);
+
+    // Invalid bounds order
+    const p2 = parseCommandSyntax('sin(x) xlim:[10, -10]');
+    const n2 = normalizeAndValidate(p2, 'plot');
+    assert(!n2.success, 'Should fail when xlim min >= max');
+    assert(n2.errors.some(e => e.includes('must be less than')), 'Missing min >= max error for xlim');
+
+    // Non-numerical bounds
+    const p3 = parseCommandSyntax('sin(x) xlim:[a, 10]');
+    const n3 = normalizeAndValidate(p3, 'plot');
+    assert(!n3.success, 'Should fail for non-finite bounds');
+    assert(n3.errors.some(e => e.includes('does not evaluate to a finite number')), 'Missing non-finite error for xlim');
+});
+
 console.log(`\nTests finished: ${passedTests} passed, ${failedTests} failed.`);
 if (failedTests > 0) {
     process.exit(1);

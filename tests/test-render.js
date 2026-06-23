@@ -172,6 +172,12 @@ async function runTests() {
     await runTest('Plot command handle 3D spherical vector field', () =>
         handlePlotCommand('F(r, theta, phi) = (1/r^2, 0, 0) view:3d kind:vector vars:{r, theta, phi} r:[1, 4] theta:[0, pi] phi:[0, 2*pi]'));
 
+    await runTest('Plot command handle 2D explicit with separate display limits (xlim/ylim)', () =>
+        handlePlotCommand('y = x^2 x:[2, 5] xlim:[-10, 10] ylim:[-5, 30]'));
+
+    await runTest('Plot command handle 3D explicit with separate display limit (zlim)', () =>
+        handlePlotCommand('z = x^2 + y^2 view:3d z:[2, 5] zlim:[-10, 10]'));
+
     await runTest('Plot factorial y = x!', () =>
         renderer.renderPlot('y = x!', { xDomain: [-5, 5], yDomain: [-10, 10] }));
 

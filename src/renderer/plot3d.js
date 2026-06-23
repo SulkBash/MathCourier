@@ -173,12 +173,39 @@ function cloneDomain(domain) {
     return Array.isArray(domain) ? [...domain] : domain;
 }
 
+function cloneVectorDomainMask(mask) {
+    if (!mask || typeof mask !== 'object') {
+        return mask;
+    }
+
+    return {
+        cartesian: mask.cartesian ? {
+            x: cloneDomain(mask.cartesian.x),
+            y: cloneDomain(mask.cartesian.y),
+            z: cloneDomain(mask.cartesian.z)
+        } : null,
+        cylindrical: mask.cylindrical ? {
+            rho: cloneDomain(mask.cylindrical.rho),
+            theta: cloneDomain(mask.cylindrical.theta),
+            z: cloneDomain(mask.cylindrical.z)
+        } : null,
+        spherical: mask.spherical ? {
+            radius: cloneDomain(mask.spherical.radius),
+            theta: cloneDomain(mask.spherical.theta),
+            phi: cloneDomain(mask.spherical.phi)
+        } : null
+    };
+}
+
 function clonePlot3dOptions(baseOpts) {
     return {
         ...baseOpts,
         xDomain: cloneDomain(baseOpts.xDomain),
         yDomain: cloneDomain(baseOpts.yDomain),
         zDomain: cloneDomain(baseOpts.zDomain),
+        xLim: cloneDomain(baseOpts.xLim),
+        yLim: cloneDomain(baseOpts.yLim),
+        zLim: cloneDomain(baseOpts.zLim),
         camera: baseOpts.camera
             ? {
                 eye: { ...baseOpts.camera.eye },
@@ -188,6 +215,9 @@ function clonePlot3dOptions(baseOpts) {
             : buildDefaultCamera(),
         evalScope: baseOpts.evalScope ? { ...baseOpts.evalScope } : undefined,
         streamlineSeeds: baseOpts.streamlineSeeds
+            ? baseOpts.streamlineSeeds.map((seed) => ({ ...seed }))
+            : undefined,
+        vectorDomainMask: cloneVectorDomainMask(baseOpts.vectorDomainMask)
     };
 }
 
@@ -217,29 +247,193 @@ function shouldSkipCartesianPoint(opts, x, y, z) {
         isTracingLimited(opts, 'z', z);
 }
 
+function isValueWithinDomain(value, domain) {
+    if (!Array.isArray(domain)) {
+        return true;
+    }
+
+    return value >= domain[0] - 1e-5 && value <= domain[1] + 1e-5;
+}
+
+function isAngleWithinDomain(angle, domain) {
+    if (!Array.isArray(domain)) {
+        return true;
+    }
+
+    const [min, max] = domain;
+    if (max - min >= 2 * Math.PI - 1e-5) {
+        return true;
+    }
+
+    let normalized = angle;
+    while (normalized < min) normalized += 2 * Math.PI;
+    while (normalized >= min + 2 * Math.PI) normalized -= 2 * Math.PI;
+    return normalized <= max + 1e-5;
+}
+
+function pointPassesVectorDomainMask(x, y, z, domainMask = null) {
+    if (!domainMask) {
+        return true;
+    }
+
+    if (domainMask.cartesian) {
+        if (!isValueWithinDomain(x, domainMask.cartesian.x)) return false;
+        if (!isValueWithinDomain(y, domainMask.cartesian.y)) return false;
+        if (!isValueWithinDomain(z, domainMask.cartesian.z)) return false;
+    }
+
+    if (domainMask.cylindrical) {
+        const rho = Math.sqrt(x * x + y * y);
+        const theta = Math.atan2(y, x);
+        if (!isValueWithinDomain(rho, domainMask.cylindrical.rho)) return false;
+        if (!isAngleWithinDomain(theta, domainMask.cylindrical.theta)) return false;
+        if (!isValueWithinDomain(z, domainMask.cylindrical.z)) return false;
+    }
+
+    if (domainMask.spherical) {
+        const radius = Math.sqrt(x * x + y * y + z * z);
+        const theta = radius > ZERO_TOLERANCE ? Math.acos(z / radius) : 0;
+        const phi = Math.atan2(y, x);
+        if (!isValueWithinDomain(radius, domainMask.spherical.radius)) return false;
+        if (!isValueWithinDomain(theta, domainMask.spherical.theta)) return false;
+        if (!isAngleWithinDomain(phi, domainMask.spherical.phi)) return false;
+    }
+
+    return true;
+}
+
+function hashSeedValue(value, seed = 2166136261) {
+    const text = String(value ?? '');
+    let hash = seed >>> 0;
+    for (let index = 0; index < text.length; index++) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash >>> 0;
+}
+
+function createDeterministicRandom(seedValue) {
+    let state = hashSeedValue(seedValue) || 1;
+    return () => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return state / 0x100000000;
+    };
+}
+
+function createDeterministicStreamlineSeeds(xDomain, yDomain, zDomain, count = 180, seedValue = 'plot3d-streamlines') {
+    const [xMin, xMax] = xDomain;
+    const [yMin, yMax] = yDomain;
+    const [zMin, zMax] = zDomain;
+    const random = createDeterministicRandom(`${seedValue}|${xMin},${xMax}|${yMin},${yMax}|${zMin},${zMax}|${count}`);
+    const seeds = [];
+
+    for (let i = 0; i < count; i++) {
+        seeds.push({
+            x: xMin + random() * (xMax - xMin),
+            y: yMin + random() * (yMax - yMin),
+            z: zMin + random() * (zMax - zMin)
+        });
+    }
+
+    return seeds;
+}
+
+function buildVectorDomainMask(semantics, labeledDomains = {}) {
+    if (!semantics || semantics.family !== 'vector') {
+        return null;
+    }
+
+    const coordSystem = semantics.coordSystem || 'cartesian';
+    const coordVars = Array.isArray(semantics.coordVars) ? semantics.coordVars : [];
+    const hasOwnRange = (name) => Array.isArray(labeledDomains[name]);
+    const isCartesianField = coordVars.length === 3 && coordVars.every((name, index) => ['x', 'y', 'z'][index] === name);
+    const useCartesianX = hasOwnRange('x') ? labeledDomains.x : null;
+    const useCartesianY = hasOwnRange('y') ? labeledDomains.y : null;
+    const useCartesianZ = hasOwnRange('z') ? labeledDomains.z : null;
+
+    const cylindricalRho = hasOwnRange('rho')
+        ? labeledDomains.rho
+        : (coordSystem === 'cylindrical' && hasOwnRange('r') ? labeledDomains.r : null);
+
+    const sphericalRadius = hasOwnRange('radius')
+        ? labeledDomains.radius
+        : ((coordSystem === 'spherical' || isCartesianField) && hasOwnRange('r') ? labeledDomains.r : null);
+
+    return {
+        cartesian: (useCartesianX || useCartesianY || useCartesianZ)
+            ? { x: useCartesianX, y: useCartesianY, z: useCartesianZ }
+            : null,
+        cylindrical: (cylindricalRho || (coordSystem === 'cylindrical' && (hasOwnRange('theta') || hasOwnRange('z'))))
+            ? {
+                rho: cylindricalRho,
+                theta: coordSystem === 'cylindrical' ? labeledDomains.theta || null : null,
+                z: coordSystem === 'cylindrical' ? labeledDomains.z || null : null
+            }
+            : null,
+        spherical: (sphericalRadius || (coordSystem === 'spherical' && (hasOwnRange('theta') || hasOwnRange('phi'))))
+            ? {
+                radius: sphericalRadius,
+                theta: coordSystem === 'spherical' ? labeledDomains.theta || null : null,
+                phi: coordSystem === 'spherical' ? labeledDomains.phi || null : null
+            }
+            : null
+    };
+}
+
+function resolveVectorSeedBox(domainInfo, customOptions = {}, semantics, vectorDomainMask) {
+    const labeledDomains = customOptions.labeledDomains || {};
+
+    if (Array.isArray(labeledDomains.x) && Array.isArray(labeledDomains.y) && Array.isArray(labeledDomains.z)) {
+        return {
+            xDomain: labeledDomains.x,
+            yDomain: labeledDomains.y,
+            zDomain: labeledDomains.z
+        };
+    }
+
+    if (Array.isArray(customOptions.xlim) && Array.isArray(customOptions.ylim) && Array.isArray(customOptions.zlim)) {
+        return {
+            xDomain: customOptions.xlim,
+            yDomain: customOptions.ylim,
+            zDomain: customOptions.zlim
+        };
+    }
+
+    const coordSystem = semantics?.coordSystem || 'cartesian';
+    if (coordSystem === 'spherical') {
+        const radiusDomain = vectorDomainMask?.spherical?.radius || domainInfo.xDomain;
+        const radiusMax = radiusDomain ? Math.max(Math.abs(radiusDomain[0]), Math.abs(radiusDomain[1])) : 5;
+        return {
+            xDomain: [-radiusMax, radiusMax],
+            yDomain: [-radiusMax, radiusMax],
+            zDomain: [-radiusMax, radiusMax]
+        };
+    }
+
+    if (coordSystem === 'cylindrical') {
+        const rhoDomain = vectorDomainMask?.cylindrical?.rho || domainInfo.xDomain;
+        const rhoMax = rhoDomain ? Math.max(Math.abs(rhoDomain[0]), Math.abs(rhoDomain[1])) : 5;
+        const zDomain = vectorDomainMask?.cylindrical?.z || domainInfo.zDomain || [-rhoMax, rhoMax];
+        return {
+            xDomain: [-rhoMax, rhoMax],
+            yDomain: [-rhoMax, rhoMax],
+            zDomain: zDomain
+        };
+    }
+
+    return {
+        xDomain: domainInfo.xDomain,
+        yDomain: domainInfo.yDomain,
+        zDomain: domainInfo.zDomain || domainInfo.xDomain
+    };
+}
+
 function appendEvolutionLatex(latexText, evolutionVar, evolutionValue) {
     if (!evolutionVar || typeof evolutionValue !== 'number' || !isFinite(evolutionValue)) {
         return latexText;
     }
     const formattedVar = formatVarToTex(evolutionVar);
     return `${latexText}\\quad (${formattedVar} = ${evolutionValue.toFixed(2)})`;
-}
-
-function createRandomStreamlineSeeds(xDomain, yDomain, zDomain, count = 180) {
-    const [xMin, xMax] = xDomain;
-    const [yMin, yMax] = yDomain;
-    const [zMin, zMax] = zDomain;
-    const seeds = [];
-
-    for (let i = 0; i < count; i++) {
-        seeds.push({
-            x: xMin + Math.random() * (xMax - xMin),
-            y: yMin + Math.random() * (yMax - yMin),
-            z: zMin + Math.random() * (zMax - zMin)
-        });
-    }
-
-    return seeds;
 }
 
 function getPlot3dTraceVariables(semantics) {
@@ -625,34 +819,57 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian', coordV
     const xCompiled = math.compile(preprocessExpr(xExpr));
     const yCompiled = math.compile(preprocessExpr(yExpr));
     const zCompiled = math.compile(preprocessExpr(zExpr));
+    const vectorDomainMask = opts.vectorDomainMask || null;
 
-    const [xMin, xMax] = opts.xDomain;
-    const [yMin, yMax] = opts.yDomain;
-    const [zMin, zMax] = opts.zDomain;
+    const [d1Min, d1Max] = opts.xDomain;
+    const [d2Min, d2Max] = opts.yDomain;
+    const [d3Min, d3Max] = opts.zDomain;
 
     const steps = 5;
-    const xStep = (xMax - xMin) / steps;
-    const yStep = (yMax - yMin) / steps;
-    const zStep = (zMax - zMin) / steps;
-
     const points = [];
     let maxMag = 0;
 
     for (let i = 0; i <= steps; i++) {
-        const x = xMin + i * xStep;
+        const v1 = d1Min + i * (d1Max - d1Min) / steps;
         for (let j = 0; j <= steps; j++) {
-            const y = yMin + j * yStep;
+            const v2 = d2Min + j * (d2Max - d2Min) / steps;
             for (let k = 0; k <= steps; k++) {
-                const z = zMin + k * zStep;
+                const v3 = d3Min + k * (d3Max - d3Min) / steps;
+
+                let x, y, z;
+                if (coordSystem === 'cylindrical') {
+                    const r = v1;
+                    const theta = v2;
+                    x = r * Math.cos(theta);
+                    y = r * Math.sin(theta);
+                    z = v3;
+                } else if (coordSystem === 'spherical') {
+                    const r = v1;
+                    const theta = v2;
+                    const phi = v3;
+                    x = r * Math.sin(theta) * Math.cos(phi);
+                    y = r * Math.sin(theta) * Math.sin(phi);
+                    z = r * Math.cos(theta);
+                } else {
+                    x = v1;
+                    y = v2;
+                    z = v3;
+                }
+
+                if (!pointPassesVectorDomainMask(x, y, z, vectorDomainMask)) {
+                    continue;
+                }
+
                 if (shouldSkipCartesianPoint(opts, x, y, z)) {
                     continue;
                 }
+
                 try {
                     let uVal, vVal, wVal;
                     if (coordSystem === 'cylindrical') {
-                        const r = Math.sqrt(x*x + y*y);
-                        const theta = Math.atan2(y, x);
-                        const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta });
+                        const r = v1;
+                        const theta = v2;
+                        const scope = mergeEvalScope(opts, { x, y, z, [xVar]: r, [yVar]: theta, [zVar]: z, r, theta });
                         const Fr = toReal(xCompiled.evaluate(scope));
                         const Ftheta = toReal(yCompiled.evaluate(scope));
                         const Fz = toReal(zCompiled.evaluate(scope));
@@ -661,10 +878,10 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian', coordV
                         vVal = Fr * Math.sin(theta) + Ftheta * Math.cos(theta);
                         wVal = Fz;
                     } else if (coordSystem === 'spherical') {
-                        const r = Math.sqrt(x*x + y*y + z*z);
-                        const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
-                        const phi = Math.atan2(y, x);
-                        const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta, phi });
+                        const r = v1;
+                        const theta = v2;
+                        const phi = v3;
+                        const scope = mergeEvalScope(opts, { x, y, z, [xVar]: r, [yVar]: theta, [zVar]: phi, r, theta, phi });
                         const Fr = toReal(xCompiled.evaluate(scope));
                         const Ftheta = toReal(yCompiled.evaluate(scope));
                         const Fphi = toReal(zCompiled.evaluate(scope));
@@ -695,12 +912,15 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian', coordV
         return null;
     }
 
-    const minSpacing = Math.min(
-        Math.abs(xStep) || Infinity,
-        Math.abs(yStep) || Infinity,
-        Math.abs(zStep) || Infinity
+    const [xLimMin, xLimMax] = opts.xLim || [-5, 5];
+    const [yLimMin, yLimMax] = opts.yLim || [-5, 5];
+    const [zLimMin, zLimMax] = opts.zLim || [-5, 5];
+    const viewSpacing = Math.min(
+        (xLimMax - xLimMin) / steps,
+        (yLimMax - yLimMin) / steps,
+        (zLimMax - zLimMin) / steps
     );
-    const safeSpacing = Number.isFinite(minSpacing) && minSpacing > ZERO_TOLERANCE ? minSpacing : 1;
+    const safeSpacing = Number.isFinite(viewSpacing) && viewSpacing > ZERO_TOLERANCE ? viewSpacing : 1;
     const scale = (safeSpacing * 0.75) / maxMag;
 
     return {
@@ -719,13 +939,14 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVar
     const xCompiled = math.compile(preprocessExpr(xExpr));
     const yCompiled = math.compile(preprocessExpr(yExpr));
     const zCompiled = math.compile(preprocessExpr(zExpr));
-
-    const [xMin, xMax] = opts.xDomain;
-    const [yMin, yMax] = opts.yDomain;
-    const [zMin, zMax] = opts.zDomain;
+    const vectorDomainMask = opts.vectorDomainMask || null;
 
     const evalVectorField = (x, y, z) => {
         if (shouldSkipCartesianPoint(opts, x, y, z)) {
+            return null;
+        }
+
+        if (!pointPassesVectorDomainMask(x, y, z, vectorDomainMask)) {
             return null;
         }
 
@@ -734,7 +955,7 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVar
             if (coordSystem === 'cylindrical') {
                 const r = Math.sqrt(x*x + y*y);
                 const theta = Math.atan2(y, x);
-                const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta });
+                const scope = mergeEvalScope(opts, { x, y, z, [xVar]: r, [yVar]: theta, [zVar]: z, r, theta });
                 const Fr = toReal(xCompiled.evaluate(scope));
                 const Ftheta = toReal(yCompiled.evaluate(scope));
                 const Fz = toReal(zCompiled.evaluate(scope));
@@ -746,7 +967,7 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVar
                 const r = Math.sqrt(x*x + y*y + z*z);
                 const theta = r > ZERO_TOLERANCE ? Math.acos(z / r) : 0;
                 const phi = Math.atan2(y, x);
-                const scope = mergeEvalScope(opts, { x, y, z, [xVar]: x, [yVar]: y, [zVar]: z, r, theta, phi });
+                const scope = mergeEvalScope(opts, { x, y, z, [xVar]: r, [yVar]: theta, [zVar]: phi, r, theta, phi });
                 const Fr = toReal(xCompiled.evaluate(scope));
                 const Ftheta = toReal(yCompiled.evaluate(scope));
                 const Fphi = toReal(zCompiled.evaluate(scope));
@@ -771,7 +992,7 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVar
         }
     };
 
-    const seeds = opts.streamlineSeeds || createRandomStreamlineSeeds(opts.xDomain, opts.yDomain, opts.zDomain);
+    const seeds = opts.streamlineSeeds || createDeterministicStreamlineSeeds(opts.xLim || opts.xDomain, opts.yLim || opts.yDomain, opts.zLim || opts.zDomain);
 
     const linesX = [];
     const linesY = [];
@@ -786,22 +1007,26 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVar
     const coneW = [];
     const coneMags = [];
 
-    // Calculate dynamic step size based on domain diagonal size
-    const diag = Math.sqrt((xMax - xMin) ** 2 + (yMax - yMin) ** 2 + (zMax - zMin) ** 2);
+    const [xLimMin, xLimMax] = opts.xLim || [-5, 5];
+    const [yLimMin, yLimMax] = opts.yLim || [-5, 5];
+    const [zLimMin, zLimMax] = opts.zLim || [-5, 5];
+
+    // Calculate dynamic step size based on viewport diagonal size
+    const diag = Math.sqrt((xLimMax - xLimMin) ** 2 + (yLimMax - yLimMin) ** 2 + (zLimMax - zLimMin) ** 2);
     const h = 0.015 * diag;
     const maxSteps = 80;
 
     // Small boundary margin of 10% to let lines exit nicely
-    const xMargin = (xMax - xMin) * 0.1;
-    const yMargin = (yMax - yMin) * 0.1;
-    const zMargin = (zMax - zMin) * 0.1;
+    const xMargin = (xLimMax - xLimMin) * 0.1;
+    const yMargin = (yLimMax - yLimMin) * 0.1;
+    const zMargin = (zLimMax - zLimMin) * 0.1;
 
-    const xBoundMin = xMin - xMargin;
-    const xBoundMax = xMax + xMargin;
-    const yBoundMin = yMin - yMargin;
-    const yBoundMax = yMax + yMargin;
-    const zBoundMin = zMin - zMargin;
-    const zBoundMax = zMax + zMargin;
+    const xBoundMin = xLimMin - xMargin;
+    const xBoundMax = xLimMax + xMargin;
+    const yBoundMin = yLimMin - yMargin;
+    const yBoundMax = yLimMax + yMargin;
+    const zBoundMin = zLimMin - zMargin;
+    const zBoundMax = zLimMax + zMargin;
 
     let globalMaxMag = 0;
 
@@ -932,16 +1157,28 @@ function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVar
         return null;
     }
 
+    const validMags = colors.filter(val => val !== null).sort((a, b) => a - b);
+    let scaleMaxMag = globalMaxMag;
+    if (validMags.length > 0) {
+        const pct90Idx = Math.floor(validMags.length * 0.90);
+        scaleMaxMag = validMags[pct90Idx];
+        if (scaleMaxMag <= ZERO_TOLERANCE) {
+            scaleMaxMag = globalMaxMag;
+        }
+    }
+
     const normColors = colors.map(val => {
         if (val === null) return null;
-        return globalMaxMag > ZERO_TOLERANCE ? val / globalMaxMag : 0;
+        const capped = Math.min(val, scaleMaxMag);
+        return scaleMaxMag > ZERO_TOLERANCE ? capped / scaleMaxMag : 0;
     });
 
     const scaledConeU = [];
     const scaledConeV = [];
     const scaledConeW = [];
     for (let i = 0; i < coneX.length; i++) {
-        const factor = globalMaxMag > ZERO_TOLERANCE ? coneMags[i] / globalMaxMag : 0;
+        const cappedMag = Math.min(coneMags[i], scaleMaxMag);
+        const factor = scaleMaxMag > ZERO_TOLERANCE ? cappedMag / scaleMaxMag : 0;
         scaledConeU.push(coneU[i] * factor);
         scaledConeV.push(coneV[i] * factor);
         scaledConeW.push(coneW[i] * factor);
@@ -1497,12 +1734,15 @@ function buildPlot3dScene(context, opts) {
             const texU = math.parse(uExpr).toTex();
             const texV = math.parse(vExpr).toTex();
             const texW = math.parse(wExpr).toTex();
+            const texXVar = formatVarToTex(xVar);
+            const texYVar = formatVarToTex(yVar);
+            const texZVar = formatVarToTex(zVar);
             if (coordSystem === 'cylindrical') {
-                latexText = `\\vec{${fieldName}}(${xVar},${yVar},${zVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                latexText = `\\vec{${fieldName}}(${texXVar},${texYVar},${texZVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
             } else if (coordSystem === 'spherical') {
-                latexText = `\\vec{${fieldName}}(${xVar},${yVar},${zVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                latexText = `\\vec{${fieldName}}(${texXVar},${texYVar},${texZVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
             } else {
-                latexText = `\\vec{${fieldName}}(${xVar},${yVar},${zVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
+                latexText = `\\vec{${fieldName}}(${texXVar},${texYVar},${texZVar}) = \\begin{pmatrix} ${texU} \\\\ ${texV} \\\\ ${texW} \\end{pmatrix}`;
             }
         } catch (e) {
             latexText = `\\vec{${fieldName}} = \\left( ${components.join(', ')} \\right)`;
@@ -1585,9 +1825,13 @@ function buildPlot3dScene(context, opts) {
             const texX = math.parse(xExpr).toTex();
             const texY = math.parse(yExpr).toTex();
             const texZ = math.parse(zExpr).toTex();
-            latexText = `\\vec{r}(${uVar},${vVar}) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
+            const texUVar = formatVarToTex(uVar);
+            const texVVar = formatVarToTex(vVar);
+            latexText = `\\vec{r}(${texUVar},${texVVar}) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
         } catch (e) {
-            latexText = `\\vec{r}(${uVar},${vVar}) = \\left( ${xExpr},\\ ${yExpr},\\ ${zExpr} \\right)`;
+            const texUVar = formatVarToTex(uVar);
+            const texVVar = formatVarToTex(vVar);
+            latexText = `\\vec{r}(${texUVar},${texVVar}) = \\left( ${xExpr},\\ ${yExpr},\\ ${zExpr} \\right)`;
         }
 
         return { success: true, type, plotData, latexText };
@@ -1743,9 +1987,11 @@ function buildPlot3dScene(context, opts) {
             const texX = math.parse(xExpr).toTex();
             const texY = math.parse(yExpr).toTex();
             const texZ = math.parse(zExpr).toTex();
-            latexText = `\\vec{r}(${paramVar}) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
+            const texParamVar = formatVarToTex(paramVar);
+            latexText = `\\vec{r}(${texParamVar}) = \\begin{pmatrix} ${texX} \\\\ ${texY} \\\\ ${texZ} \\end{pmatrix}`;
         } catch (e) {
-            latexText = `\\vec{r}(${paramVar}) = \\left( ${xExpr}, ${yExpr}, ${zExpr} \\right)`;
+            const texParamVar = formatVarToTex(paramVar);
+            latexText = `\\vec{r}(${texParamVar}) = \\left( ${xExpr}, ${yExpr}, ${zExpr} \\right)`;
         }
 
         return { success: true, type, plotData, latexText };
@@ -2234,6 +2480,27 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             }
         }
 
+        const coordSystem = semantics.coordSystem || 'cartesian';
+        let defaultXLim = domainInfo.xDomain;
+        let defaultYLim = domainInfo.yDomain;
+        let defaultZLim = domainInfo.zDomain;
+
+        if (coordSystem === 'cylindrical' || coordSystem === 'spherical') {
+            const rMax = domainInfo.xDomain[1];
+            defaultXLim = [-rMax, rMax];
+            defaultYLim = [-rMax, rMax];
+            if (coordSystem === 'spherical') {
+                defaultZLim = [-rMax, rMax];
+            }
+        }
+
+        const vectorDomainMask = semantics.family === 'vector'
+            ? buildVectorDomainMask(semantics, customOptions.labeledDomains || {})
+            : null;
+        const vectorSeedBox = semantics.family === 'vector'
+            ? resolveVectorSeedBox(domainInfo, customOptions, semantics, vectorDomainMask)
+            : null;
+
         const baseOpts = {
             width: graphStyle.width || 600,
             height: graphStyle.height || 450,
@@ -2245,6 +2512,9 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             xDomain: domainInfo.xDomain,
             yDomain: domainInfo.yDomain,
             zDomain: domainInfo.zDomain,
+            xLim: customOptions.xlim || defaultXLim,
+            yLim: customOptions.ylim || defaultYLim,
+            zLim: customOptions.zlim || defaultZLim,
             isAnimated: cameraAnimationRequested || evolutionRequested,
             isCameraAnimated: cameraAnimationRequested,
             isEvolutionAnimated: evolutionRequested,
@@ -2256,8 +2526,15 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             camera: buildDefaultCamera(),
             aspectmode,
             evalScope: customOptions.evalScope,
+            vectorDomainMask,
             streamlineSeeds: semantics.family === 'vector' && (customOptions.isFlux !== false)
-                ? createRandomStreamlineSeeds(domainInfo.xDomain, domainInfo.yDomain, domainInfo.zDomain)
+                ? createDeterministicStreamlineSeeds(
+                    vectorSeedBox.xDomain,
+                    vectorSeedBox.yDomain,
+                    vectorSeedBox.zDomain,
+                    180,
+                    'plot3d-vector-streamlines'
+                )
                 : undefined
         };
 
@@ -2578,6 +2855,10 @@ module.exports = {
     compileVideo,
     _internals: {
         buildExplicitSurfaceFromLinearAxis,
-        buildPlot3dScene
+        buildPlot3dScene,
+        buildVectorDomainMask,
+        createDeterministicStreamlineSeeds,
+        pointPassesVectorDomainMask,
+        resolveVectorSeedBox
     }
 };

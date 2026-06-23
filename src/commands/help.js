@@ -159,6 +159,8 @@ const detailedHelp = {
         '- `kind:parametric` · `kind:polar` · `kind:vector` — 2D plot types',
         '- `kind:curve` · `kind:surface` · `kind:vector` — 3D plot types (requires `view:3d`)',
         '',
+        '- In 3D vector plots, extra `x:[..] y:[..] z:[..]` ranges clip a shared Cartesian box; `radius:[a, b]` clips spherical radius and `rho:[a, b]` clips cylindrical radius',
+        '',
         '*Examples*',
         '- `!plot y = sin(x) x:[-10, 10] y:[-2, 2]`',
         '- `!plot x^2 + y^2 = 9 x:[-4, 4] y:[-4, 4]`',
@@ -166,7 +168,8 @@ const detailedHelp = {
         '- `!plot (-y, x) kind:vector x:[-5, 5] y:[-5, 5]`',
         '- `!plot z = sin(x)*cos(y) view:3d x:[-3, 3] y:[-3, 3]`',
         '- `!plot z = sin(x - t)*cos(y) view:3d animate:t x:[-3, 3] y:[-3, 3] t:[0, 2*pi]`',
-        '- `!plot z = sin(x)*cos(y) view:3d camera:z360 x:[-3, 3] y:[-3, 3]`'
+        '- `!plot z = sin(x)*cos(y) view:3d camera:z360 x:[-3, 3] y:[-3, 3]`',
+        '- `!plot F(x,y,z) = (...) view:3d kind:vector vars:{x, y, z} radius:[1, 3] x:[-2, 2] y:[-2, 2] z:[-2, 2]`'
     ]),
 
 

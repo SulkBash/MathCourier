@@ -96,9 +96,9 @@ def solve_ode():
     # Identify independent variable
     ind_var_name = None
     for eq in equations:
-        m = re.findall(r'd([a-zA-Z\d]+)/d([a-zA-Z\d]+)', eq)
+        m = re.findall(r'd(\d*)([a-zA-Z_][a-zA-Z0-9_]*)/d([a-zA-Z_][a-zA-Z0-9_]*)\1', eq)
         if m:
-            ind_var_name = m[0][1]
+            ind_var_name = m[0][2]
             break
     if not ind_var_name:
         if 't' in "".join(equations) or 't' in "".join(ics):
@@ -109,10 +109,10 @@ def solve_ode():
     # Identify dependent variables
     dep_vars = set()
     for eq in equations:
-        m = re.findall(r'd([a-zA-Z\d]+)/d', eq)
+        m = re.findall(r'd\d*([a-zA-Z_][a-zA-Z0-9_]*)/d', eq)
         for v in m:
             dep_vars.add(v)
-        m2 = re.findall(r'([a-zA-Z\d]+)\'+', eq)
+        m2 = re.findall(r'([a-zA-Z_][a-zA-Z0-9_]*)\'+', eq)
         for v in m2:
             dep_vars.add(v)
     for ic in ics:
@@ -122,7 +122,7 @@ def solve_ode():
             var_match = re.search(r'([a-zA-Z]+)', lhs)
             if var_match:
                 if lhs.startswith('d') and '/' in lhs:
-                    dep_m = re.search(r'd([a-zA-Z\d]+)/d', lhs)
+                    dep_m = re.search(r'd\d*([a-zA-Z_][a-zA-Z0-9_]*)/d', lhs)
                     if dep_m:
                         dep_vars.add(dep_m.group(1))
                 else:

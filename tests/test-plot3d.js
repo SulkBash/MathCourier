@@ -102,6 +102,86 @@ async function runTests() {
 
         assert.ok(finitePoints > 0, 'expected at least one finite surface point');
     });
+
+    runAssertionTest('3D Streamline Seeds Are Deterministic', () => {
+        const seedsA = plot3dModule._internals.createDeterministicStreamlineSeeds(
+            [-2, 2],
+            [-2, 2],
+            [-2, 2],
+            4,
+            'comparison-box'
+        );
+        const seedsB = plot3dModule._internals.createDeterministicStreamlineSeeds(
+            [-2, 2],
+            [-2, 2],
+            [-2, 2],
+            4,
+            'comparison-box'
+        );
+
+        assert.deepStrictEqual(seedsA, seedsB, 'expected identical seed clouds for the same comparison box');
+    });
+
+    runAssertionTest('3D Cartesian Vector Mask Supports Shared Spherical Radius Clip', () => {
+        const semantics = {
+            family: 'vector',
+            coordSystem: 'cartesian',
+            coordVars: ['x', 'y', 'z']
+        };
+        const mask = plot3dModule._internals.buildVectorDomainMask(semantics, {
+            radius: [1, 3],
+            x: [-2, 2],
+            y: [-2, 2],
+            z: [-2, 2]
+        });
+
+        assert.equal(
+            plot3dModule._internals.pointPassesVectorDomainMask(0.5, 0, 0, mask),
+            false,
+            'expected the spherical radius clip to reject points inside the inner core'
+        );
+        assert.equal(
+            plot3dModule._internals.pointPassesVectorDomainMask(1.5, 0, 0, mask),
+            true,
+            'expected the spherical radius clip to keep points in the shell'
+        );
+    });
+
+    runAssertionTest('3D Non-Cartesian Vector Fields Use Shared Cartesian Seed Boxes', () => {
+        const seedBox = plot3dModule._internals.resolveVectorSeedBox(
+            {
+                xDomain: [1, 3],
+                yDomain: [0, 2 * Math.PI],
+                zDomain: [-2, 2]
+            },
+            {
+                labeledDomains: {
+                    x: [-2, 2],
+                    y: [-2, 2],
+                    z: [-2, 2]
+                },
+                xlim: [-4, 4],
+                ylim: [-4, 4],
+                zlim: [-4, 4]
+            },
+            {
+                family: 'vector',
+                coordSystem: 'cylindrical',
+                coordVars: ['r', 'theta', 'z']
+            },
+            {
+                cartesian: { x: [-2, 2], y: [-2, 2], z: [-2, 2] },
+                cylindrical: { rho: [1, 3], theta: [0, 2 * Math.PI], z: [-2, 2] },
+                spherical: null
+            }
+        );
+
+        assert.deepStrictEqual(seedBox, {
+            xDomain: [-2, 2],
+            yDomain: [-2, 2],
+            zDomain: [-2, 2]
+        });
+    });
     
     await renderer.initialize();
     console.log(`Renderer status: ${renderer.isLocalReady() ? 'local ready' : 'local not ready'}`);

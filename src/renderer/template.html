@@ -207,10 +207,10 @@
       
       ctx.clearRect(0, 0, width, height);
       
-      const xMin = options.xDomain[0];
-      const xMax = options.xDomain[1];
-      const yMin = options.yDomain[0];
-      const yMax = options.yDomain[1];
+      const xMin = (options.xLim && options.xLim[0] !== undefined) ? options.xLim[0] : options.xDomain[0];
+      const xMax = (options.xLim && options.xLim[1] !== undefined) ? options.xLim[1] : options.xDomain[1];
+      const yMin = (options.yLim && options.yLim[0] !== undefined) ? options.yLim[0] : options.yDomain[0];
+      const yMax = (options.yLim && options.yLim[1] !== undefined) ? options.yLim[1] : options.yDomain[1];
       
       function toScreenX(x) {
         return ((x - xMin) / (xMax - xMin)) * width;
@@ -951,9 +951,12 @@
           }
         };
       } else if (type === 'flux3d') {
-        const dx = Math.abs((options.xDomain && options.xDomain[1] - options.xDomain[0]) || 8);
-        const dy = Math.abs((options.yDomain && options.yDomain[1] - options.yDomain[0]) || 8);
-        const dz = Math.abs((options.zDomain && options.zDomain[1] - options.zDomain[0]) || 8);
+        const activeXLim = options.xLim || options.xDomain;
+        const activeYLim = options.yLim || options.yDomain;
+        const activeZLim = options.zLim || options.zDomain;
+        const dx = Math.abs((activeXLim && activeXLim[1] - activeXLim[0]) || 8);
+        const dy = Math.abs((activeYLim && activeYLim[1] - activeYLim[0]) || 8);
+        const dz = Math.abs((activeZLim && activeZLim[1] - activeZLim[0]) || 8);
         const avgSpan = (dx + dy + dz) / 3;
         const sizeRef = avgSpan * 0.04; // 4% of coordinate box span for arrowhead size
 
@@ -1027,9 +1030,9 @@
           },
           aspectmode: options.aspectmode || (type === 'vector3d' ? 'cube' : 'auto'),
           aspectratio: options.aspectratio,
-          xaxis: build3dAxisLayout(options.xDomain, options),
-          yaxis: build3dAxisLayout(options.yDomain, options),
-          zaxis: build3dAxisLayout(options.zDomain, options),
+          xaxis: build3dAxisLayout(options.xLim || options.xDomain, options),
+          yaxis: build3dAxisLayout(options.yLim || options.yDomain, options),
+          zaxis: build3dAxisLayout(options.zLim || options.zDomain, options),
           camera: options.camera || {
             eye: { x: 1.5, y: 1.5, z: 1.25 },
             up: { x: 0, y: 0, z: 1 },

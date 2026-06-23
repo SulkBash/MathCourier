@@ -298,7 +298,7 @@ function analyze2dPlot(expr, options = {}) {
     const tupleVars = unique((tuple || []).flatMap((component) => extractExpressionVariables(component)));
     const exprVars = extractExpressionVariables(text);
 
-    if (kind === 'vector' || namedVectorField || (tuple && explicitVars.length === 2)) {
+    if (kind === 'vector' || namedVectorField || (tuple && (explicitVars.length === 2 || (!kind && !expressionUsesAnySymbol(text, ['t', 'theta']))))) {
         const coordVars = inferCoordinateVariables({
             explicitVars: explicitVars.length >= 2 ? explicitVars : (namedVectorField ? namedVectorField.vars : []),
             rangeNames,

@@ -21,6 +21,9 @@ const testCases = [
     { type: 'int', input: 'x * y vars:{x, y}' }, // Double indefinite
     { type: 'int', input: 'x^2 + y^2 x:[0, 1] y:[0, 2]' }, // Double definite
     { type: 'int', input: 'x * y * z x:[0, 1] y:[0, 1] z:[0, 1]' }, // Triple definite
+    { type: 'int', input: 'x^3 / (exp(x) - 1) x:[0, inf]' }, // Planck/Thermodynamic integral (requires SciPy fallback for inf limit)
+    { type: 'int', input: 'ln(sin(x)) x:[0, pi/2]' }, // Log-sine integral
+    { type: 'int', input: '1 kind:volume x:[0, 1] y:[0, 1-x] z:[0, 1-x-y]' }, // Tetrahedron volume with variable limits
 
     // 3. Vector / multivariable field integrals
     { type: 'int', input: '(-y, x) kind:line param:{cos(t), sin(t)} t:[0, 2*pi]' },

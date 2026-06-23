@@ -1161,6 +1161,8 @@ async function renderPlot(rawExpr, customOptions = {}) {
                         lineWidth: graphStyle.lineWidth || 3.5,
                         xDomain,
                         yDomain,
+                        xLim: customOptions.xlim,
+                        yLim: customOptions.ylim,
                         parameterDomain,
                         fontFamily: config.style.fontFamily || 'sans-serif'
                     };
@@ -1269,6 +1271,8 @@ async function renderPlot(rawExpr, customOptions = {}) {
                 lineWidth: graphStyle.lineWidth || 3.5,
                 xDomain,
                 yDomain,
+                xLim: customOptions.xlim,
+                yLim: customOptions.ylim,
                 parameterDomain,
                 fontFamily: config.style.fontFamily || 'sans-serif'
             };

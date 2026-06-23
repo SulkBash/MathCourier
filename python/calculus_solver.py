@@ -252,16 +252,28 @@ def handle_standard_integral(expr_str, args_input):
         else:
             int_args.append(var_sym)
 
+    int_args.reverse()
     result = sympy.integrate(expr_parsed, *int_args)
 
     if result.has(sympy.Integral):
         if has_limits:
             eval_res = result.evalf()
-            if eval_res.is_number:
+            if eval_res.is_number and not eval_res.has(sympy.Integral):
                 result_latex = sympy.latex(eval_res.evalf(8))
                 relation = "\\approx"
             else:
-                raise ValueError("Could not evaluate definite integral symbolically or numerically.")
+                if HAS_SCIPY:
+                    try:
+                        bounds = numeric_bounds(int_args)
+                        variables = [limit[0] for limit in int_args]
+                        callable_expr = make_numeric_callable(expr_parsed, variables)
+                        numeric_result, _ = scipy_integrate.nquad(lambda *vals: callable_expr(*vals), bounds)
+                        result_latex = sympy.latex(sympy.Float(numeric_result, 8))
+                        relation = "\\approx"
+                    except Exception as exc:
+                        raise ValueError(f"Could not evaluate definite integral symbolically or numerically: {str(exc)}") from exc
+                else:
+                    raise ValueError("Could not evaluate definite integral symbolically, and SciPy is not installed for numerical fallback.")
         else:
             if len(int_args) == 1 and isinstance(int_args[0], sympy.Symbol):
                 var_sym = int_args[0]
@@ -523,9 +535,9 @@ def handle_volume_integral(input_data):
     integrand, result, relation = evaluate_definite_integral(
         expr_parsed,
         [
-            (coords["x"], x_lower, x_upper),
-            (coords["y"], y_lower, y_upper),
             (coords["z"], z_lower, z_upper),
+            (coords["y"], y_lower, y_upper),
+            (coords["x"], x_lower, x_upper),
         ],
         "Volume integral",
     )
@@ -533,9 +545,9 @@ def handle_volume_integral(input_data):
     transformed_integral = sympy.latex(
         sympy.Integral(
             integrand,
-            (coords["x"], x_lower, x_upper),
-            (coords["y"], y_lower, y_upper),
             (coords["z"], z_lower, z_upper),
+            (coords["y"], y_lower, y_upper),
+            (coords["x"], x_lower, x_upper),
         )
     )
 
