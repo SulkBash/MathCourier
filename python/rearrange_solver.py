@@ -40,10 +40,11 @@ def main():
 
     try:
         # Parse LHS and RHS
-        if '=' in equation_str:
-            parts = equation_str.split('=')
+        from math_utils import split_top_level
+        parts = split_top_level(equation_str, '=')
+        if len(parts) > 1:
             if len(parts) != 2:
-                print(json.dumps({"success": False, "error": "Equation must contain exactly one '=' sign."}))
+                print(json.dumps({"success": False, "error": "Equation must contain exactly one top-level '=' sign."}))
                 return
             lhs = parse_expr(parts[0].strip(), local_dict=call_dict, transformations=transformations)
             rhs = parse_expr(parts[1].strip(), local_dict=call_dict, transformations=transformations)

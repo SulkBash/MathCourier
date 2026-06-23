@@ -2,7 +2,7 @@ const math = require('./math');
 const { splitTopLevel } = require('./utils');
 
 // Predefined command keywords that are not range variables
-const KEYWORDS = new Set(['vars', 'kind', 'animate', 'camera', 'mode', 'view', 'ic', 'bc', 'param', 'phase', 'xlim', 'ylim', 'zlim']);
+const KEYWORDS = new Set(['vars', 'kind', 'animate', 'camera', 'mode', 'view', 'ic', 'bc', 'param', 'phase', 'xlim', 'ylim', 'zlim', 'dep']);
 
 /**
  * Parses an input string according to the Command Syntax V2 spec.
@@ -321,6 +321,23 @@ function normalizeAndValidate(parsed, commandName) {
             }
         }
         normalizedOptions.vars = variables;
+    }
+
+    // 1.5. Process dependent variables (`dep`) if present
+    if (parsed.options.hasOwnProperty('dep')) {
+        const rawDep = parsed.options.dep;
+        const depParts = splitTopLevel(rawDep, ',');
+        const depVars = [];
+        for (const part of depParts) {
+            const name = part.trim();
+            if (!name) continue;
+            if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name)) {
+                errors.push(`Invalid dependent variable name "${name}" in dep option.`);
+            } else {
+                depVars.push(name);
+            }
+        }
+        normalizedOptions.dep = depVars;
     }
 
     // 2. Process ranges (any key not in KEYWORDS)

@@ -1,24 +1,15 @@
 const math = require('../math');
 const { extractInlineDependencies } = require('../inline-calculus');
+const { splitTopLevel } = require('../utils');
 
 function extractVariables(node) {
+    const vars = new Set();
+    const ignored = ['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity'];
+
     function collectPlainVariables(source) {
         try {
-            const vars = new Set();
-            math.parse(String(source || '')).traverse((child, path, parent) => {
-                if (!child || !child.isSymbolNode) {
-                    return;
-                }
-                if (parent && parent.isFunctionNode && parent.fn === child) {
-                    return;
-                }
-                const name = child.name;
-                const ignored = ['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity'];
-                if (!ignored.includes(name) && !math[name]) {
-                    vars.add(name);
-                }
-            });
-            return Array.from(vars);
+            const parsed = math.parse(source);
+            return extractVariables(parsed);
         } catch (_) {
             return [];
         }
@@ -31,33 +22,42 @@ function extractVariables(node) {
         }));
     }
 
-    const vars = new Set();
-    node.traverse(function (child, path, parent) {
-        if (child && child.isFunctionNode && child.fn && child.fn.isSymbolNode) {
-            const helperName = child.fn.name;
+    function traverse(n, parent) {
+        if (!n) return;
+
+        if (n.isFunctionNode && n.fn && n.fn.isSymbolNode) {
+            const helperName = n.fn.name;
             if (helperName === 'deriv' || helperName === 'integ') {
                 const helperDeps = extractInlineDependencies(
                     helperName,
-                    buildInlineArgDescriptors(child.args),
+                    buildInlineArgDescriptors(n.args),
                     collectPlainVariables
                 );
-                helperDeps.forEach((name) => vars.add(name));
+                helperDeps.forEach((name) => {
+                    if (!ignored.includes(name) && !math[name]) {
+                        vars.add(name);
+                    }
+                });
+                return; // Stop traversing children of this function call node (deriv/integ)
             }
         }
 
-        if (child.isSymbolNode) {
+        if (n.isSymbolNode) {
             // Ignore function names when they are the function being called
-            if (parent && parent.isFunctionNode && parent.fn === child) {
+            if (parent && parent.isFunctionNode && parent.fn === n) {
                 return;
             }
-            const name = child.name;
-            // Filter out common math constants and functions
-            const ignored = ['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity'];
+            const name = n.name;
             if (!ignored.includes(name) && !math[name]) {
                 vars.add(name);
             }
         }
-    });
+
+        // Recurse to child nodes
+        n.forEach((child) => traverse(child, n));
+    }
+
+    traverse(node, null);
     return Array.from(vars);
 }
 
@@ -87,11 +87,12 @@ function solveEquation(inputStr) {
     
     for (const eqStr of eqStrs) {
         let normalized = '';
-        if (eqStr.includes('=')) {
-            const idx = eqStr.indexOf('=');
-            const lhs = eqStr.substring(0, idx).trim();
-            const rhs = eqStr.substring(idx + 1).trim();
-            normalized = `(${lhs}) - (${rhs})`;
+        const parts = splitTopLevel(eqStr, '=');
+        if (parts.length > 1) {
+            if (parts.length !== 2) {
+                return { success: false, error: `Equation "${eqStr}" must contain exactly one top-level '=' sign.` };
+            }
+            normalized = `(${parts[0]}) - (${parts[1]})`;
         } else {
             normalized = eqStr;
         }
@@ -337,10 +338,21 @@ function solveEquation(inputStr) {
     };
 
     let compiledDf = null;
-    try {
-        const D = math.derivative(E, xVar);
-        compiledDf = D.compile();
-    } catch (e) {}
+    let hasCalculusHelper = false;
+    E.traverse((n) => {
+        if (n && n.isFunctionNode && n.fn && n.fn.isSymbolNode) {
+            if (['deriv', 'integ'].includes(n.fn.name)) {
+                hasCalculusHelper = true;
+            }
+        }
+    });
+
+    if (!hasCalculusHelper) {
+        try {
+            const D = math.derivative(E, xVar);
+            compiledDf = D.compile();
+        } catch (e) {}
+    }
 
     const df = (xVal) => {
         if (compiledDf) {

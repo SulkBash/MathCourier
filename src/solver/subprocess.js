@@ -1,8 +1,26 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const { preprocessCalculusHelpers } = require('../utils');
 
 const SUBPROCESS_TIMEOUT_MS = 30000;
 const SUBPROCESS_MAX_STDOUT = 512 * 1024;
+
+function preprocessPayload(obj) {
+    if (typeof obj === 'string') {
+        return preprocessCalculusHelpers(obj);
+    }
+    if (Array.isArray(obj)) {
+        return obj.map(preprocessPayload);
+    }
+    if (obj !== null && typeof obj === 'object') {
+        const result = {};
+        for (const key of Object.keys(obj)) {
+            result[key] = preprocessPayload(obj[key]);
+        }
+        return result;
+    }
+    return obj;
+}
 
 function runSubprocess(scriptPath, payload) {
     return new Promise((resolve) => {
@@ -57,7 +75,8 @@ function runSubprocess(scriptPath, payload) {
             }
         });
 
-        pyProcess.stdin.write(JSON.stringify(payload));
+        const preprocessedPayload = preprocessPayload(payload);
+        pyProcess.stdin.write(JSON.stringify(preprocessedPayload));
         pyProcess.stdin.end();
     });
 }

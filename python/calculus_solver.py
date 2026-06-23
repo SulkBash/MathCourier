@@ -191,6 +191,64 @@ def format_result_lines(field_label, field_expr, parametrization_label, parametr
     ])
 
 
+def handle_idiff(expr_str, dep_input, independent_var, order):
+    call_dict = local_dict.copy()
+
+    # Parse dependent variables
+    dep_vars = []
+    for var in dep_input:
+        var_name = str(var).strip()
+        if not VALID_VAR_RE.match(var_name):
+            raise ValueError(f"Invalid dependent variable name '{var_name}'.")
+        var_sym = sympy.Symbol(var_name)
+        call_dict[var_name] = var_sym
+        dep_vars.append(var_sym)
+
+    # Parse independent variable
+    ind_name = str(independent_var).strip()
+    if not VALID_VAR_RE.match(ind_name):
+        raise ValueError(f"Invalid independent variable name '{ind_name}'.")
+    ind_sym = sympy.Symbol(ind_name)
+    call_dict[ind_name] = ind_sym
+
+    # If expression contains '=', split it and do lhs - rhs
+    if "=" in expr_str:
+        lhs_str, rhs_str = expr_str.split("=", 1)
+        lhs_parsed = parse_math_expr(lhs_str, call_dict)
+        rhs_parsed = parse_math_expr(rhs_str, call_dict)
+        expr_parsed = lhs_parsed - rhs_parsed
+    else:
+        expr_parsed = parse_math_expr(expr_str, call_dict)
+
+    from sympy.geometry.util import idiff
+    dep_arg = dep_vars[0] if len(dep_vars) == 1 else dep_vars
+    result = idiff(expr_parsed, dep_arg, ind_sym, int(order))
+
+    # Generate LaTeX representation
+    dep_str = ", ".join(v.name for v in dep_vars)
+    d_num = f"d{dep_str}" if order == 1 else f"d^{{{order}}}{dep_str}"
+    d_den = f"d{ind_sym.name}" if order == 1 else f"d{ind_sym.name}^{{{order}}}"
+
+    lhs_latex = f"\\frac{{{d_num}}}{{{d_den}}}"
+    result_latex = sympy.latex(result)
+
+    # Format original equation nicely
+    orig_eq_latex = sympy.latex(expr_parsed) + " = 0"
+    if "=" in expr_str:
+        try:
+            lhs_str, rhs_str = expr_str.split("=", 1)
+            lhs_l = sympy.latex(parse_math_expr(lhs_str, call_dict))
+            rhs_l = sympy.latex(parse_math_expr(rhs_str, call_dict))
+            orig_eq_latex = f"{lhs_l} = {rhs_l}"
+        except Exception:
+            pass
+
+    return build_latex([
+        f"{orig_eq_latex}",
+        f"{lhs_latex} &= {result_latex}"
+    ])
+
+
 def handle_diff(expr_str, args_input):
     if not args_input:
         args_input = ["x"]
@@ -581,6 +639,19 @@ def main():
     expr_str = input_data.get("expr", "").strip()
 
     try:
+        if operation == "idiff":
+            dep_input = input_data.get("dep")
+            independent_var = input_data.get("independentVar", "x")
+            order = input_data.get("order", 1)
+
+            if not expr_str:
+                raise ValueError("No mathematical expression/equation provided.")
+            if not dep_input:
+                raise ValueError("No dependent variables provided for implicit differentiation.")
+
+            emit({"success": True, "latex": handle_idiff(expr_str, dep_input, independent_var, order)})
+            return
+
         if operation == "diff":
             args_input = input_data.get("args")
             if args_input is None:
@@ -629,6 +700,7 @@ def main():
     except Exception as exc:
         label_map = {
             "diff": "Differentiation",
+            "idiff": "Implicit differentiation",
             "int": "Integration",
             "line_int": "Line integral",
             "surface_int": "Surface integral",

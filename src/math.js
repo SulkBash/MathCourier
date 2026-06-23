@@ -1,5 +1,5 @@
 const { create, all } = require('mathjs');
-const { splitTopLevel } = require('./utils');
+const { splitTopLevel, preprocessCalculusHelpers } = require('./utils');
 const {
     LINE_PARAM_PREFERENCES,
     SURFACE_PARAM_PREFERENCES,
@@ -384,7 +384,12 @@ const inlineIntegralCache = new Map();
 function extractVarsFromSource(source) {
     try {
         const vars = new Set();
-        math.parse(String(source || '')).traverse((child, path, parent) => {
+        let normalized = String(source || '');
+        if (normalized.includes('=')) {
+            const idx = normalized.indexOf('=');
+            normalized = `(${normalized.substring(0, idx)}) - (${normalized.substring(idx + 1)})`;
+        }
+        math.parse(normalized).traverse((child, path, parent) => {
             if (!child || !child.isSymbolNode) {
                 return;
             }
@@ -607,18 +612,45 @@ function buildDerivativeHelperData(descriptors) {
     }
 
     const dependencyNames = extractInlineDependencies('deriv', descriptors, extractVarsFromSource);
-    const exprNode = math.parse(parsed.exprSource);
+    let normalizedExpr = parsed.exprSource;
+    if (normalizedExpr.includes('=')) {
+        const idx = normalizedExpr.indexOf('=');
+        normalizedExpr = `(${normalizedExpr.substring(0, idx)}) - (${normalizedExpr.substring(idx + 1)})`;
+    }
+    const exprNode = math.parse(normalizedExpr);
     let symbolicNode = exprNode;
     let symbolicCompiled = null;
 
-    try {
-        for (const variableName of parsed.sequence) {
-            symbolicNode = math.simplify(math.derivative(symbolicNode, variableName));
+    if (parsed.dep && parsed.dep.length > 0) {
+        if (parsed.sequence.length > 1) {
+            throw new Error('Inline implicit derivative only supports first-order derivatives in JavaScript.');
         }
-        symbolicCompiled = symbolicNode.compile();
-    } catch (_) {
-        symbolicNode = null;
-        symbolicCompiled = null;
+        if (parsed.dep.length > 1) {
+            throw new Error('Inline implicit derivative only supports a single dependent variable in JavaScript.');
+        }
+        const xVar = parsed.sequence[0];
+        const yVar = parsed.dep[0];
+        try {
+            const fxNode = math.derivative(exprNode, xVar);
+            const fyNode = math.derivative(exprNode, yVar);
+            
+            symbolicNode = math.parse(`-(${fxNode.toString()}) / (${fyNode.toString()})`);
+            symbolicNode = math.simplify(symbolicNode);
+            symbolicCompiled = symbolicNode.compile();
+        } catch (_) {
+            symbolicNode = null;
+            symbolicCompiled = null;
+        }
+    } else {
+        try {
+            for (const variableName of parsed.sequence) {
+                symbolicNode = math.simplify(math.derivative(symbolicNode, variableName));
+            }
+            symbolicCompiled = symbolicNode.compile();
+        } catch (_) {
+            symbolicNode = null;
+            symbolicCompiled = null;
+        }
     }
 
     return {
@@ -912,6 +944,14 @@ function buildDerivativeTexFromConfig(config) {
     const innerTex = formatExpressionTex(config.exprSource);
     const totalOrder = config.sequence.length;
 
+    if (config.dep && config.dep.length > 0) {
+        const depStr = config.dep.join(', ');
+        const indVar = config.sequence[0];
+        const dNumerator = totalOrder === 1 ? `d${depStr}` : `d^{${totalOrder}}${depStr}`;
+        const dDenominator = totalOrder === 1 ? `d${indVar}` : `d${indVar}^{${totalOrder}}`;
+        return `\\frac{${dNumerator}}{${dDenominator}}`;
+    }
+
     if (config.recipe.length === 1) {
         const variable = config.recipe[0];
         if (variable.order === 1) {
@@ -965,12 +1005,23 @@ deriv.rawArgs = true;
 
 deriv.toTex = function (node, options) {
     try {
-        const parsed = parseDerivativeCall(buildInlineArgDescriptors(node.args), extractVarsFromSource);
+        const descriptors = buildInlineArgDescriptors(node.args);
+        const data = buildDerivativeHelperData(descriptors);
+        if (data.symbolicNode) {
+            return data.symbolicNode.toTex(options);
+        }
+        const parsed = parseDerivativeCall(descriptors, extractVarsFromSource);
         if (!parsed.success) {
             return `\\operatorname{deriv}\\left(${node.args.map((arg) => arg.toTex(options)).join(', ')}\\right)`;
         }
         return buildDerivativeTexFromConfig(parsed);
     } catch (_) {
+        try {
+            const parsed = parseDerivativeCall(buildInlineArgDescriptors(node.args), extractVarsFromSource);
+            if (parsed.success) {
+                return buildDerivativeTexFromConfig(parsed);
+            }
+        } catch (__) {}
         return `\\operatorname{deriv}\\left(${node.args.map((arg) => arg.toTex(options)).join(', ')}\\right)`;
     }
 };
@@ -1049,5 +1100,29 @@ math.import({
     factorial,
     polygamma
 }, { override: true });
+
+const originalParse = math.parse;
+math.parse = function (expr, ...args) {
+    if (typeof expr === 'string') {
+        expr = preprocessCalculusHelpers(expr);
+    }
+    return originalParse.call(math, expr, ...args);
+};
+
+const originalEvaluate = math.evaluate;
+math.evaluate = function (expr, ...args) {
+    if (typeof expr === 'string') {
+        expr = preprocessCalculusHelpers(expr);
+    }
+    return originalEvaluate.call(math, expr, ...args);
+};
+
+const originalCompile = math.compile;
+math.compile = function (expr, ...args) {
+    if (typeof expr === 'string') {
+        expr = preprocessCalculusHelpers(expr);
+    }
+    return originalCompile.call(math, expr, ...args);
+};
 
 module.exports = math;

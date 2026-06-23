@@ -165,26 +165,11 @@ function parseNamedVectorField(expr, expectedDimension = null) {
 }
 
 function extractExpressionVariables(expr) {
+    const vars = new Set();
+
     function collectPlainVariables(source) {
         try {
-            const vars = new Set();
-            math.parse(String(source || '')).traverse((node, path, parent) => {
-                if (!node || !node.isSymbolNode) {
-                    return;
-                }
-
-                if (parent && parent.isFunctionNode && parent.fn === node) {
-                    return;
-                }
-
-                const name = node.name;
-                if (!name || IGNORED_SYMBOLS.has(name) || math[name]) {
-                    return;
-                }
-
-                vars.add(name);
-            });
-            return Array.from(vars);
+            return extractExpressionVariables(source);
         } catch (_) {
             return [];
         }
@@ -197,36 +182,43 @@ function extractExpressionVariables(expr) {
         }));
     }
 
-    try {
-        const vars = new Set();
-        math.parse(String(expr || '')).traverse((node, path, parent) => {
-            if (node && node.isFunctionNode && node.fn && node.fn.isSymbolNode) {
-                const helperName = node.fn.name;
-                if (helperName === 'deriv' || helperName === 'integ') {
-                    const helperDeps = extractInlineDependencies(
-                        helperName,
-                        buildInlineArgDescriptors(node.args),
-                        collectPlainVariables
-                    );
-                    helperDeps.forEach((name) => vars.add(name));
-                }
-            }
+    function traverse(node, parent) {
+        if (!node) return;
 
-            if (!node || !node.isSymbolNode) {
-                return;
+        if (node.isFunctionNode && node.fn && node.fn.isSymbolNode) {
+            const helperName = node.fn.name;
+            if (helperName === 'deriv' || helperName === 'integ') {
+                const helperDeps = extractInlineDependencies(
+                    helperName,
+                    buildInlineArgDescriptors(node.args),
+                    collectPlainVariables
+                );
+                helperDeps.forEach((name) => {
+                    if (!IGNORED_SYMBOLS.has(name) && !math[name]) {
+                        vars.add(name);
+                    }
+                });
+                return; // Stop traversing children of this function call node (deriv/integ)
             }
+        }
 
+        if (node.isSymbolNode) {
             if (parent && parent.isFunctionNode && parent.fn === node) {
                 return;
             }
-
             const name = node.name;
             if (!name || IGNORED_SYMBOLS.has(name) || math[name]) {
                 return;
             }
-
             vars.add(name);
-        });
+        }
+
+        node.forEach((child) => traverse(child, node));
+    }
+
+    try {
+        const parsed = math.parse(String(expr || ''));
+        traverse(parsed, null);
         return Array.from(vars);
     } catch (_) {
         return [];
@@ -243,25 +235,8 @@ function expressionUsesAnySymbol(expr, symbolNames) {
         return false;
     }
 
-    try {
-        let found = false;
-        math.parse(String(expr || '')).traverse((node, path, parent) => {
-            if (found || !node || !node.isSymbolNode) {
-                return;
-            }
-
-            if (parent && parent.isFunctionNode && parent.fn === node) {
-                return;
-            }
-
-            if (names.has(node.name)) {
-                found = true;
-            }
-        });
-        return found;
-    } catch (_) {
-        return false;
-    }
+    const vars = extractExpressionVariables(expr);
+    return vars.some((v) => names.has(v));
 }
 
 function inferSingleVariable({ explicitVars = [], rangeNames = [], exprVars = [], preferred = [], fallback = 'x' }) {

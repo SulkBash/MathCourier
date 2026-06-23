@@ -10,6 +10,9 @@ const testCases = [
     { type: 'diff', input: 'x^3 * y^2 vars:{x:2, y}' }, // Mixed partial higher order
     { type: 'diff', input: 'x^4 vars:{x:3}' }, // Single variable higher order
     { type: 'diff', input: 'x^2 * y vars:{x, y}' }, // Mixed partial first order
+    { type: 'diff', input: 'x^2 + y^2 = 4 dep:y' }, // First order implicit differentiation (dy/dx, auto independent)
+    { type: 'diff', input: 'x^2 + y^2 = 4 vars:x dep:y' }, // First order implicit differentiation (explicit independent)
+    { type: 'diff', input: 'x^2 + y^2 = 4 vars:{x:2} dep:y' }, // Second order implicit differentiation
 
     // 2. Integration tests (SymPy)
     { type: 'int', input: 'sin(x)' },

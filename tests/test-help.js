@@ -61,8 +61,8 @@ console.log('PASS: Integration help covers safer vars guidance and field-integra
 // Test 9: Inline helper help is discoverable
 const helperHelp = getHelp('deriv');
 assert(helperHelp.includes('*Inline Calculus Helpers*'));
-assert(helperHelp.includes('deriv("x^3*y^2", "vars:{x:2, y}")'));
-assert(helperHelp.includes('integ("x*y*z", "kind:volume", "x:[0, 1]", "y:[0, 2]", "z:[0, 3]")'));
+assert(helperHelp.includes('deriv[x^3, x]'));
+assert(helperHelp.includes('integ[x*y*z, kind:volume, x:[0, 1], y:[0, 2], z:[0, 3]]'));
 console.log('PASS: Inline helper help is available through deriv/integ aliases');
 
 // Test 10: Help text detection for bot self-messages

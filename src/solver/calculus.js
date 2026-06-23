@@ -10,10 +10,10 @@ function runCalculusSubprocess(payload) {
     return runSubprocess(pyScriptPath, payload);
 }
 
-function inferDefaultVariable(exprStr, actionLabel) {
+function inferDefaultVariable(exprStr, actionLabel, excludeVars = []) {
     try {
         const node = math.parse(exprStr);
-        const vars = extractVariables(node);
+        const vars = extractVariables(node).filter(v => !excludeVars.includes(v));
 
         if (vars.length === 0) {
             return { success: true, variable: 'x' };
@@ -46,6 +46,33 @@ function solveDerivative(inputStr) {
     const exprStr = parsed.body;
     if (!exprStr) {
         return Promise.resolve({ success: false, error: 'No expression provided for differentiation.' });
+    }
+
+    // If 'dep' is present, we perform implicit differentiation
+    if (parsed.options.dep && parsed.options.dep.length > 0) {
+        let independentVar = 'x';
+        let order = 1;
+        if (parsed.variables.length > 0) {
+            if (parsed.variables.length > 1) {
+                return Promise.resolve({ success: false, error: 'Implicit differentiation only supports a single independent variable.' });
+            }
+            independentVar = parsed.variables[0].name;
+            order = parsed.variables[0].order;
+        } else {
+            const inferred = inferDefaultVariable(exprStr, 'implicit differentiation', parsed.options.dep);
+            if (!inferred.success) {
+                return Promise.resolve({ success: false, error: inferred.error });
+            }
+            independentVar = inferred.variable;
+        }
+
+        return runCalculusSubprocess({
+            operation: 'idiff',
+            expr: exprStr,
+            dep: parsed.options.dep,
+            independentVar: independentVar,
+            order: order
+        });
     }
 
     let args = [];

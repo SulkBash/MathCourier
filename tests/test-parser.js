@@ -272,6 +272,22 @@ runTest('Display range options (xlim, ylim, zlim) validation and normalization',
     assert(n3.errors.some(e => e.includes('does not evaluate to a finite number')), 'Missing non-finite error for xlim');
 });
 
+runTest('Dep option validation and normalization', () => {
+    const p1 = parseCommandSyntax('x^2 + y^2 = 4 dep:y');
+    const n1 = normalizeAndValidate(p1, 'diff');
+    assert(n1.success, n1.errors.join(', '));
+    assertDeepEqual(n1.options.dep, ['y']);
+
+    const p2 = parseCommandSyntax('x^2 + y^2 + z^2 = 9 dep:{y, z}');
+    const n2 = normalizeAndValidate(p2, 'diff');
+    assert(n2.success, n2.errors.join(', '));
+    assertDeepEqual(n2.options.dep, ['y', 'z']);
+
+    const p3 = parseCommandSyntax('x^2 + y^2 = 4 dep:y:2');
+    const n3 = normalizeAndValidate(p3, 'diff');
+    assert(!n3.success, 'Should fail for invalid dependent variable syntax');
+});
+
 console.log(`\nTests finished: ${passedTests} passed, ${failedTests} failed.`);
 if (failedTests > 0) {
     process.exit(1);

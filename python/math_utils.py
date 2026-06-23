@@ -371,6 +371,7 @@ def deriv_inline(expr, *args):
     remaining = list(args)
 
     variable_recipe = None
+    dep_vars = None
     positional_values = []
     assignment_specs = []
 
@@ -396,6 +397,10 @@ def deriv_inline(expr, *args):
                 variable_recipe = _parse_inline_variable_recipe(option["value"], "deriv")
                 continue
 
+            if option["key"] == "dep":
+                dep_vars = [sympy.Symbol(name.strip()) for name in split_top_level(option["value"]) if name.strip()]
+                continue
+
             if option["key"] == "at":
                 assignment_specs = _parse_inline_assignments(option["value"], "deriv at")
                 continue
@@ -403,16 +408,47 @@ def deriv_inline(expr, *args):
             raise ValueError(f'deriv does not support option "{option["key"]}".')
 
     if variable_recipe is None:
-        variable_recipe = [(_infer_default_inline_variable(expr_source, call_dict, "inline differentiation"), 1)]
+        exclude_names = {sym.name for sym in dep_vars} if dep_vars else set()
+        symbols = _extract_expr_symbols(expr_source, call_dict)
+        filtered_symbols = [sym for sym in symbols if sym.name not in exclude_names]
+        if not filtered_symbols:
+            ind_sym = sympy.Symbol("x")
+        elif len(filtered_symbols) == 1:
+            ind_sym = filtered_symbols[0]
+        else:
+            ind_sym = next((sym for sym in filtered_symbols if sym.name == "x"), None)
+            if ind_sym is None:
+                names = ", ".join(sym.name for sym in filtered_symbols)
+                raise ValueError(f"Could not infer a single independent variable for inline differentiation. Found: {names}.")
+        variable_recipe = [(ind_sym, 1)]
 
     for symbol, _order in variable_recipe:
         call_dict[symbol.name] = symbol
 
-    expr_parsed = parse_expr(expr_source.replace("^", "**"), local_dict=call_dict, transformations=transformations)
+    if dep_vars:
+        for symbol in dep_vars:
+            call_dict[symbol.name] = symbol
 
-    result = expr_parsed
-    for symbol, order in variable_recipe:
-        result = sympy.diff(result, symbol, order)
+    # Parse expression/equation
+    if "=" in expr_source:
+        lhs_str, rhs_str = expr_source.split("=", 1)
+        lhs_parsed = parse_expr(lhs_str.replace("^", "**"), local_dict=call_dict, transformations=transformations)
+        rhs_parsed = parse_expr(rhs_str.replace("^", "**"), local_dict=call_dict, transformations=transformations)
+        expr_parsed = lhs_parsed - rhs_parsed
+    else:
+        expr_parsed = parse_expr(expr_source.replace("^", "**"), local_dict=call_dict, transformations=transformations)
+
+    if dep_vars:
+        if len(variable_recipe) != 1:
+            raise ValueError("Implicit differentiation requires exactly one independent variable.")
+        independent_symbol, order = variable_recipe[0]
+        from sympy.geometry.util import idiff
+        dep_arg = dep_vars[0] if len(dep_vars) == 1 else dep_vars
+        result = idiff(expr_parsed, dep_arg, independent_symbol, order)
+    else:
+        result = expr_parsed
+        for symbol, order in variable_recipe:
+            result = sympy.diff(result, symbol, order)
 
     unique_symbols = _ordered_unique_symbols(variable_recipe)
     if positional_values and len(positional_values) != len(unique_symbols):

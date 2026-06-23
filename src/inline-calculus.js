@@ -211,8 +211,9 @@ function parseTupleSource(source) {
     return splitTopLevel(inner);
 }
 
-function inferDefaultVariable(exprSource, extractVars, actionLabel) {
-    const exprVars = unique(extractVars(exprSource));
+function inferDefaultVariable(exprSource, extractVars, actionLabel, excludeVars = []) {
+    const excludeSet = new Set(excludeVars);
+    const exprVars = unique(extractVars(exprSource)).filter(v => !excludeSet.has(v));
 
     if (exprVars.length === 0) {
         return { success: true, variable: 'x' };
@@ -275,6 +276,7 @@ function parseDerivativeCall(descriptors, extractVars) {
     const hasOptionLikeArgs = rest.some(isOptionDescriptor);
 
     let recipe = null;
+    let dep = null;
     let atAssignments = [];
     let positionalEvalSources = [];
     let usesLegacySyntax = false;
@@ -314,6 +316,21 @@ function parseDerivativeCall(descriptors, extractVars) {
                 continue;
             }
 
+            if (option.key === 'dep') {
+                const depParts = splitTopLevel(option.value, ',');
+                const depVars = [];
+                for (const part of depParts) {
+                    const name = part.trim();
+                    if (!name) continue;
+                    if (!VALID_VAR_RE.test(name)) {
+                        return { success: false, error: `Invalid dependent variable name "${name}" in dep option.` };
+                    }
+                    depVars.push(name);
+                }
+                dep = depVars;
+                continue;
+            }
+
             if (option.key === 'at') {
                 const parsedAssignments = parseAssignmentList(option.value);
                 if (!parsedAssignments.success) {
@@ -328,7 +345,7 @@ function parseDerivativeCall(descriptors, extractVars) {
     }
 
     if (!recipe) {
-        const inferred = inferDefaultVariable(exprSource, extractVars, 'inline differentiation');
+        const inferred = inferDefaultVariable(exprSource, extractVars, 'inline differentiation', dep || []);
         if (!inferred.success) {
             return inferred;
         }
@@ -351,7 +368,8 @@ function parseDerivativeCall(descriptors, extractVars) {
         uniqueVariables,
         atAssignments,
         positionalEvalSources,
-        usesLegacySyntax
+        usesLegacySyntax,
+        dep
     };
 }
 

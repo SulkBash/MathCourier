@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { formatVarToTex } = require('../utils');
-const { analyze3dPlot } = require('../plot-semantics');
+const { analyze3dPlot, expressionUsesAnySymbol } = require('../plot-semantics');
 const ZERO_TOLERANCE = 1e-9;
 const MAX_CONCURRENT_PLOT3D = Math.max(1, Number(config.bot?.plot3dMaxConcurrency) || 3);
 const DEFAULT_ANIMATION_FRAMES = Math.max(6, Number(config.bot?.plot3dAnimationFrames) || 12);
@@ -754,20 +754,7 @@ function parseNamedVectorField(expr) {
     };
 }
 
-function expressionUsesAnySymbol(expr, symbolNames) {
-    try {
-        const symbolSet = new Set(symbolNames);
-        let found = false;
-        math.parse(preprocessExpr(expr)).traverse((child) => {
-            if (child && child.isSymbolNode && symbolSet.has(child.name)) {
-                found = true;
-            }
-        });
-        return found;
-    } catch (err) {
-        return false;
-    }
-}
+
 
 function shouldTreatBareTupleAsVector(components, domainsCount) {
     const hasUV = components.some(c => expressionUsesAnySymbol(c, ['u', 'v']));
