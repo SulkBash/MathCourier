@@ -1,7 +1,9 @@
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const renderer = require('../src/renderer');
 const handlePlotCommand = require('../src/commands/plot');
+const plot3dModule = require('../src/renderer/plot3d');
 
 const OUTPUT_DIR = path.join(__dirname, '../test_output');
 
@@ -51,8 +53,55 @@ async function runParallelTests(name, cases) {
     }
 }
 
+function runAssertionTest(name, fn) {
+    console.log(`\n${name}`);
+    try {
+        fn();
+        console.log('  ok');
+    } catch (err) {
+        console.error(`  FAIL: ${err.message}`);
+    }
+}
+
 async function runTests() {
     console.log('--- STARTING 3D PLOTTING TESTS ---');
+
+    runAssertionTest('3D Linear Implicit Surface Regression', () => {
+        const surface = plot3dModule._internals.buildExplicitSurfaceFromLinearAxis('(y) - (x)', {
+            xDomain: [-5, 10],
+            yDomain: [-12, 13],
+            zDomain: [0, 1]
+        }, {
+            x: true,
+            y: true,
+            z: true
+        });
+
+        assert.ok(surface, 'expected a direct surface mesh for y = x');
+        assert.equal(surface.type, 'surface');
+        assert.equal(surface.solvedAxis, 'y');
+        assert.ok(Array.isArray(surface.plotData.x[0]), 'expected 2D x-grid data');
+        assert.ok(Array.isArray(surface.plotData.y[0]), 'expected 2D y-grid data');
+        assert.ok(Array.isArray(surface.plotData.z[0]), 'expected 2D z-grid data');
+
+        let finitePoints = 0;
+        for (let row = 0; row < surface.plotData.x.length; row++) {
+            for (let col = 0; col < surface.plotData.x[row].length; col++) {
+                const x = surface.plotData.x[row][col];
+                const y = surface.plotData.y[row][col];
+                const z = surface.plotData.z[row][col];
+                if (x === null || y === null || z === null) {
+                    continue;
+                }
+
+                finitePoints++;
+                assert.ok(Math.abs(x - y) < 1e-9, `expected x and y to match, got x=${x}, y=${y}`);
+                assert.ok(z >= 0 && z <= 1, `expected z to stay within the provided z-range, got z=${z}`);
+            }
+        }
+
+        assert.ok(finitePoints > 0, 'expected at least one finite surface point');
+    });
     
     await renderer.initialize();
     console.log(`Renderer status: ${renderer.isLocalReady() ? 'local ready' : 'local not ready'}`);
@@ -91,6 +140,10 @@ async function runTests() {
 
     await runTest('3D Animated Surface Explicit', () =>
         handlePlotCommand('z = sin(x) * cos(y) view:3d camera:z x:[-3, 3] y:[-3, 3]')
+    );
+
+    await runTest('3D Animated Linear Y Surface', () =>
+        handlePlotCommand('y = x view:3d x:[-5, 10] y:[-12, 13] z:[0, 1] camera:z80 animate:x')
     );
 
     await runTest('3D Animated Full Orbit Sphere', () =>

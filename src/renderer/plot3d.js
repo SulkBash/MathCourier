@@ -191,6 +191,18 @@ function clonePlot3dOptions(baseOpts) {
     };
 }
 
+function buildAspectRatioFromDomains(xDomain, yDomain, zDomain) {
+    const dx = Math.abs(xDomain[1] - xDomain[0]) || 1;
+    const dy = Math.abs(yDomain[1] - yDomain[0]) || 1;
+    const dz = Math.abs(zDomain[1] - zDomain[0]) || 1;
+    const maxSpan = Math.max(dx, dy, dz);
+    return {
+        x: dx / maxSpan,
+        y: dy / maxSpan,
+        z: dz / maxSpan
+    };
+}
+
 function isTracingLimited(opts, symbolName, value) {
     return opts.tracingVar === symbolName &&
         opts.tracingLimit !== undefined &&
@@ -986,93 +998,153 @@ function substituteSymbolWithZero(node, symbolName) {
     });
 }
 
-function buildExplicitSurfaceFromLinearZ(combinedExpr, opts) {
+function getAxisDomainKey(axisName) {
+    return `${axisName}Domain`;
+}
+
+function getSurfaceParameterAxes(solvedAxis) {
+    if (solvedAxis === 'x') {
+        return ['y', 'z'];
+    }
+    if (solvedAxis === 'y') {
+        return ['x', 'z'];
+    }
+    return ['x', 'y'];
+}
+
+function getAxisDomainOrFallback(opts, axisName) {
+    const domainKey = getAxisDomainKey(axisName);
+    if (Array.isArray(opts[domainKey])) {
+        return opts[domainKey];
+    }
+
+    if (axisName === 'z' && Array.isArray(opts.xDomain)) {
+        opts[domainKey] = [...opts.xDomain];
+        return opts[domainKey];
+    }
+
+    opts[domainKey] = [-5, 5];
+    return opts[domainKey];
+}
+
+function buildExplicitSurfaceFromLinearAxis(combinedExpr, opts, providedDomains = {}) {
     const combinedNode = math.parse(combinedExpr);
-    const zCoeffNode = math.simplify(math.derivative(combinedNode, 'z'));
+    const axisOrder = ['z', 'y', 'x'];
 
-    if (isZeroNode(zCoeffNode)) {
-        return null;
-    }
+    for (const solvedAxis of axisOrder) {
+        const coeffNode = math.simplify(math.derivative(combinedNode, solvedAxis));
+        if (isZeroNode(coeffNode)) {
+            continue;
+        }
 
-    const zSecondDerivative = math.simplify(math.derivative(zCoeffNode, 'z'));
-    if (!isZeroNode(zSecondDerivative)) {
-        return null;
-    }
+        const secondDerivative = math.simplify(math.derivative(coeffNode, solvedAxis));
+        if (!isZeroNode(secondDerivative)) {
+            continue;
+        }
 
-    const zFreeNode = math.simplify(substituteSymbolWithZero(combinedNode, 'z'));
-    const zCoeffCompiled = zCoeffNode.compile();
-    const zFreeCompiled = zFreeNode.compile();
+        const freeNode = math.simplify(substituteSymbolWithZero(combinedNode, solvedAxis));
+        const coeffCompiled = coeffNode.compile();
+        const freeCompiled = freeNode.compile();
+        const [paramAxis1, paramAxis2] = getSurfaceParameterAxes(solvedAxis);
+        const paramDomain1 = getAxisDomainOrFallback(opts, paramAxis1);
+        const paramDomain2 = getAxisDomainOrFallback(opts, paramAxis2);
+        const [uMin, uMax] = paramDomain1;
+        const [vMin, vMax] = paramDomain2;
+        const gridSteps = 40;
+        const uValues = [];
+        const vValues = [];
 
-    const xMin = opts.xDomain[0];
-    const xMax = opts.xDomain[1];
-    const yMin = opts.yDomain[0];
-    const yMax = opts.yDomain[1];
-    const gridSteps = 40;
-    const xGrid = [];
-    const yGrid = [];
-
-    for (let i = 0; i <= gridSteps; i++) {
-        xGrid.push(xMin + i * (xMax - xMin) / gridSteps);
-    }
-    for (let j = 0; j <= gridSteps; j++) {
-        yGrid.push(yMin + j * (yMax - yMin) / gridSteps);
-    }
-
-    const zGrid = [];
-    const allZ = [];
-
-    for (let j = 0; j <= gridSteps; j++) {
-        const row = [];
-        const y = yGrid[j];
         for (let i = 0; i <= gridSteps; i++) {
-            const x = xGrid[i];
-            if (isTracingLimited(opts, 'x', x) || isTracingLimited(opts, 'y', y)) {
-                row.push(null);
-                continue;
+            uValues.push(uMin + i * (uMax - uMin) / gridSteps);
+        }
+        for (let j = 0; j <= gridSteps; j++) {
+            vValues.push(vMin + j * (vMax - vMin) / gridSteps);
+        }
+
+        const xGrid = [];
+        const yGrid = [];
+        const zGrid = [];
+        const solvedValues = [];
+
+        for (let j = 0; j <= gridSteps; j++) {
+            const rowX = [];
+            const rowY = [];
+            const rowZ = [];
+            const v = vValues[j];
+
+            for (let i = 0; i <= gridSteps; i++) {
+                const u = uValues[i];
+
+                try {
+                    const scope = mergeEvalScope(opts, {
+                        [paramAxis1]: u,
+                        [paramAxis2]: v
+                    });
+                    const coeffValue = toReal(coeffCompiled.evaluate(scope));
+                    const freeValue = toReal(freeCompiled.evaluate(scope));
+
+                    if (!isNaN(coeffValue) && isFinite(coeffValue) && Math.abs(coeffValue) > ZERO_TOLERANCE && !isNaN(freeValue) && isFinite(freeValue)) {
+                        const solvedValue = -freeValue / coeffValue;
+                        const point = {
+                            x: solvedAxis === 'x' ? solvedValue : (paramAxis1 === 'x' ? u : v),
+                            y: solvedAxis === 'y' ? solvedValue : (paramAxis1 === 'y' ? u : v),
+                            z: solvedAxis === 'z' ? solvedValue : (paramAxis1 === 'z' ? u : v)
+                        };
+
+                        if (
+                            !isNaN(point.x) && isFinite(point.x) &&
+                            !isNaN(point.y) && isFinite(point.y) &&
+                            !isNaN(point.z) && isFinite(point.z) &&
+                            !isTracingLimited(opts, 'x', point.x) &&
+                            !isTracingLimited(opts, 'y', point.y) &&
+                            !isTracingLimited(opts, 'z', point.z)
+                        ) {
+                            rowX.push(point.x);
+                            rowY.push(point.y);
+                            rowZ.push(point.z);
+                            solvedValues.push(solvedValue);
+                            continue;
+                        }
+                    }
+                } catch (err) { }
+
+                rowX.push(null);
+                rowY.push(null);
+                rowZ.push(null);
             }
 
-            try {
-                const scope = mergeEvalScope(opts, { x, y });
-                const zCoeff = toReal(zCoeffCompiled.evaluate(scope));
-                const zFree = toReal(zFreeCompiled.evaluate(scope));
-
-                if (!isNaN(zCoeff) && isFinite(zCoeff) && Math.abs(zCoeff) > ZERO_TOLERANCE && !isNaN(zFree) && isFinite(zFree)) {
-                    const zValue = -zFree / zCoeff;
-                    if (!isNaN(zValue) && isFinite(zValue) && !isTracingLimited(opts, 'z', zValue)) {
-                        row.push(zValue);
-                        allZ.push(zValue);
-                        continue;
-                    }
-                }
-            } catch (err) { }
-
-            row.push(null);
+            xGrid.push(rowX);
+            yGrid.push(rowY);
+            zGrid.push(rowZ);
         }
-        zGrid.push(row);
+
+        if (solvedValues.length === 0) {
+            continue;
+        }
+
+        const solvedDomainKey = getAxisDomainKey(solvedAxis);
+        if (!providedDomains[solvedAxis]) {
+            const solvedMin = Math.min(...solvedValues);
+            const solvedMax = Math.max(...solvedValues);
+            const margin = (solvedMax - solvedMin) * 0.1 || 0.5;
+            opts[solvedDomainKey] = [solvedMin - margin, solvedMax + margin];
+        }
+
+        let latexText = '';
+        try {
+            const explicitNode = math.simplify(`-(${freeNode.toString()}) / (${coeffNode.toString()})`);
+            latexText = `${solvedAxis} = ${explicitNode.toTex()}`;
+        } catch (err) { }
+
+        return {
+            type: 'surface',
+            plotData: { x: xGrid, y: yGrid, z: zGrid },
+            latexText,
+            solvedAxis
+        };
     }
 
-    if (allZ.length === 0) {
-        return null;
-    }
-
-    if (!opts.zDomain) {
-        const zMin = Math.min(...allZ);
-        const zMax = Math.max(...allZ);
-        const margin = (zMax - zMin) * 0.1 || 0.5;
-        opts.zDomain = [zMin - margin, zMax + margin];
-    }
-
-    let latexText = '';
-    try {
-        const explicitNode = math.simplify(`-(${zFreeNode.toString()}) / (${zCoeffNode.toString()})`);
-        latexText = `z = ${explicitNode.toTex()}`;
-    } catch (err) { }
-
-    return {
-        type: 'surface',
-        plotData: { x: xGrid, y: yGrid, z: zGrid },
-        latexText
-    };
+    return null;
 }
 
 function sampleExplicitPlaneCurve3d(rhsExpr, independentVar, dependentVar, opts) {
@@ -1777,7 +1849,7 @@ function buildPlot3dScene(context, opts) {
         const rhs = semantics.rhs;
         const [xVar, yVar, zVar] = semantics.coordVars;
         const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
-        const projectedSurface = buildExplicitSurfaceFromLinearZ(combined, opts);
+        const projectedSurface = buildExplicitSurfaceFromLinearAxis(combined, opts, providedDomains);
 
         if (projectedSurface) {
             try {
@@ -2207,6 +2279,93 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 ? resolvePlot3dTraceBounds(evolutionVar, domainInfo)
                 : null;
             const evolutionDomain = hasEvolutionSweep ? domainInfo.evolutionDomain : null;
+            const domainsLocked = Boolean(domainInfo.providedDomains.x && domainInfo.providedDomains.y && domainInfo.providedDomains.z);
+            const needsDomainPrepass = !domainsLocked;
+
+            if (!needsDomainPrepass) {
+                if (baseOpts.aspectmode === 'manual' && !baseOpts.aspectratio) {
+                    baseOpts.aspectratio = buildAspectRatioFromDomains(baseOpts.xDomain, baseOpts.yDomain, baseOpts.zDomain);
+                }
+
+                let reusePlot = false;
+                for (let f = 0; f < totalFrames; f++) {
+                    const frameOpts = clonePlot3dOptions(baseOpts);
+                    const evolutionProgress = totalFrames === 1 ? 1 : (f + 1) / totalFrames;
+
+                    if (cameraAnimationRequested) {
+                        const cameraProgress = frameOpts.animationMode === 'orbit'
+                            ? f / totalFrames
+                            : (totalFrames === 1 ? 0 : f / (totalFrames - 1));
+                        frameOpts.camera = buildAnimationCamera(
+                            cameraProgress,
+                            frameOpts.animationMode,
+                            frameOpts.animationAxis,
+                            frameOpts.animationAngle
+                        );
+                    }
+
+                    let evolutionValue = null;
+                    if (isTracingMode && traceBounds) {
+                        frameOpts.tracingLimit = traceBounds[0] + evolutionProgress * (traceBounds[1] - traceBounds[0]);
+                    } else if (hasEvolutionSweep && evolutionDomain) {
+                        evolutionValue = evolutionDomain[0] + evolutionProgress * (evolutionDomain[1] - evolutionDomain[0]);
+                        frameOpts.evalScope = { [evolutionVar]: evolutionValue };
+                    }
+
+                    const scene = buildPlot3dScene(plotContext, frameOpts);
+                    if (!scene.success) {
+                        return { success: false, error: scene.error };
+                    }
+
+                    const frameLatex = hasEvolutionSweep
+                        ? appendEvolutionLatex(scene.latexText, evolutionVar, evolutionValue)
+                        : scene.latexText;
+
+                    const renderResult = await page.evaluate((lat, t, pData, opt, shouldReusePlot) => {
+                        return window.renderGraph3d(lat, t, pData, opt, shouldReusePlot);
+                    }, frameLatex, scene.type, scene.plotData, frameOpts, reusePlot);
+
+                    if (!renderResult.success) {
+                        return { success: false, error: renderResult.error };
+                    }
+
+                    if (cameraAnimationRequested) {
+                        await page.evaluate((nextCamera) => {
+                            return window.updateGraph3dCamera(nextCamera);
+                        }, frameOpts.camera);
+                    }
+
+                    const card = await page.$('#card');
+                    if (!card) {
+                        return { success: false, error: 'Card element not found in DOM.' };
+                    }
+
+                    const buf = await card.screenshot({ type: 'jpeg', quality: 85 });
+                    frameBuffers.push(buf);
+                    reusePlot = true;
+                }
+
+                try {
+                    const videoBuf = await compileVideo(frameBuffers, DEFAULT_ANIMATION_FPS);
+                    return {
+                        success: true,
+                        data: videoBuf.toString('base64'),
+                        mimeType: 'video/mp4',
+                        filename: 'plot3d.mp4',
+                        source: 'local-plot3d-anim',
+                        isAnimation: true
+                    };
+                } catch (ffmpegErr) {
+                    console.warn('Failed to compile video with ffmpeg:', ffmpegErr.message);
+                    return {
+                        success: true,
+                        data: frameBuffers[0].toString('base64'),
+                        mimeType: 'image/jpeg',
+                        filename: 'plot3d_fallback.jpg',
+                        source: 'local-plot3d-fallback'
+                    };
+                }
+            }
 
             const scenes = [];
             let globalXMin = Infinity, globalXMax = -Infinity;
@@ -2264,17 +2423,10 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
             let finalAspectRatio = baseOpts.aspectratio;
             if (baseOpts.aspectmode === 'manual' && !finalAspectRatio) {
-                const dx = Math.abs(finalXDomain[1] - finalXDomain[0]) || 1;
-                const dy = Math.abs(finalYDomain[1] - finalYDomain[0]) || 1;
-                const dz = Math.abs(finalZDomain[1] - finalZDomain[0]) || 1;
-                const maxSpan = Math.max(dx, dy, dz);
-                finalAspectRatio = {
-                    x: dx / maxSpan,
-                    y: dy / maxSpan,
-                    z: dz / maxSpan
-                };
+                finalAspectRatio = buildAspectRatioFromDomains(finalXDomain, finalYDomain, finalZDomain);
             }
 
+            let reusePlot = false;
             for (const item of scenes) {
                 if (finalXDomain) item.frameOpts.xDomain = finalXDomain;
                 if (finalYDomain) item.frameOpts.yDomain = finalYDomain;
@@ -2285,12 +2437,18 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                     ? appendEvolutionLatex(item.scene.latexText, evolutionVar, item.evolutionValue)
                     : item.scene.latexText;
 
-                const renderResult = await page.evaluate((lat, t, pData, opt) => {
-                    return window.renderGraph3d(lat, t, pData, opt);
-                }, frameLatex, item.scene.type, item.scene.plotData, item.frameOpts);
+                const renderResult = await page.evaluate((lat, t, pData, opt, shouldReusePlot) => {
+                    return window.renderGraph3d(lat, t, pData, opt, shouldReusePlot);
+                }, frameLatex, item.scene.type, item.scene.plotData, item.frameOpts, reusePlot);
 
                 if (!renderResult.success) {
                     return { success: false, error: renderResult.error };
+                }
+
+                if (cameraAnimationRequested) {
+                    await page.evaluate((nextCamera) => {
+                        return window.updateGraph3dCamera(nextCamera);
+                    }, item.frameOpts.camera);
                 }
 
                 const card = await page.$('#card');
@@ -2300,6 +2458,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
                 const buf = await card.screenshot({ type: 'jpeg', quality: 85 });
                 frameBuffers.push(buf);
+                reusePlot = true;
             }
 
             try {
@@ -2331,15 +2490,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         }
 
         if (opts.aspectmode === 'manual' && !opts.aspectratio) {
-            const dx = Math.abs(opts.xDomain[1] - opts.xDomain[0]) || 1;
-            const dy = Math.abs(opts.yDomain[1] - opts.yDomain[0]) || 1;
-            const dz = Math.abs(opts.zDomain[1] - opts.zDomain[0]) || 1;
-            const maxSpan = Math.max(dx, dy, dz);
-            opts.aspectratio = {
-                x: dx / maxSpan,
-                y: dy / maxSpan,
-                z: dz / maxSpan
-            };
+            opts.aspectratio = buildAspectRatioFromDomains(opts.xDomain, opts.yDomain, opts.zDomain);
         }
 
         const renderResult = await page.evaluate((lat, t, pData, opt) => {
@@ -2424,5 +2575,9 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
 module.exports = {
     renderPlot3d,
-    compileVideo
+    compileVideo,
+    _internals: {
+        buildExplicitSurfaceFromLinearAxis,
+        buildPlot3dScene
+    }
 };

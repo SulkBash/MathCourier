@@ -792,19 +792,25 @@
       ctx.restore();
     }
 
-    async function renderGraph3d(latex, type, data, options) {
+    async function renderGraph3d(latex, type, data, options, reusePlot = false) {
       const mathDiv = document.getElementById('math');
       try {
         await ensurePlotlyLoaded();
 
         if (latex) {
-          katex.render(latex, mathDiv, {
-            displayMode: true,
-            throwOnError: true,
-            trust: false
-          });
+          if (!reusePlot || mathDiv.dataset.lastLatex !== latex) {
+            katex.render(latex, mathDiv, {
+              displayMode: true,
+              throwOnError: true,
+              trust: false
+            });
+            mathDiv.dataset.lastLatex = latex;
+          }
         } else {
-          mathDiv.innerHTML = '';
+          if (mathDiv.innerHTML) {
+            mathDiv.innerHTML = '';
+          }
+          delete mathDiv.dataset.lastLatex;
         }
 
         // Remove 2D canvas if it exists
@@ -830,7 +836,7 @@
         container.style.width = renderWidth + 'px';
         container.style.height = (options.height || 450) + 'px';
 
-        await drawGraph3d(container, type, data, renderOptions);
+        await drawGraph3d(container, type, data, renderOptions, reusePlot);
         return { success: true };
       } catch (err) {
         return { success: false, error: err.message };
@@ -871,7 +877,29 @@
       };
     }
 
-    function drawGraph3d(container, type, data, options) {
+    function waitForStablePaint(frameCount = 2) {
+      return new Promise((resolve) => {
+        function step(remaining) {
+          if (remaining <= 0) {
+            resolve();
+            return;
+          }
+          requestAnimationFrame(() => step(remaining - 1));
+        }
+        step(frameCount);
+      });
+    }
+
+    function updateGraph3dCamera(camera) {
+      const container = document.getElementById('plotly-graph');
+      if (!container || typeof Plotly === 'undefined') {
+        throw new Error('Plotly graph is not ready.');
+      }
+
+      return Plotly.relayout(container, { 'scene.camera': camera }).then(() => waitForStablePaint(2));
+    }
+
+    function drawGraph3d(container, type, data, options, reusePlot = false) {
       if (typeof Plotly === 'undefined') {
         throw new Error('Plotly.js is not loaded.');
       }
@@ -1011,7 +1039,10 @@
       };
 
       const traces = Array.isArray(trace) ? trace : [trace];
-      return Plotly.newPlot(container, traces, layout, { displayModeBar: false });
+      if (reusePlot && container && container.data) {
+        return Plotly.react(container, traces, layout, { displayModeBar: false }).then(() => waitForStablePaint(2));
+      }
+      return Plotly.newPlot(container, traces, layout, { displayModeBar: false }).then(() => waitForStablePaint(2));
     }
   </script>
 </body>
