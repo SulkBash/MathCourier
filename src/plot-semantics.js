@@ -1,5 +1,6 @@
 const math = require('./math');
 const { splitTopLevel } = require('./utils');
+const { extractInlineDependencies } = require('./inline-calculus');
 
 const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
 
@@ -164,9 +165,53 @@ function parseNamedVectorField(expr, expectedDimension = null) {
 }
 
 function extractExpressionVariables(expr) {
+    function collectPlainVariables(source) {
+        try {
+            const vars = new Set();
+            math.parse(String(source || '')).traverse((node, path, parent) => {
+                if (!node || !node.isSymbolNode) {
+                    return;
+                }
+
+                if (parent && parent.isFunctionNode && parent.fn === node) {
+                    return;
+                }
+
+                const name = node.name;
+                if (!name || IGNORED_SYMBOLS.has(name) || math[name]) {
+                    return;
+                }
+
+                vars.add(name);
+            });
+            return Array.from(vars);
+        } catch (_) {
+            return [];
+        }
+    }
+
+    function buildInlineArgDescriptors(args = []) {
+        return args.map((arg) => ({
+            kind: (arg && typeof arg.value === 'string') ? 'string' : 'expr',
+            source: String((arg && typeof arg.value === 'string') ? arg.value : arg.toString())
+        }));
+    }
+
     try {
         const vars = new Set();
         math.parse(String(expr || '')).traverse((node, path, parent) => {
+            if (node && node.isFunctionNode && node.fn && node.fn.isSymbolNode) {
+                const helperName = node.fn.name;
+                if (helperName === 'deriv' || helperName === 'integ') {
+                    const helperDeps = extractInlineDependencies(
+                        helperName,
+                        buildInlineArgDescriptors(node.args),
+                        collectPlainVariables
+                    );
+                    helperDeps.forEach((name) => vars.add(name));
+                }
+            }
+
             if (!node || !node.isSymbolNode) {
                 return;
             }

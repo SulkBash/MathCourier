@@ -8,6 +8,7 @@
     "test": "node tests/test-render.js",
     "test:parser": "node tests/test-parser.js",
     "test:calculus": "node tests/test-calculus-safety.js",
+    "test:inline": "node tests/test-inline-calculus.js",
     "test:vector": "node tests/test-vector.js",
     "test:matrix": "node tests/test-matrix.js",
     "test:help": "node tests/test-help.js",

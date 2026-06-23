@@ -58,13 +58,21 @@ assert(intHelp.includes('scalar fields or vector fields'));
 assert(intHelp.includes('!int x*y*z kind:volume x:[0, 1] y:[0, 2] z:[0, 3]'));
 console.log('PASS: Integration help covers safer vars guidance and field-integral examples');
 
-// Test 9: Help text detection for bot self-messages
+// Test 9: Inline helper help is discoverable
+const helperHelp = getHelp('deriv');
+assert(helperHelp.includes('*Inline Calculus Helpers*'));
+assert(helperHelp.includes('deriv("x^3*y^2", "vars:{x:2, y}")'));
+assert(helperHelp.includes('integ("x*y*z", "kind:volume", "x:[0, 1]", "y:[0, 2]", "z:[0, 3]")'));
+console.log('PASS: Inline helper help is available through deriv/integ aliases');
+
+// Test 10: Help text detection for bot self-messages
 assert.strictEqual(getHelp.isHelpText(getHelp()), true);
 assert.strictEqual(getHelp.isHelpText(getHelp('tikz')), true);
+assert.strictEqual(getHelp.isHelpText(getHelp('helpers')), true);
 assert.strictEqual(getHelp.isHelpText('!help plot'), false);
 console.log('PASS: Help text detection works for general and detailed help');
 
-// Test 10: Invalid command fallback
+// Test 11: Invalid command fallback
 const invalidHelp = getHelp('!nonexistent');
 assert(invalidHelp.includes('Command not found: !nonexistent'));
 console.log('PASS: Invalid command fallback works');

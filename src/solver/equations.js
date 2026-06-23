@@ -1,8 +1,50 @@
 const math = require('../math');
+const { extractInlineDependencies } = require('../inline-calculus');
 
 function extractVariables(node) {
+    function collectPlainVariables(source) {
+        try {
+            const vars = new Set();
+            math.parse(String(source || '')).traverse((child, path, parent) => {
+                if (!child || !child.isSymbolNode) {
+                    return;
+                }
+                if (parent && parent.isFunctionNode && parent.fn === child) {
+                    return;
+                }
+                const name = child.name;
+                const ignored = ['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity'];
+                if (!ignored.includes(name) && !math[name]) {
+                    vars.add(name);
+                }
+            });
+            return Array.from(vars);
+        } catch (_) {
+            return [];
+        }
+    }
+
+    function buildInlineArgDescriptors(args = []) {
+        return args.map((arg) => ({
+            kind: (arg && typeof arg.value === 'string') ? 'string' : 'expr',
+            source: String((arg && typeof arg.value === 'string') ? arg.value : arg.toString())
+        }));
+    }
+
     const vars = new Set();
     node.traverse(function (child, path, parent) {
+        if (child && child.isFunctionNode && child.fn && child.fn.isSymbolNode) {
+            const helperName = child.fn.name;
+            if (helperName === 'deriv' || helperName === 'integ') {
+                const helperDeps = extractInlineDependencies(
+                    helperName,
+                    buildInlineArgDescriptors(child.args),
+                    collectPlainVariables
+                );
+                helperDeps.forEach((name) => vars.add(name));
+            }
+        }
+
         if (child.isSymbolNode) {
             // Ignore function names when they are the function being called
             if (parent && parent.isFunctionNode && parent.fn === child) {

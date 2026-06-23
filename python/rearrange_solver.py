@@ -6,25 +6,6 @@ from math_utils import transformations, get_base_local_dict
 
 local_dict = get_base_local_dict()
 
-def deriv_impl(expr, var, val):
-    expr_str = str(expr).strip("'\"").replace('^', '**')
-    var_str = str(var).strip("'\"")
-    expr_parsed = parse_expr(expr_str, local_dict=local_dict, transformations=transformations)
-    var_parsed = sympy.Symbol(var_str)
-    diff_expr = sympy.diff(expr_parsed, var_parsed)
-    return diff_expr.subs(var_parsed, val)
-
-def integ_impl(expr, var, lower, upper):
-    expr_str = str(expr).strip("'\"").replace('^', '**')
-    var_str = str(var).strip("'\"")
-    expr_parsed = parse_expr(expr_str, local_dict=local_dict, transformations=transformations)
-    var_parsed = sympy.Symbol(var_str)
-    int_expr = sympy.integrate(expr_parsed, (var_parsed, lower, upper))
-    return int_expr
-
-local_dict["deriv"] = deriv_impl
-local_dict["integ"] = integ_impl
-
 def main():
     try:
         input_data = json.loads(sys.stdin.read())
