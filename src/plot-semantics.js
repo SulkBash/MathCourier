@@ -1,6 +1,6 @@
 const math = require('./math');
 const { splitTopLevel } = require('./utils');
-const { extractInlineDependencies } = require('./inline-calculus');
+const { extractInlineDependencies, VECTOR_INLINE_HELPERS } = require('./inline-calculus');
 
 const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
 
@@ -187,7 +187,7 @@ function extractExpressionVariables(expr) {
 
         if (node.isFunctionNode && node.fn && node.fn.isSymbolNode) {
             const helperName = node.fn.name;
-            if (helperName === 'deriv' || helperName === 'integ') {
+            if (helperName === 'deriv' || helperName === 'integ' || VECTOR_INLINE_HELPERS.has(helperName)) {
                 const helperDeps = extractInlineDependencies(
                     helperName,
                     buildInlineArgDescriptors(node.args),
@@ -198,7 +198,7 @@ function extractExpressionVariables(expr) {
                         vars.add(name);
                     }
                 });
-                return; // Stop traversing children of this function call node (deriv/integ)
+                return;
             }
         }
 
@@ -511,6 +511,21 @@ function analyze3dPlot(expr, options = {}) {
                 rhs: equation.rhs,
                 paramVars,
                 coordSystem
+            };
+        }
+
+        if (equation && equation.lhs.toLowerCase() !== 'z') {
+            return {
+                family: 'surface-implicit',
+                lhs: equation.lhs,
+                rhs: equation.rhs,
+                coordVars: inferCoordinateVariables({
+                    explicitVars,
+                    rangeNames,
+                    exprVars,
+                    defaults: ['x', 'y', 'z']
+                }),
+                coordSystem: inferCoordinateSystem(explicitVars, text)
             };
         }
 

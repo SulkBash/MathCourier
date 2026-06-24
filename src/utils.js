@@ -30,7 +30,7 @@ function splitTopLevel(text, delimiter = ',') {
             continue;
         }
 
-        if (char === '"' || char === '\'') {
+        if (char === '"' || (char === '\'' && !(index > 0 && /^[a-zA-Z0-9_'}\)]/.test(text[index - 1])))) {
             inQuotes = true;
             quoteChar = char;
             current += char;
@@ -117,6 +117,21 @@ function formatVarToTex(variableName) {
     return variableName;
 }
 
+const INLINE_BRACKET_HELPERS = [
+    'gradx',
+    'grady',
+    'gradz',
+    'curlx',
+    'curly',
+    'curlz',
+    'deriv',
+    'integ',
+    'grad',
+    'curl',
+    'lap',
+    'div'
+];
+
 function preprocessCalculusHelpers(input) {
     if (typeof input !== 'string') return input;
 
@@ -124,12 +139,10 @@ function preprocessCalculusHelpers(input) {
     let i = 0;
 
     while (i < input.length) {
-        const isDeriv = input.startsWith('deriv[', i);
-        const isInteg = input.startsWith('integ[', i);
+        const helperName = INLINE_BRACKET_HELPERS.find((name) => input.startsWith(`${name}[`, i));
 
-        if (isDeriv || isInteg) {
-            const helperName = isDeriv ? 'deriv' : 'integ';
-            const openBracketIdx = i + 5; // index of '['
+        if (helperName) {
+            const openBracketIdx = i + helperName.length;
 
             // Scan for the matching close bracket ']'
             let depth = 1;
@@ -155,7 +168,7 @@ function preprocessCalculusHelpers(input) {
                     continue;
                 }
 
-                if (char === '"' || char === '\'') {
+                if (char === '"' || (char === '\'' && !(j > openBracketIdx + 1 && /^[a-zA-Z0-9_'}\)]/.test(input[j - 1])))) {
                     inQuotes = true;
                     quoteChar = char;
                     j++;

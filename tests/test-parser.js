@@ -58,7 +58,7 @@ runTest('Nesting safety with parens, brackets, braces, and quotes', () => {
     });
 });
 
-runTest('Spec Example: !diff', () => {
+runTest('Spec Example: derivative-style vars payload', () => {
     const input = 'x^3*y^2 vars:{x:2, y}';
     const res = parseCommandSyntax(input);
     assert(res.success, 'Should succeed');
@@ -106,13 +106,13 @@ runTest('Detect multiple candidate bodies', () => {
 runTest('Vars normalization: single and grouped', () => {
     // Single variable
     const p1 = parseCommandSyntax('sin(t) vars:t');
-    const n1 = normalizeAndValidate(p1, 'diff');
+    const n1 = normalizeAndValidate(p1, 'deriv');
     assert(n1.success, 'Normalization 1 should succeed');
     assertDeepEqual(n1.variables, [{ name: 't', order: 1 }]);
 
     // Grouped variables with orders
     const p2 = parseCommandSyntax('x^3*y^2 vars:{x:2, y}');
-    const n2 = normalizeAndValidate(p2, 'diff');
+    const n2 = normalizeAndValidate(p2, 'deriv');
     assert(n2.success, 'Normalization 2 should succeed');
     assertDeepEqual(n2.variables, [
         { name: 'x', order: 2 },
@@ -122,7 +122,7 @@ runTest('Vars normalization: single and grouped', () => {
 
 runTest('Vars validation rejects invalid or command-mismatched orders', () => {
     const invalidOrderParsed = parseCommandSyntax('x^2 vars:{x:0}');
-    const invalidOrderNormalized = normalizeAndValidate(invalidOrderParsed, 'diff');
+    const invalidOrderNormalized = normalizeAndValidate(invalidOrderParsed, 'deriv');
     assert(!invalidOrderNormalized.success, 'Should fail for zero-order derivative');
     assert(
         invalidOrderNormalized.errors.some(e => e.includes('positive integer')),
@@ -130,11 +130,11 @@ runTest('Vars validation rejects invalid or command-mismatched orders', () => {
     );
 
     const intOrderParsed = parseCommandSyntax('x^2 vars:{x:2}');
-    const intOrderNormalized = normalizeAndValidate(intOrderParsed, 'int');
-    assert(!intOrderNormalized.success, 'Should fail for derivative-style order markers in !int');
+    const intOrderNormalized = normalizeAndValidate(intOrderParsed, 'solve');
+    assert(!intOrderNormalized.success, 'Should fail for derivative-style order markers in !solve');
     assert(
         intOrderNormalized.errors.some(e => e.includes('only supports order markers')),
-        'Missing !diff-only order marker error'
+        'Missing derivative-helper-only order marker error'
     );
 });
 
@@ -164,13 +164,12 @@ runTest('Ranges evaluation and normalization', () => {
     assert(n3.errors.some(e => e.includes('does not evaluate to a finite number')), 'Missing non-finite error');
 });
 
-runTest('View, Mode, and Kind enum validation', () => {
+runTest('View and Kind enum validation for plots', () => {
     // Valid enums
-    const p1 = parseCommandSyntax('sin(x) view:3d mode:num kind:surface');
+    const p1 = parseCommandSyntax('sin(x) view:3d kind:surface');
     const n1 = normalizeAndValidate(p1, 'plot');
     assert(n1.success, n1.errors.join(', '));
     assert(n1.options.view === '3d');
-    assert(n1.options.mode === 'num');
     assert(n1.options.kind === 'surface');
 
     // Invalid view enum
@@ -184,6 +183,18 @@ runTest('View, Mode, and Kind enum validation', () => {
     const n3 = normalizeAndValidate(p3, 'plot');
     assert(!n3.success, 'Should fail for kind:surface in 2D');
     assert(n3.errors.some(e => e.includes('Invalid kind')), 'Missing kind validation error');
+});
+
+runTest('Mode validation is command-specific', () => {
+    const odeParsed = parseCommandSyntax('dy/dx = -y ic:{y(0)=1} mode:num');
+    const odeNormalized = normalizeAndValidate(odeParsed, 'ode');
+    assert(odeNormalized.success, odeNormalized.errors.join(', '));
+    assert(odeNormalized.options.mode === 'num');
+
+    const plotParsed = parseCommandSyntax('sin(x) mode:num');
+    const plotNormalized = normalizeAndValidate(plotParsed, 'plot');
+    assert(!plotNormalized.success, 'Should reject mode:num for !plot');
+    assert(plotNormalized.errors.some(e => e.includes('not supported')), 'Missing unsupported plot mode error');
 });
 
 runTest('Solve mode validation accepts symbolic and expression modes', () => {
@@ -300,17 +311,17 @@ runTest('Display range options (xlim, ylim, zlim) validation and normalization',
 
 runTest('Dep option validation and normalization', () => {
     const p1 = parseCommandSyntax('x^2 + y^2 = 4 dep:y');
-    const n1 = normalizeAndValidate(p1, 'diff');
+    const n1 = normalizeAndValidate(p1, 'deriv');
     assert(n1.success, n1.errors.join(', '));
     assertDeepEqual(n1.options.dep, ['y']);
 
     const p2 = parseCommandSyntax('x^2 + y^2 + z^2 = 9 dep:{y, z}');
-    const n2 = normalizeAndValidate(p2, 'diff');
+    const n2 = normalizeAndValidate(p2, 'deriv');
     assert(n2.success, n2.errors.join(', '));
     assertDeepEqual(n2.options.dep, ['y', 'z']);
 
     const p3 = parseCommandSyntax('x^2 + y^2 = 4 dep:y:2');
-    const n3 = normalizeAndValidate(p3, 'diff');
+    const n3 = normalizeAndValidate(p3, 'deriv');
     assert(!n3.success, 'Should fail for invalid dependent variable syntax');
 });
 

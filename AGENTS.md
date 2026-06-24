@@ -38,7 +38,6 @@ src/
   commands/
     latex.js            - Unified !latex router for formulas, chemfig, and TikZ
     plot.js             - Unified !plot handler, including 3D via view:3d
-    plot3d.js           - Legacy compatibility wrapper for deprecated !plot3d syntax
     solve.js            - Unified !solve router for algebra, calculus, matrices, ODEs, and PDEs
     ode.js              - Internal ODE sub-route used by !solve
     pde.js              - Internal PDE sub-route used by !solve
@@ -102,11 +101,11 @@ bot.js
     -> dispatches to command handler
 
 Commands
-    !latex / !tex / !chem / !tikz / $$...$$
+    !latex / $$...$$
         -> commands/latex.js -> renderer.render() / renderChem() / renderTikz()
     !plot
         -> commands/plot.js -> renderer.renderPlot() / renderer.renderPlot3d()
-    !solve / legacy math aliases
+    !solve
         -> commands/solve.js
         -> auto-detects equation vs matrix vs ODE vs PDE vs helper route
         -> solver.* and renderer.*
@@ -139,9 +138,9 @@ All Python subprocesses are called by `src/solver/subprocess.js` via `runSubproc
 
 | Command | Aliases | Handler | Module |
 |---|---|---|---|
-| `!latex <content>` | `!tex`, `!chem`, `!chemfig`, `!tikz`, bare `\begin{tikzpicture}`, inline `$$...$$` auto-render | `handleLatexCommand()` / `renderMixed()` | `src/commands/latex.js`, `bot.js` |
-| `!plot <expr> [options]` | `!plot3d` compatibility wrapper | `handlePlotCommand()` | `src/commands/plot.js` |
-| `!solve <expression> [options]` | `!diff`, `!int`, `!grad`, `!lap`, `!div`, `!curl`, `!matrix`, `!ode`, `!pde` | `handleSolveCommand()` | `src/commands/solve.js` |
+| `!latex <content>` | bare `\begin{tikzpicture}`, inline `$$...$$` auto-render | `handleLatexCommand()` / `renderMixed()` | `src/commands/latex.js`, `bot.js` |
+| `!plot <expr> [options]` | none | `handlePlotCommand()` | `src/commands/plot.js` |
+| `!solve <expression> [options]` | none | `handleSolveCommand()` | `src/commands/solve.js` |
 | `!help [topic]` | none | `getHelp()` | `src/commands/help.js` |
 
 ---
@@ -226,7 +225,7 @@ Do not add a new bot entry path that bypasses `handleCommandMessage()`.
 `src/commands/solve.js` is the unified router for algebra, matrices, ODEs, PDEs, and helper-based math.
 
 - Relational solving takes precedence over matrix evaluation.
-- Bare tuples should not be guessed as vector operations inside `!solve`; use a helper or explicit route.
+- Bare tuples should not be guessed as vector operations inside `!solve`; use a helper such as `div[...]` or `curl[...]`.
 - When updating routing behavior, keep `command_refactor.md`, help text, and router tests in sync.
 
 ### 9. QuickLaTeX SSRF protections are mandatory
@@ -330,7 +329,7 @@ Prefer extending the unified command surface instead of adding new top-level pre
 3. If shared solver logic is needed, add it under `src/solver/` and export it from `src/solver/index.js`.
 4. If Python is needed, add a script under `python/` that follows the JSON subprocess contract and call it through `runSubprocess()` in `src/solver/subprocess.js`.
 5. Update `src/commands/help.js` in the same change.
-6. Add focused tests under `tests/`, especially router coverage when auto-detection or mode overrides are involved.
+6. Add focused tests under `tests/`, especially router coverage when auto-detection or ambiguity handling are involved.
 
 Only add a brand-new top-level command if the product direction explicitly changes away from the unified `!latex` / `!plot` / `!solve` architecture.
 
@@ -345,7 +344,7 @@ Only add a brand-new top-level command if the product direction explicitly chang
 - Animated 3D renders depend on `ffmpeg`; if you are debugging animation output, check whether the environment has it installed.
 - The KaTeX HTML file written into `node_modules/katex/dist/render_temp.html` is generated at startup. Do not edit it directly.
 - Matrix literals use semicolon-separated rows: `[1, 2; 3, 4]`.
-- Bare tuples under `!solve` are intentionally ambiguous; use helpers like `curl[...]` or force a route with `mode:...`.
+- Bare tuples under `!solve` are intentionally ambiguous; use helpers like `curl[...]` or `div[...]`.
 - `src/solver/subprocess.js` calls `python`, not `python3`. Make sure `python` resolves to Python 3.
 - `python/math_utils.py` pre-maps uppercase `A-Z` to `sympy.Symbol` so SymPy does not reinterpret letters like `E` and `I`.
 - Delete `.wwebjs_auth/` to force a fresh QR scan.

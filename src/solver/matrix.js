@@ -1,5 +1,6 @@
 const math = require('../math');
 const { splitTopLevel, buildLatex } = require('../utils');
+const { formatExactScalarTex, simplifyRealVectorDirection } = require('./exact-format');
 
 const ZERO_EPSILON = 1e-10;
 
@@ -118,29 +119,11 @@ function toMatrixRows(matrixLike, options = {}) {
 
 function formatScalarTex(value) {
     const normalized = normalizeScalar(value);
-
-    if (typeof normalized === 'number') {
-        if (!Number.isFinite(normalized)) {
-            if (normalized === Infinity) {
-                return '\\infty';
-            }
-            if (normalized === -Infinity) {
-                return '-\\infty';
-            }
-            return '\\text{NaN}';
-        }
-    }
-
-    try {
-        const formatted = math.format(normalized, {
-            precision: 12,
-            lowerExp: -4,
-            upperExp: 12
-        });
-        return math.parse(formatted).toTex();
-    } catch (_) {
-        return String(normalized);
-    }
+    return formatExactScalarTex(normalized, {
+        maxDenominator: 64,
+        tolerance: 1e-8,
+        precision: 12
+    });
 }
 
 function formatMatrixTexFromRows(rows) {
@@ -360,7 +343,14 @@ function computeEigenDecomposition(matrixLike) {
             : toMatrixRows(result.values, { allowVector: true }).flat().map(normalizeScalar),
         eigenvectors: (result.eigenvectors || []).map((entry) => ({
             value: normalizeScalar(entry.value),
-            vector: toMatrixRows(entry.vector, { allowVector: true }).flat().map(normalizeScalar)
+            vector: (() => {
+                const normalizedVector = toMatrixRows(entry.vector, { allowVector: true }).flat().map(normalizeScalar);
+                return simplifyRealVectorDirection(normalizedVector, {
+                    tolerance: 1e-6,
+                    maxDenominator: 16,
+                    maxCoefficient: 64
+                }) || normalizedVector;
+            })()
         }))
     };
 }

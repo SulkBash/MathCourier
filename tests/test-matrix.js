@@ -25,7 +25,7 @@ const cases = [
         verify: (result) => {
             assert.strictEqual(result.success, true);
             assert.ok(result.latex.includes('^{-1}'));
-            assert.ok(result.latex.includes('\\begin{bmatrix} -2 & 1 \\\\ 1.5 & -0.5 \\end{bmatrix}'));
+            assert.ok(result.latex.includes('\\begin{bmatrix} -2 & 1 \\\\ \\frac{3}{2} & -\\frac{1}{2} \\end{bmatrix}'));
         }
     },
     {
@@ -39,6 +39,19 @@ const cases = [
             assert.ok(result.latex.includes('\\mathbf{v}_{2}'));
             assert.ok(result.latex.includes('-1'));
             assert.ok(result.latex.includes('3'));
+        }
+    },
+    {
+        name: 'Eigenvectors prefer exact direction vectors when available',
+        run: () => solver.solveMatrixExpression('eigen([1, 2, 2; 2, 1, 2; 2, 2, 1])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('\\lambda_{3} &= 5'));
+            assert.ok(result.latex.includes('\\begin{bmatrix} 1 \\\\ 1 \\\\ 1 \\end{bmatrix}'));
+            assert.ok(result.latex.includes('\\begin{bmatrix} 1 \\\\ -1 \\\\ 0 \\end{bmatrix}'));
+            assert.ok(result.latex.includes('\\begin{bmatrix} 1 \\\\ 1 \\\\ -2 \\end{bmatrix}'));
+            assert.ok(!result.latex.includes('0.57735026919'));
+            assert.ok(!result.latex.includes('0.707106781187'));
         }
     },
     {

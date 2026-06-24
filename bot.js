@@ -101,23 +101,6 @@ const COMMAND_REGISTRY = {
     solve: { handler: handleSolveCommand }
 };
 
-const LEGACY_ALIASES = {
-    tex: { command: 'latex' },
-    chem: { command: 'latex', injectMode: 'chem' },
-    chemfig: { command: 'latex', injectMode: 'chem' },
-    tikz: { command: 'latex', injectMode: 'tikz' },
-    diff: { command: 'solve', prefixBody: 'diff' },
-    int: { command: 'solve', prefixBody: 'int' },
-    grad: { command: 'solve', prefixBody: 'grad' },
-    lap: { command: 'solve', prefixBody: 'lap' },
-    div: { command: 'solve', prefixBody: 'div' },
-    curl: { command: 'solve', prefixBody: 'curl' },
-    matrix: { command: 'solve', prefixBody: 'matrix' },
-    desp: { command: 'solve' },
-    ode: { command: 'solve' },
-    pde: { command: 'solve' }
-};
-
 async function executeRegistryCommand(commandName, input) {
     const cmd = COMMAND_REGISTRY[commandName];
     if (!cmd) return { success: false, error: 'Unknown command' };
@@ -132,25 +115,6 @@ async function executeRegistryCommand(commandName, input) {
 function appendOption(input, optionToken) {
     const trimmedInput = String(input || '').trim();
     return trimmedInput ? `${trimmedInput} ${optionToken}` : optionToken;
-}
-
-function rewriteLegacyAlias(aliasConfig, input) {
-    let rewrittenInput = String(input || '').trim();
-
-    if (aliasConfig.prefixBody) {
-        rewrittenInput = rewrittenInput
-            ? `${aliasConfig.prefixBody} ${rewrittenInput}`
-            : aliasConfig.prefixBody;
-    }
-
-    if (aliasConfig.injectMode) {
-        rewrittenInput = appendOption(rewrittenInput, `mode:${aliasConfig.injectMode}`);
-    }
-
-    return {
-        command: aliasConfig.command,
-        input: rewrittenInput
-    };
 }
 
 function extractBangCommand(body) {
@@ -173,16 +137,6 @@ function resolveCommandRoute(body) {
                 triggered: true,
                 mode: invocation.command,
                 input: invocation.input
-            };
-        }
-
-        const aliasConfig = LEGACY_ALIASES[invocation.command];
-        if (aliasConfig) {
-            const rewritten = rewriteLegacyAlias(aliasConfig, invocation.input);
-            return {
-                triggered: true,
-                mode: rewritten.command,
-                input: rewritten.input
             };
         }
     }
@@ -232,6 +186,17 @@ async function handleCommandMessage(msg) {
             await msg.reply(helpText(targetCmd));
         } catch (err) {
             console.error('Failed to send help message:', err.message);
+        }
+        return;
+    }
+
+    if (invocation && !COMMAND_REGISTRY[invocation.command]) {
+        try {
+            await msg.reply(
+                `${config.bot.errorPrefix}Unknown command "!${invocation.command}". Use !help for the supported commands: !latex, !plot, !solve, !help.`
+            );
+        } catch (err) {
+            console.error('Failed to send unknown-command reply:', err.message);
         }
         return;
     }

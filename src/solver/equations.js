@@ -1,9 +1,10 @@
 const math = require('../math');
 const path = require('path');
 const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
-const { extractInlineDependencies } = require('../inline-calculus');
+const { extractInlineDependencies, VECTOR_INLINE_HELPERS } = require('../inline-calculus');
 const { runSubprocess } = require('./subprocess');
 const { splitTopLevel, preprocessCalculusHelpers } = require('../utils');
+const { formatExactScalarTex, formatExactNumberTex } = require('./exact-format');
 
 const EQUATION_SOLVER_PATH = path.join(__dirname, '../../python/', 'equation_solver.py');
 const EXPRESSION_MODES = new Set(['simplify', 'factor', 'expand']);
@@ -34,7 +35,7 @@ function extractVariables(node) {
 
         if (n.isFunctionNode && n.fn && n.fn.isSymbolNode) {
             const helperName = n.fn.name;
-            if (helperName === 'deriv' || helperName === 'integ') {
+            if (helperName === 'deriv' || helperName === 'integ' || VECTOR_INLINE_HELPERS.has(helperName)) {
                 const helperDeps = extractInlineDependencies(
                     helperName,
                     buildInlineArgDescriptors(n.args),
@@ -68,17 +69,11 @@ function extractVariables(node) {
 }
 
 function formatVal(val) {
-    if (val === null || isNaN(val)) return '\\text{NaN}';
-    if (!isFinite(val)) return val > 0 ? '\\infty' : '-\\infty';
-    if (Math.abs(val) < 1e-10) return '0';
-    if (Math.abs(val) < 1e-3 || Math.abs(val) > 1e6) {
-        const str = val.toExponential(4);
-        const parts = str.split('e');
-        const num = parts[0];
-        const exp = parseInt(parts[1], 10);
-        return `${num} \\times 10^{${exp}}`;
-    }
-    return Number(val.toFixed(6)).toString();
+    return formatExactNumberTex(val, {
+        maxDenominator: 64,
+        tolerance: 1e-8,
+        precision: 10
+    });
 }
 
 function findTopLevelRelation(text) {
@@ -393,23 +388,11 @@ function solveEquationLocally(parsedStatements, variables) {
 
             for (let index = 0; index < n; index++) {
                 const value = solution[index][0];
-                let formattedValue;
-                if (typeof value === 'number') {
-                    formattedValue = Number(value.toFixed(8)).toString();
-                } else if (value && value.isComplex) {
-                    const re = Number(value.re.toFixed(8)).toString();
-                    const im = Number(value.im.toFixed(8)).toString();
-                    if (Math.abs(value.im) < 1e-10) {
-                        formattedValue = re;
-                    } else {
-                        const sign = value.im >= 0 ? '+' : '-';
-                        const imAbs = Math.abs(value.im);
-                        const imStr = imAbs === 1 ? 'i' : `${Number(imAbs.toFixed(8)).toString()}i`;
-                        formattedValue = `${re} ${sign} ${imStr}`;
-                    }
-                } else {
-                    formattedValue = math.format(value, { precision: 8 });
-                }
+                const formattedValue = formatExactScalarTex(value, {
+                    maxDenominator: 64,
+                    tolerance: 1e-8,
+                    precision: 10
+                });
 
                 formattedSolutions.push(`${variables[index]} = ${formattedValue}`);
             }
@@ -457,7 +440,11 @@ function solveEquationLocally(parsedStatements, variables) {
             latex: [
                 '\\begin{aligned}',
                 `${equationTex} \\\\`,
-                `\\implies ${variableName} = ${Number(root.toFixed(8)).toString()}`,
+                `\\implies ${variableName} = ${formatExactNumberTex(root, {
+                    maxDenominator: 64,
+                    tolerance: 1e-8,
+                    precision: 10
+                })}`,
                 '\\end{aligned}'
             ].join('\n')
         };
@@ -482,21 +469,11 @@ function solveEquationLocally(parsedStatements, variables) {
 
     if (polynomialRoots) {
         const roots = polynomialRoots.map((root, index) => {
-            if (typeof root === 'number') {
-                return `${variableName}_${index + 1} = ${Number(root.toFixed(8)).toString()}`;
-            }
-            if (root && root.isComplex) {
-                const re = Number(root.re.toFixed(8)).toString();
-                const im = Number(root.im.toFixed(8)).toString();
-                if (Math.abs(root.im) < 1e-10) {
-                    return `${variableName}_${index + 1} = ${re}`;
-                }
-                const sign = root.im >= 0 ? '+' : '-';
-                const imAbs = Math.abs(root.im);
-                const imStr = imAbs === 1 ? 'i' : `${Number(imAbs.toFixed(8)).toString()}i`;
-                return `${variableName}_${index + 1} = ${re} ${sign} ${imStr}`;
-            }
-            return `${variableName}_${index + 1} = ${math.format(root, { precision: 8 })}`;
+            return `${variableName}_${index + 1} = ${formatExactScalarTex(root, {
+                maxDenominator: 64,
+                tolerance: 1e-8,
+                precision: 10
+            })}`;
         });
 
         return {

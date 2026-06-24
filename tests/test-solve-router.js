@@ -30,13 +30,9 @@ function loadSolveRouter() {
                 calls.push({ fn: 'solveEquation', input });
                 return { success: true, latex: `EQ:${input}` };
             },
-            solveDerivative: async (input) => {
-                calls.push({ fn: 'solveDerivative', input });
-                return { success: true, latex: `DIFF:${input}` };
-            },
-            solveIntegral: async (input) => {
-                calls.push({ fn: 'solveIntegral', input });
-                return { success: true, latex: `INT:${input}` };
+            solveMatrixExpression: async (input) => {
+                calls.push({ fn: 'solveMatrixExpression', input });
+                return { success: true, latex: `MATRIX:${input}` };
             },
             solveGradient: async (input) => {
                 calls.push({ fn: 'solveGradient', input });
@@ -53,10 +49,6 @@ function loadSolveRouter() {
             solveCurl: async (input) => {
                 calls.push({ fn: 'solveCurl', input });
                 return { success: true, latex: `CURL:${input}` };
-            },
-            solveMatrixExpression: async (input) => {
-                calls.push({ fn: 'solveMatrixExpression', input });
-                return { success: true, latex: `MATRIX:${input}` };
             }
         }
     };
@@ -91,47 +83,101 @@ async function run() {
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
-        const result = await handleSolveCommand('x^3 mode:diff');
+        const result = await handleSolveCommand('deriv[x^3, x]');
         assert.strictEqual(result.route, 'render');
-        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveDerivative', 'render']);
-        assert.strictEqual(calls[0].input, 'x^3');
-        console.log('PASS: mode:diff routes to the derivative solver');
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation', 'render']);
+        assert.strictEqual(calls[0].input, 'deriv[x^3, x] mode:simplify');
+        console.log('PASS: deriv[...] routes through the unified equation solver');
     }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
-        const result = await handleSolveCommand('sin(x) x:[0, pi] mode:int');
+        const result = await handleSolveCommand('integ[sin(x), x, 0, pi]');
         assert.strictEqual(result.route, 'render');
-        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveIntegral', 'render']);
-        assert.strictEqual(calls[0].input, 'sin(x) x:[0, pi]');
-        console.log('PASS: mode:int routes to the integral solver');
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation', 'render']);
+        assert.strictEqual(calls[0].input, 'integ[sin(x), x, 0, pi] mode:simplify');
+        console.log('PASS: integ[...] routes through the unified equation solver');
     }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
-        const result = await handleSolveCommand('x^2*y*z mode:grad');
+        const result = await handleSolveCommand('grad[x^2*y*z, vars:{x, y, z}]');
         assert.strictEqual(result.route, 'render');
         assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveGradient', 'render']);
-        assert.strictEqual(calls[0].input, 'x^2*y*z');
-        console.log('PASS: mode:grad routes to the gradient solver');
+        assert.strictEqual(calls[0].input, 'x^2*y*z vars:{x, y, z}');
+        console.log('PASS: grad[...] routes through the dedicated vector solver');
     }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
-        const result = await handleSolveCommand('det([1,2;3,4]) mode:matrix');
+        const result = await handleSolveCommand('lap[x^2 + y^2 + z^2, vars:{x, y, z}]');
+        assert.strictEqual(result.route, 'render');
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveLaplacian', 'render']);
+        assert.strictEqual(calls[0].input, 'x^2 + y^2 + z^2 vars:{x, y, z}');
+        console.log('PASS: lap[...] routes through the dedicated vector solver');
+    }
+
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('div[(x^2, y^2, z^2), vars:{x, y, z}]');
+        assert.strictEqual(result.route, 'render');
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveDivergence', 'render']);
+        assert.strictEqual(calls[0].input, '(x^2, y^2, z^2) vars:{x, y, z}');
+        console.log('PASS: div[...] routes through the dedicated vector solver');
+    }
+
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('curl[(y*z, x*z, x*y), vars:{x, y, z}]');
+        assert.strictEqual(result.route, 'render');
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveCurl', 'render']);
+        assert.strictEqual(calls[0].input, '(y*z, x*z, x*y) vars:{x, y, z}');
+        console.log('PASS: curl[...] routes through the dedicated vector solver');
+    }
+
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('grad[x^2*y*z, x, y, z]');
+        assert.strictEqual(result.success, false);
+        assert(result.error.includes('no longer accepts positional coordinate arguments'));
+        assert.deepStrictEqual(calls, []);
+        console.log('PASS: legacy positional grad[...] syntax is rejected');
+    }
+
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('det([1,2;3,4])');
         assert.strictEqual(result.route, 'render');
         assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveMatrixExpression', 'render']);
         assert.strictEqual(calls[0].input, 'det([1,2;3,4])');
-        console.log('PASS: mode:matrix routes to the matrix solver');
+        console.log('PASS: Matrix expressions auto-route without legacy mode overrides');
     }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
-        const result = await handleSolveCommand('dy/dx = -y ic:{y(0)=1} mode:ode');
+        const result = await handleSolveCommand('dy/dx = -y ic:{y(0)=1}');
         assert.strictEqual(result.route, 'ode');
         assert.deepStrictEqual(calls.map((entry) => entry.fn), ['handleOdeCommand']);
         assert.strictEqual(calls[0].input, 'dy/dx = -y ic:{y(0)=1}');
-        console.log('PASS: mode:ode routes to the ODE handler');
+        console.log('PASS: ODEs auto-route without legacy mode overrides');
+    }
+
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('x^3 mode:diff');
+        assert.strictEqual(result.success, false);
+        assert(result.error.includes('Legacy route "diff" has been removed'));
+        assert.deepStrictEqual(calls, []);
+        console.log('PASS: Removed mode:diff surface now returns a guidance error');
+    }
+
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('diff x^3');
+        assert.strictEqual(result.success, false);
+        assert(result.error.includes('Legacy route "diff" has been removed'));
+        assert.deepStrictEqual(calls, []);
+        console.log('PASS: Removed prefixed diff syntax now returns a guidance error');
     }
 
     {
@@ -147,30 +193,33 @@ async function run() {
         const { handleSolveCommand, calls } = loadSolveRouter();
         const result = await handleSolveCommand('x^2 = 4');
         assert.strictEqual(result.success, true);
+        assert.strictEqual(result.route, 'render');
         assert.strictEqual(result.latex, 'EQ:x^2 = 4');
-        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation']);
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation', 'render']);
         assert.strictEqual(calls[0].input, 'x^2 = 4');
-        console.log('PASS: Relational expressions route to the equation solver');
+        console.log('PASS: Relational expressions route to the equation solver and render');
     }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
         const result = await handleSolveCommand('x^2 - 1 > 0');
         assert.strictEqual(result.success, true);
+        assert.strictEqual(result.route, 'render');
         assert.strictEqual(result.latex, 'EQ:x^2 - 1 > 0');
-        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation']);
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation', 'render']);
         assert.strictEqual(calls[0].input, 'x^2 - 1 > 0');
-        console.log('PASS: Inequalities route to the equation solver');
+        console.log('PASS: Inequalities route to the equation solver and render');
     }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
         const result = await handleSolveCommand('(x-1)^3 mode:expand');
         assert.strictEqual(result.success, true);
+        assert.strictEqual(result.route, 'render');
         assert.strictEqual(result.latex, 'EQ:(x-1)^3 mode:expand');
-        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation']);
+        assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation', 'render']);
         assert.strictEqual(calls[0].input, '(x-1)^3 mode:expand');
-        console.log('PASS: Expression modes route through the symbolic equation solver');
+        console.log('PASS: Expression modes route through the symbolic equation solver and render');
     }
 
     console.log('=== SOLVE ROUTER TESTS PASSED ===');

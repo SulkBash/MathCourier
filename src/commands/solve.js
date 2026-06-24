@@ -1,6 +1,8 @@
+const math = require('../math');
 const renderer = require('../renderer');
 const solver = require('../solver');
-const { parseCommandSyntax } = require('../parser');
+const { parseVectorHelperCall } = require('../inline-calculus');
+const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 const { preprocessCalculusHelpers, splitTopLevel } = require('../utils');
 const handleOdeCommand = require('./ode');
 const handlePdeCommand = require('./pde');
@@ -23,7 +25,10 @@ const HELPER_BRACKET_NAMES = new Set([
 const MATRIX_FUNCTION_RE = /\b(?:det|inv|inverse|eigen|eig|eigs|rref)\s*\(/i;
 const ODE_PATTERN_RE = /(?:\bdy\/dx\b|\bd2y\/dx2\b|\b[a-zA-Z_][a-zA-Z0-9_]*'{1,2}\b|\bd\d*[a-zA-Z_][a-zA-Z0-9_]*\/d[a-zA-Z_][a-zA-Z0-9_]*(?:\d+)?\b)/i;
 const PDE_PATTERN_RE = /(?:\bdu\/dt\b|\bd2u\/dx2\b|\bu_t\b|\bu_xx\b)/i;
-const ROUTE_PREFIX_RE = /^(diff|int|grad|lap|div|curl|matrix)\s+([\s\S]+)$/i;
+const LEGACY_SOLVE_MODE_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)$/i;
+const LEGACY_SOLVE_PREFIX_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)\s+([\s\S]+)$/i;
+const TOP_LEVEL_VECTOR_HELPERS = new Set(['grad', 'lap', 'div', 'curl']);
+const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
 
 function getMode(parsed) {
     if (!parsed || !parsed.options || !parsed.options.mode) {
@@ -284,6 +289,163 @@ function looksLikeOde(body, options = {}) {
     return ODE_PATTERN_RE.test(source);
 }
 
+function parseTopLevelBracketHelper(body, allowedNames = HELPER_BRACKET_NAMES) {
+    const source = String(body || '').trim();
+    if (!source) {
+        return null;
+    }
+
+    const match = source.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*\[/);
+    if (!match) {
+        return null;
+    }
+
+    const helperName = match[1].toLowerCase();
+    if (!allowedNames.has(helperName)) {
+        return null;
+    }
+
+    const openIndex = source.indexOf('[', match[0].length - 1);
+    if (openIndex === -1) {
+        return null;
+    }
+
+    let depth = 1;
+    let parenDepth = 0;
+    let braceDepth = 0;
+    let inQuotes = false;
+    let quoteChar = null;
+    let index = openIndex + 1;
+
+    while (index < source.length && depth > 0) {
+        const char = source[index];
+
+        if (inQuotes) {
+            if (char === '\\' && index + 1 < source.length) {
+                index += 2;
+                continue;
+            }
+            if (char === quoteChar) {
+                inQuotes = false;
+                quoteChar = null;
+            }
+            index++;
+            continue;
+        }
+
+        if (char === '"' || char === '\'') {
+            inQuotes = true;
+            quoteChar = char;
+            index++;
+            continue;
+        }
+
+        if (char === '(') {
+            parenDepth++;
+            index++;
+            continue;
+        }
+        if (char === ')') {
+            parenDepth = Math.max(0, parenDepth - 1);
+            index++;
+            continue;
+        }
+        if (char === '{') {
+            braceDepth++;
+            index++;
+            continue;
+        }
+        if (char === '}') {
+            braceDepth = Math.max(0, braceDepth - 1);
+            index++;
+            continue;
+        }
+        if (char === '[' && parenDepth === 0 && braceDepth === 0) {
+            depth++;
+            index++;
+            continue;
+        }
+        if (char === ']' && parenDepth === 0 && braceDepth === 0) {
+            depth--;
+            index++;
+            continue;
+        }
+
+        index++;
+    }
+
+    if (depth !== 0) {
+        return null;
+    }
+
+    const trailing = source.slice(index).trim();
+    if (trailing) {
+        return null;
+    }
+
+    return {
+        name: helperName,
+        inner: source.slice(openIndex + 1, index - 1).trim()
+    };
+}
+
+function extractVarsFromSource(source) {
+    try {
+        const vars = new Set();
+        math.parse(String(source || '')).traverse((node, path, parent) => {
+            if (!node || !node.isSymbolNode) {
+                return;
+            }
+
+            if (parent && parent.isFunctionNode && parent.fn === node) {
+                return;
+            }
+
+            const name = node.name;
+            if (!name || IGNORED_SYMBOLS.has(name) || math[name]) {
+                return;
+            }
+
+            vars.add(name);
+        });
+        return Array.from(vars);
+    } catch (_) {
+        return [];
+    }
+}
+
+function buildVectorHelperInput(helperName, helperBody) {
+    const args = splitTopLevel(String(helperBody || ''), ',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+    if (args.length === 0) {
+        return {
+            success: false,
+            error: `${helperName} requires an expression.`
+        };
+    }
+
+    const parsed = parseVectorHelperCall(
+        helperName,
+        args.map((source, index) => ({
+            kind: index === 0 ? 'expr' : 'string',
+            source
+        })),
+        extractVarsFromSource
+    );
+    if (!parsed.success) {
+        return parsed;
+    }
+
+    return {
+        success: true,
+        input: parsed.varNames.length > 0
+            ? `${parsed.exprSource} vars:{${parsed.varNames.join(', ')}}`
+            : parsed.exprSource
+    };
+}
+
 function rebuildInput(parsed, extraOptions = []) {
     return rebuildInputWithBody(parsed, parsed && parsed.body ? parsed.body : '', extraOptions);
 }
@@ -311,18 +473,6 @@ function withSolveMode(parsed, mode) {
     return rebuildInput(parsed, [`mode:${mode}`]);
 }
 
-function extractPrefixedSolveRoute(body) {
-    const match = String(body || '').trim().match(ROUTE_PREFIX_RE);
-    if (!match) {
-        return null;
-    }
-
-    return {
-        keyword: match[1].toLowerCase(),
-        body: match[2].trim()
-    };
-}
-
 async function renderSolverResult(solverFn, input) {
     const result = await Promise.resolve(solverFn(input));
     if (!result || !result.success) {
@@ -340,33 +490,51 @@ async function renderSolverResult(solverFn, input) {
     return renderer.render(result.latex, true);
 }
 
-function routeExplicitSolveMode(mode, input, body) {
-    switch (mode) {
-        case 'diff':
-            return renderSolverResult(solver.solveDerivative, input);
-        case 'int':
-            return renderSolverResult(solver.solveIntegral, input);
-        case 'grad':
-            return renderSolverResult(solver.solveGradient, input);
-        case 'lap':
-            return renderSolverResult(solver.solveLaplacian, input);
-        case 'div':
-            return renderSolverResult(solver.solveDivergence, input);
-        case 'curl':
-            return renderSolverResult(solver.solveCurl, input);
-        case 'matrix':
-            return renderSolverResult(solver.solveMatrixExpression, body);
-        case 'ode':
-            return handleOdeCommand(input);
-        case 'pde':
-            return handlePdeCommand(input);
-        default:
-            return null;
+function buildLegacySolveGuidance(mode) {
+    const normalized = String(mode || '').toLowerCase().trim();
+
+    if (normalized === 'diff') {
+        return 'Legacy route "diff" has been removed. Use !solve deriv[expr, x] instead.';
     }
+    if (normalized === 'int') {
+        return 'Legacy route "int" has been removed. Use !solve integ[expr, x] or a field-integral helper instead.';
+    }
+    if (normalized === 'grad' || normalized === 'lap' || normalized === 'div' || normalized === 'curl') {
+        return `Legacy route "${normalized}" has been removed. Use !solve ${normalized}[...] instead.`;
+    }
+    if (normalized === 'matrix') {
+        return 'Legacy route "matrix" has been removed. Send the matrix expression directly to !solve.';
+    }
+    if (normalized === 'ode' || normalized === 'pde') {
+        return `Legacy route "${normalized}" has been removed. Send the equation directly to !solve and let the router detect it.`;
+    }
+
+    return 'Legacy solve route has been removed. Use the unified !solve syntax instead.';
 }
 
 async function handleSolveCommand(input) {
-    const parsed = parseCommandSyntax(input);
+    const rawParsed = parseCommandSyntax(input);
+    const rawBody = (rawParsed.body || '').trim();
+    const rawMode = rawParsed && rawParsed.options && rawParsed.options.mode
+        ? String(rawParsed.options.mode).toLowerCase().trim()
+        : null;
+
+    if (rawMode && LEGACY_SOLVE_MODE_RE.test(rawMode)) {
+        return {
+            success: false,
+            error: buildLegacySolveGuidance(rawMode)
+        };
+    }
+
+    const prefixedLegacyRoute = rawBody.match(LEGACY_SOLVE_PREFIX_RE);
+    if (prefixedLegacyRoute) {
+        return {
+            success: false,
+            error: buildLegacySolveGuidance(prefixedLegacyRoute[1])
+        };
+    }
+
+    const parsed = normalizeAndValidate(rawParsed, 'solve');
     if (!parsed.success) {
         return { success: false, error: parsed.errors.join('\n') };
     }
@@ -377,38 +545,56 @@ async function handleSolveCommand(input) {
     }
 
     const mode = getMode(parsed);
-    const strippedInput = rebuildInput(parsed);
     const hasRelation = hasTopLevelRelation(body);
+    const bracketHelper = parseTopLevelBracketHelper(body, TOP_LEVEL_VECTOR_HELPERS);
 
-    // Explicit mode overrides used by the unified solve router.
-    if (mode === 'factor' || mode === 'expand' || mode === 'simplify') {
-        return Promise.resolve(solver.solveEquation(withSolveMode(parsed, mode)));
-    }
+    if (bracketHelper) {
+        if (mode && mode !== 'simplify') {
+            return {
+                success: false,
+                error: `mode:${mode} is not supported for ${bracketHelper.name}[...]. Send the helper directly to !solve without an expression mode.`
+            };
+        }
 
-    if (mode) {
-        const explicitRoute = routeExplicitSolveMode(mode, strippedInput, body);
-        if (explicitRoute) {
-            return explicitRoute;
+        const helperInputResult = buildVectorHelperInput(bracketHelper.name, bracketHelper.inner);
+        if (!helperInputResult.success) {
+            return { success: false, error: helperInputResult.error };
+        }
+        const helperInput = helperInputResult.input;
+        if (bracketHelper.name === 'grad') {
+            return renderSolverResult(solver.solveGradient, helperInput);
+        }
+        if (bracketHelper.name === 'lap') {
+            return renderSolverResult(solver.solveLaplacian, helperInput);
+        }
+        if (bracketHelper.name === 'div') {
+            return renderSolverResult(solver.solveDivergence, helperInput);
+        }
+        if (bracketHelper.name === 'curl') {
+            return renderSolverResult(solver.solveCurl, helperInput);
         }
     }
 
-    const prefixedRoute = extractPrefixedSolveRoute(body);
-    if (prefixedRoute) {
-        const prefixedInput = rebuildInputWithBody(parsed, prefixedRoute.body);
-        return routeExplicitSolveMode(prefixedRoute.keyword, prefixedInput, prefixedRoute.body);
+    if (mode === 'factor' || mode === 'expand' || mode === 'simplify') {
+        return renderSolverResult(solver.solveEquation, withSolveMode(parsed, mode));
     }
 
-    // Differential-equation routing happens before general symbolic solving.
     if (looksLikePde(body, parsed.options)) {
-        return handlePdeCommand(strippedInput);
+        return handlePdeCommand(input);
     }
     if (looksLikeOde(body, parsed.options)) {
-        return handleOdeCommand(strippedInput);
+        return handleOdeCommand(input);
     }
 
-    // Relational solving takes precedence over matrix expression evaluation.
+    if (mode === 'sym' || mode === 'num' || mode === 'hybrid') {
+        return {
+            success: false,
+            error: 'mode:sym, mode:num, and mode:hybrid only apply when !solve auto-detects an ODE or PDE.'
+        };
+    }
+
     if (hasRelation) {
-        return Promise.resolve(solver.solveEquation(input));
+        return renderSolverResult(solver.solveEquation, input);
     }
 
     if (looksLikeMatrix(body)) {
@@ -418,11 +604,11 @@ async function handleSolveCommand(input) {
     if (looksAmbiguousSolveTuple(body)) {
         return {
             success: false,
-            error: 'Ambiguous solve: Bare tuples are not routed automatically. Wrap the tuple in a helper such as div[(...), x, y, z] or curl[(...), x, y, z], or choose an explicit mode.'
+            error: 'Ambiguous solve: Bare tuples are not routed automatically. Wrap the tuple in a helper such as div[(...), vars:{x, y, z}] or curl[(...), vars:{x, y, z}].'
         };
     }
 
-    return Promise.resolve(solver.solveEquation(withSolveMode(parsed, 'simplify')));
+    return renderSolverResult(solver.solveEquation, withSolveMode(parsed, 'simplify'));
 }
 
 module.exports = handleSolveCommand;

@@ -11,6 +11,221 @@ transformations = (standard_transformations + (implicit_multiplication_applicati
 VALID_INLINE_VAR_RE = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 
+class InlineGradient(sympy.Expr):
+    def __new__(cls, expr, coords, solved_value):
+        if not isinstance(coords, sympy.Tuple):
+            coords = sympy.Tuple(*coords)
+        obj = sympy.Expr.__new__(cls, expr, coords, solved_value)
+        return obj
+
+    @property
+    def expr(self):
+        return self.args[0]
+
+    @property
+    def coords(self):
+        return self.args[1]
+
+    @property
+    def _solved_value(self):
+        return self.args[2]
+
+    def doit(self, **hints):
+        val = self._solved_value
+        return val.doit(**hints) if hasattr(val, "doit") else val
+
+    def _latex(self, printer):
+        return f"\\nabla \\left({printer._print(self.expr)}\\right)"
+
+    def _eval_subs(self, old, new):
+        if old in self.free_symbols:
+            return sympy.Subs(self, old, new)
+        return self
+
+
+class InlineLaplacian(sympy.Expr):
+    def __new__(cls, expr, coords, solved_value):
+        if not isinstance(coords, sympy.Tuple):
+            coords = sympy.Tuple(*coords)
+        obj = sympy.Expr.__new__(cls, expr, coords, solved_value)
+        return obj
+
+    @property
+    def expr(self):
+        return self.args[0]
+
+    @property
+    def coords(self):
+        return self.args[1]
+
+    @property
+    def _solved_value(self):
+        return self.args[2]
+
+    def doit(self, **hints):
+        val = self._solved_value
+        return val.doit(**hints) if hasattr(val, "doit") else val
+
+    def _latex(self, printer):
+        return f"\\nabla^2 \\left({printer._print(self.expr)}\\right)"
+
+    def _eval_subs(self, old, new):
+        if old in self.free_symbols:
+            return sympy.Subs(self, old, new)
+        return self
+
+
+class InlineDivergence(sympy.Expr):
+    def __new__(cls, field, coords, solved_value):
+        if not isinstance(field, sympy.Tuple):
+            field = sympy.Tuple(*field)
+        if not isinstance(coords, sympy.Tuple):
+            coords = sympy.Tuple(*coords)
+        obj = sympy.Expr.__new__(cls, field, coords, solved_value)
+        return obj
+
+    @property
+    def field(self):
+        return self.args[0]
+
+    @property
+    def coords(self):
+        return self.args[1]
+
+    @property
+    def _solved_value(self):
+        return self.args[2]
+
+    def doit(self, **hints):
+        val = self._solved_value
+        return val.doit(**hints) if hasattr(val, "doit") else val
+
+    def _latex(self, printer):
+        return f"\\nabla \\cdot {printer._print(self.field)}"
+
+    def _eval_subs(self, old, new):
+        if old in self.free_symbols:
+            return sympy.Subs(self, old, new)
+        return self
+
+
+class InlineCurl(sympy.Expr):
+    def __new__(cls, field, coords, solved_value):
+        if not isinstance(field, sympy.Tuple):
+            field = sympy.Tuple(*field)
+        if not isinstance(coords, sympy.Tuple):
+            coords = sympy.Tuple(*coords)
+        obj = sympy.Expr.__new__(cls, field, coords, solved_value)
+        return obj
+
+    @property
+    def field(self):
+        return self.args[0]
+
+    @property
+    def coords(self):
+        return self.args[1]
+
+    @property
+    def _solved_value(self):
+        return self.args[2]
+
+    def doit(self, **hints):
+        val = self._solved_value
+        return val.doit(**hints) if hasattr(val, "doit") else val
+
+    def _latex(self, printer):
+        return f"\\nabla \\times {printer._print(self.field)}"
+
+    def _eval_subs(self, old, new):
+        if old in self.free_symbols:
+            return sympy.Subs(self, old, new)
+        return self
+
+
+class ImplicitDerivative(sympy.Expr):
+    def __new__(cls, dep_arg, independent_symbol, order, solved_value):
+        if isinstance(dep_arg, (list, tuple, sympy.Tuple)):
+            dep_arg = dep_arg[0]
+        obj = sympy.Expr.__new__(cls, dep_arg, independent_symbol, sympy.sympify(order), solved_value)
+        return obj
+
+    @property
+    def dep_arg(self):
+        return self.args[0]
+
+    @property
+    def independent_symbol(self):
+        return self.args[1]
+
+    @property
+    def order(self):
+        return self.args[2]
+
+    @property
+    def _solved_value(self):
+        return self.args[3]
+
+    def doit(self, **hints):
+        val = self._solved_value
+        return val.doit(**hints) if hasattr(val, "doit") else val
+
+    def _latex(self, printer):
+        order_val = int(self.order)
+        if order_val == 1:
+            return f"\\frac{{d {printer._print(self.dep_arg)}}}{{d {printer._print(self.independent_symbol)}}}"
+        else:
+            return f"\\frac{{d^{{{order_val}}} {printer._print(self.dep_arg)}}}{{d {printer._print(self.independent_symbol)}^{{{order_val}}}}}"
+
+    def _eval_subs(self, old, new):
+        if old in self.free_symbols:
+            return sympy.Subs(self, old, new)
+        return self
+
+
+class InlineIntegral(sympy.Integral):
+    __slots__ = ("expr_parsed", "kind", "param_source", "is_vector")
+
+    def __new__(cls, integrand, *limits, **kwargs):
+        expr_parsed = kwargs.pop("expr_parsed", None)
+        kind = kwargs.pop("kind", "standard")
+        param_source = kwargs.pop("param_source", None)
+        is_vector = kwargs.pop("is_vector", False)
+
+        obj = sympy.Integral.__new__(cls, integrand, *limits, **kwargs)
+        obj.expr_parsed = expr_parsed
+        obj.kind = kind
+        obj.param_source = param_source
+        obj.is_vector = is_vector
+        return obj
+
+    def _latex(self, printer):
+        base_integral = sympy.Integral(self.function, *self.limits)
+        iterated_latex = printer._print(base_integral)
+        if self.expr_parsed is None:
+            return iterated_latex
+
+        if self.kind == "line":
+            if self.is_vector:
+                vector_latex = f"\\int_C \\left({printer._print(self.expr_parsed)}\\right) \\cdot d\\mathbf{{r}}"
+            else:
+                vector_latex = f"\\int_C \\left({printer._print(self.expr_parsed)}\\right) ds"
+            return f"{vector_latex} = {iterated_latex}"
+        elif self.kind == "surface":
+            if self.is_vector:
+                vector_latex = f"\\iint_S \\left({printer._print(self.expr_parsed)}\\right) \\cdot d\\mathbf{{S}}"
+            else:
+                vector_latex = f"\\iint_S \\left({printer._print(self.expr_parsed)}\\right) dS"
+            return f"{vector_latex} = {iterated_latex}"
+        elif self.kind == "volume":
+            vector_latex = f"\\iiint_V \\left({printer._print(self.expr_parsed)}\\right) dV"
+            return f"{vector_latex} = {iterated_latex}"
+
+        return iterated_latex
+
+
+
+
 def split_top_level(text, delimiter=","):
     parts = []
     current = []
@@ -18,7 +233,7 @@ def split_top_level(text, delimiter=","):
     in_quotes = False
     quote_char = None
 
-    for char in text:
+    for index, char in enumerate(text):
         if in_quotes:
             current.append(char)
             if char == quote_char:
@@ -26,7 +241,7 @@ def split_top_level(text, delimiter=","):
                 quote_char = None
             continue
 
-        if char in ("'", '"'):
+        if char == '"' or (char == "'" and not (index > 0 and re.match(r"[a-zA-Z0-9_'}\)]", text[index - 1]))):
             in_quotes = True
             quote_char = char
             current.append(char)
@@ -51,25 +266,6 @@ def split_top_level(text, delimiter=","):
         parts.append(part)
 
     return parts
-
-
-def _coerce_inline_symbols(args, label):
-    symbols = []
-    for arg in args:
-        if isinstance(arg, sympy.Symbol):
-            symbols.append(arg)
-        elif isinstance(arg, str) and arg and re.match(VALID_INLINE_VAR_RE, arg):
-            symbols.append(sympy.Symbol(arg))
-        else:
-            raise ValueError(f"{label} expects coordinate symbols such as x, y, or z.")
-
-    names = [sym.name for sym in symbols]
-    if len(set(names)) != len(names):
-        raise ValueError(f"{label} coordinate symbols must be unique.")
-
-    return symbols
-
-
 def _inline_local_dict(symbols):
     local_dict = get_base_local_dict()
     for symbol in symbols:
@@ -112,18 +308,17 @@ def _parse_inline_vector(field, symbols, label):
 
 
 def grad_inline(expr, *coords):
-    symbols = _coerce_inline_symbols(coords, "grad")
-    scalar = _parse_inline_scalar(expr, symbols, "grad")
-    return sympy.Tuple(*(sympy.diff(scalar, symbol) for symbol in symbols))
+    _expr_source, symbols, scalar = _parse_inline_vector_helper_args("grad", expr, coords)
+    solved_value = sympy.Tuple(*(sympy.diff(scalar, symbol) for symbol in symbols))
+    return InlineGradient(scalar, symbols, solved_value)
 
 
 def _grad_component(index, label):
     def impl(expr, *coords):
-        symbols = _coerce_inline_symbols(coords, label)
+        _expr_source, symbols, scalar = _parse_inline_vector_helper_args(label, expr, coords)
         if index >= len(symbols):
-            raise ValueError(f"{label} requires at least {index + 1} coordinate symbols.")
-        scalar = _parse_inline_scalar(expr, symbols, label)
-        return sympy.diff(scalar, symbols[index])
+            raise ValueError(f"{label} requires at least {index + 1} coordinate variables.")
+        return sympy.Derivative(scalar, symbols[index])
     return impl
 
 
@@ -133,53 +328,61 @@ gradz_inline = _grad_component(2, "gradz")
 
 
 def lap_inline(expr, *coords):
-    symbols = _coerce_inline_symbols(coords, "lap")
-    scalar = _parse_inline_scalar(expr, symbols, "lap")
-    return sum(sympy.diff(scalar, symbol, 2) for symbol in symbols)
+    _expr_source, symbols, scalar = _parse_inline_vector_helper_args("lap", expr, coords)
+    solved_value = sum(sympy.diff(scalar, symbol, 2) for symbol in symbols)
+    return InlineLaplacian(scalar, symbols, solved_value)
 
 
 def div_inline(field, *coords):
-    symbols = _coerce_inline_symbols(coords, "div")
-    components = _parse_inline_vector(field, symbols, "div")
+    _expr_source, symbols, components = _parse_inline_vector_helper_args("div", field, coords, field=True)
     if len(components) != len(symbols):
-        raise ValueError("div requires the same number of components and coordinate symbols.")
-    return sum(sympy.diff(component, symbols[index]) for index, component in enumerate(components))
+        raise ValueError("div requires the same number of components and coordinate variables.")
+    solved_value = sum(sympy.diff(component, symbols[index]) for index, component in enumerate(components))
+    return InlineDivergence(sympy.Tuple(*components), symbols, solved_value)
 
 
 def curl_inline(field, *coords):
-    symbols = _coerce_inline_symbols(coords, "curl")
-    components = _parse_inline_vector(field, symbols, "curl")
+    _expr_source, symbols, components = _parse_inline_vector_helper_args("curl", field, coords, field=True)
     if len(components) != len(symbols):
-        raise ValueError("curl requires the same number of components and coordinate symbols.")
+        raise ValueError("curl requires the same number of components and coordinate variables.")
 
     if len(symbols) == 2:
-        return sympy.diff(components[1], symbols[0]) - sympy.diff(components[0], symbols[1])
-
-    if len(symbols) == 3:
-        return sympy.Tuple(
+        solved_value = sympy.diff(components[1], symbols[0]) - sympy.diff(components[0], symbols[1])
+    elif len(symbols) == 3:
+        solved_value = sympy.Tuple(
             sympy.diff(components[2], symbols[1]) - sympy.diff(components[1], symbols[2]),
             sympy.diff(components[0], symbols[2]) - sympy.diff(components[2], symbols[0]),
             sympy.diff(components[1], symbols[0]) - sympy.diff(components[0], symbols[1]),
         )
+    else:
+        raise ValueError("curl only supports 2D or 3D vector fields.")
 
-    raise ValueError("curl only supports 2D or 3D vector fields.")
-
-
-def _curl_component(index, label):
-    def impl(field, *coords):
-        result = curl_inline(field, *coords)
-        if not isinstance(result, sympy.Tuple):
-            raise ValueError(f"{label} only applies to 3D vector fields.")
-        return result[index]
-    return impl
+    return InlineCurl(sympy.Tuple(*components), symbols, solved_value)
 
 
-curlx_inline = _curl_component(0, "curlx")
-curly_inline = _curl_component(1, "curly")
-curlz_inline = _curl_component(2, "curlz")
+def curlx_inline(field, *coords):
+    _expr_source, symbols, components = _parse_inline_vector_helper_args("curlx", field, coords, field=True)
+    if len(symbols) != 3 or len(components) != 3:
+        raise ValueError("curlx only applies to 3D vector fields.")
+    return sympy.Derivative(components[2], symbols[1]) - sympy.Derivative(components[1], symbols[2])
+
+
+def curly_inline(field, *coords):
+    _expr_source, symbols, components = _parse_inline_vector_helper_args("curly", field, coords, field=True)
+    if len(symbols) != 3 or len(components) != 3:
+        raise ValueError("curly only applies to 3D vector fields.")
+    return sympy.Derivative(components[0], symbols[2]) - sympy.Derivative(components[2], symbols[0])
+
+
+def curlz_inline(field, *coords):
+    _expr_source, symbols, components = _parse_inline_vector_helper_args("curlz", field, coords, field=True)
+    if len(symbols) != 3 or len(components) != 3:
+        raise ValueError("curlz only applies to 3D vector fields.")
+    return sympy.Derivative(components[1], symbols[0]) - sympy.Derivative(components[0], symbols[1])
 
 LINE_PARAM_PREFERENCES = ("t", "s", "tau", "theta", "u", "v")
 SURFACE_PARAM_PREFERENCES = ("u", "v", "s", "t", "theta", "phi", "r", "w")
+VECTOR_VAR_PREFERENCES = ("x", "y", "z", "r", "theta", "phi", "u", "v", "w", "s", "t")
 
 
 def _find_top_level_colon(text):
@@ -194,7 +397,7 @@ def _find_top_level_colon(text):
                 quote_char = None
             continue
 
-        if char in ("'", '"'):
+        if char == '"' or (char == "'" and not (index > 0 and re.match(r"[a-zA-Z0-9_'}\)]", text[index - 1]))):
             in_quotes = True
             quote_char = char
             continue
@@ -366,6 +569,128 @@ def _choose_parameter_symbols(expressions, expected_count, call_dict, preference
     raise ValueError("Could not determine the parameter variables for the inline integral.")
 
 
+def _legacy_inline_vector_args_error(label):
+    return ValueError(
+        f"{label} no longer accepts positional coordinate arguments. "
+        "Omit them and let the helper infer variables, or use vars:{...}."
+    )
+
+
+def _order_inline_symbols(symbols):
+    unique_symbols = {}
+    for symbol in symbols:
+        unique_symbols[symbol.name] = symbol
+
+    def rank(name):
+        return VECTOR_VAR_PREFERENCES.index(name) if name in VECTOR_VAR_PREFERENCES else len(VECTOR_VAR_PREFERENCES)
+
+    return [
+        unique_symbols[name]
+        for name in sorted(unique_symbols, key=lambda name: (rank(name), name))
+    ]
+
+
+def _infer_inline_scalar_vector_symbols(expr_source, call_dict):
+    symbols = _order_inline_symbols(_extract_expr_symbols(expr_source, call_dict))
+    return symbols or [sympy.Symbol("x")]
+
+
+def _infer_inline_field_vector_symbols(parts, dimension, call_dict, label):
+    candidate_symbols = []
+    for part in parts:
+        candidate_symbols.extend(_extract_expr_symbols(part, call_dict))
+
+    symbols = _order_inline_symbols(candidate_symbols)
+    if len(symbols) == dimension:
+        return symbols
+
+    if len(symbols) > dimension:
+        return symbols[:dimension]
+
+    if len(symbols) == 0:
+        return [sympy.Symbol(name) for name in ("x", "y", "z")[:dimension]]
+
+    if all(symbol.name in ("x", "y", "z") for symbol in symbols):
+        filled = list(symbols)
+        used_names = {symbol.name for symbol in filled}
+        for name in ("x", "y", "z"):
+            if len(filled) == dimension:
+                break
+            if name not in used_names:
+                filled.append(sympy.Symbol(name))
+                used_names.add(name)
+        return filled
+
+    raise ValueError(
+        f"Could not infer {dimension} coordinate variables for {label}. "
+        "Use vars:{...} to specify them explicitly."
+    )
+
+
+def _parse_inline_vector_helper_args(label, expr, args, field=False):
+    call_dict = get_base_local_dict()
+    expr_source = str(expr).strip("'\"")
+    remaining = list(args)
+    variable_recipe = None
+
+    for arg in remaining:
+        if not isinstance(arg, str):
+            raise _legacy_inline_vector_args_error(label)
+
+        option = _parse_inline_option(arg)
+        if not option:
+            if re.match(VALID_INLINE_VAR_RE, arg.strip()):
+                raise _legacy_inline_vector_args_error(label)
+            raise ValueError(f'Unsupported {label} helper argument "{arg}".')
+
+        if option["key"] != "vars":
+            raise ValueError(f'{label} does not support option "{option["key"]}".')
+
+        variable_recipe = _parse_inline_variable_recipe(option["value"], label)
+        if any(order != 1 for _symbol, order in variable_recipe):
+            raise ValueError(f"{label} vars do not support derivative-style order markers.")
+
+        names = [symbol.name for symbol, _order in variable_recipe]
+        if len(set(names)) != len(names):
+            raise ValueError(f"{label} coordinate variables must be unique.")
+
+    if field:
+        if isinstance(expr, str):
+            stripped = expr_source.strip()
+            if (
+                (stripped.startswith("(") and stripped.endswith(")"))
+                or (stripped.startswith("[") and stripped.endswith("]"))
+            ):
+                stripped = stripped[1:-1].strip()
+            parts = split_top_level(stripped)
+        elif isinstance(expr, (list, tuple, sympy.Tuple)):
+            parts = [str(part) for part in expr]
+        else:
+            raise ValueError(f"{label} only supports 2D or 3D vector fields.")
+
+        if len(parts) < 2 or len(parts) > 3:
+            raise ValueError(f"{label} only supports 2D or 3D vector fields.")
+
+        if variable_recipe:
+            symbols = [symbol for symbol, _order in variable_recipe]
+        else:
+            symbols = _infer_inline_field_vector_symbols(parts, len(parts), call_dict, label)
+
+        components = _parse_inline_vector(expr_source, symbols, label)
+        return expr_source, symbols, components
+
+    if variable_recipe:
+        symbols = [symbol for symbol, _order in variable_recipe]
+    else:
+        symbols = _infer_inline_scalar_vector_symbols(expr_source, call_dict)
+
+    if len(symbols) < 1 or len(symbols) > 3:
+        raise ValueError(f"{label} only supports 1 to 3 coordinate variables.")
+
+    scalar = _parse_inline_scalar(expr_source, symbols, label)
+    return expr_source, symbols, scalar
+
+
 def deriv_inline(expr, *args):
     call_dict = get_base_local_dict()
     expr_source = str(expr).strip("'\"")
@@ -445,11 +770,10 @@ def deriv_inline(expr, *args):
         independent_symbol, order = variable_recipe[0]
         from sympy.geometry.util import idiff
         dep_arg = dep_vars[0] if len(dep_vars) == 1 else dep_vars
-        result = idiff(expr_parsed, dep_arg, independent_symbol, order)
+        solved_value = idiff(expr_parsed, dep_arg, independent_symbol, order)
+        result = ImplicitDerivative(dep_arg, independent_symbol, order, solved_value)
     else:
-        result = expr_parsed
-        for symbol, order in variable_recipe:
-            result = sympy.diff(result, symbol, order)
+        result = sympy.Derivative(expr_parsed, *variable_recipe)
 
     unique_symbols = _ordered_unique_symbols(variable_recipe)
     if positional_values and len(positional_values) != len(unique_symbols):
@@ -540,9 +864,9 @@ def integ_inline(expr, *args):
         coords = {name: sympy.Symbol(name) for name in ("x", "y", "z")}
         call_dict.update(coords)
         expr_parsed = _parse_inline_scalar(expr_source, tuple(coords.values()), "integ")
-        stripped_expr = str(expr_source).strip()
-        if stripped_expr.startswith(("(", "[")) and stripped_expr.endswith((")", "]")):
-            vector_parts = _parse_inline_vector(expr_source, tuple(coords.values()), "integ line")
+        expr_eval = expr_parsed.doit() if hasattr(expr_parsed, "doit") else expr_parsed
+        if isinstance(expr_eval, (sympy.Tuple, sympy.MatrixBase, list, tuple)):
+            vector_parts = list(expr_eval)
         else:
             vector_parts = None
         path_components = _parse_inline_parametrization(param_source, call_dict, "Line parametrization")
@@ -562,9 +886,16 @@ def integ_inline(expr, *args):
             integrand = sum(component * derivative for component, derivative in zip(substituted, tangent))
         else:
             speed = sympy.sqrt(sum(sympy.diff(component, param_symbol) ** 2 for component in path_components))
-            integrand = expr_parsed.subs(substitution_map) * speed
+        is_vector = bool(vector_parts and len(vector_parts) == len(path_components))
+        return InlineIntegral(
+            integrand,
+            (param_symbol, lower, upper),
+            expr_parsed=expr_parsed,
+            kind="line",
+            param_source=param_source,
+            is_vector=is_vector,
+        )
 
-        return sympy.integrate(integrand, (param_symbol, lower, upper))
 
     if kind == "surface":
         if not param_source or len(ranges) != 2:
@@ -573,9 +904,9 @@ def integ_inline(expr, *args):
         coords = {name: sympy.Symbol(name) for name in ("x", "y", "z")}
         call_dict.update(coords)
         expr_parsed = _parse_inline_scalar(expr_source, tuple(coords.values()), "integ")
-        stripped_expr = str(expr_source).strip()
-        if stripped_expr.startswith(("(", "[")) and stripped_expr.endswith((")", "]")):
-            vector_parts = _parse_inline_vector(expr_source, tuple(coords.values()), "integ surface")
+        expr_eval = expr_parsed.doit() if hasattr(expr_parsed, "doit") else expr_parsed
+        if isinstance(expr_eval, (sympy.Tuple, sympy.MatrixBase, list, tuple)):
+            vector_parts = list(expr_eval)
         else:
             vector_parts = None
         surface_components = _parse_inline_parametrization(param_source, call_dict, "Surface parametrization")
@@ -608,11 +939,17 @@ def integ_inline(expr, *args):
         else:
             integrand = expr_parsed.subs(substitution_map) * sympy.sqrt(normal.dot(normal))
 
-        return sympy.integrate(
+        is_vector = bool(vector_parts and len(vector_parts) == 3)
+        return InlineIntegral(
             integrand,
             (second_param, second_lower, second_upper),
             (first_param, first_lower, first_upper),
+            expr_parsed=expr_parsed,
+            kind="surface",
+            param_source=param_source,
+            is_vector=is_vector,
         )
+
 
     if kind == "volume":
         if len(ranges) != 3:
@@ -626,12 +963,15 @@ def integ_inline(expr, *args):
         y_range = range_by_name.get("y", ranges[1])
         z_range = range_by_name.get("z", ranges[2])
 
-        return sympy.integrate(
+        return InlineIntegral(
             expr_parsed,
             (coords["z"], parse_expr(str(z_range["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations), parse_expr(str(z_range["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)),
             (coords["y"], parse_expr(str(y_range["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations), parse_expr(str(y_range["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)),
             (coords["x"], parse_expr(str(x_range["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations), parse_expr(str(x_range["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)),
+            expr_parsed=expr_parsed,
+            kind="volume",
         )
+
 
     for range_entry in ranges:
         call_dict[range_entry["name"]] = sympy.Symbol(range_entry["name"])
@@ -649,7 +989,7 @@ def integ_inline(expr, *args):
             upper = parse_expr(str(range_entry["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)
             integrate_args.append((symbol, lower, upper))
         integrate_args.reverse()
-        return sympy.integrate(expr_parsed, *integrate_args)
+        return sympy.Integral(expr_parsed, *integrate_args)
 
     variable_symbols = []
     for symbol, _order in variable_recipe:
@@ -657,7 +997,7 @@ def integ_inline(expr, *args):
         variable_symbols.append(symbol)
 
     integrate_args = list(reversed(variable_symbols))
-    return sympy.integrate(expr_parsed, *integrate_args)
+    return sympy.Integral(expr_parsed, *integrate_args)
 
 
 def get_base_local_dict():

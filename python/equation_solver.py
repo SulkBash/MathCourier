@@ -72,7 +72,7 @@ def find_matching_matrix_bracket(text, start_index):
             index += 1
             continue
 
-        if char in ("'", '"'):
+        if char == '"' or (char == "'" and not (index > 0 and re.match(r"[a-zA-Z0-9_'}\)]", text[index - 1]))):
             in_quotes = True
             quote_char = char
             index += 1
@@ -166,7 +166,7 @@ def convert_matrix_literals(text):
             index += 1
             continue
 
-        if char in ("'", '"'):
+        if char == '"' or (char == "'" and not (index > 0 and re.match(r"[a-zA-Z0-9_'}\)]", source[index - 1]))):
             in_quotes = True
             quote_char = char
             output.append(char)
@@ -232,7 +232,7 @@ def find_top_level_relations(text):
             i += 1
             continue
 
-        if char in ("'", '"'):
+        if char == '"' or (char == "'" and not (i > 0 and re.match(r"[a-zA-Z0-9_'}\)]", text[i - 1]))):
             in_quotes = True
             quote_char = char
             i += 1
@@ -482,13 +482,13 @@ def format_system_solutions(target_symbols, solutions):
 
 def statement_residual(statement):
     if statement["kind"] == "expression":
-        return statement["expr"]
-    return sympy.simplify(statement["lhs"] - statement["rhs"])
+        return statement["expr"].doit()
+    return sympy.simplify(statement["lhs"].doit() - statement["rhs"].doit())
 
 
 def statement_relation(statement):
-    lhs = statement["lhs"]
-    rhs = statement["rhs"]
+    lhs = statement["lhs"].doit()
+    rhs = statement["rhs"].doit()
     operator = statement["operator"]
 
     if operator == "=":

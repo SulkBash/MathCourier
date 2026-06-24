@@ -50,7 +50,7 @@ function parseCommandSyntax(input, parseOpts = {}) {
             continue;
         }
 
-        if (char === '"' || char === '\'') {
+        if (char === '"' || (char === '\'' && !(i > 0 && /^[a-zA-Z0-9_'}\)]/.test(text[i - 1])))) {
             inQuotes = true;
             quoteChar = char;
             i++;
@@ -116,7 +116,7 @@ function parseCommandSyntax(input, parseOpts = {}) {
                                 if (c === subQuoteChar) { subInQuotes = false; subQuoteChar = null; }
                                 continue;
                             }
-                            if (c === '"' || c === '\'') { subInQuotes = true; subQuoteChar = c; continue; }
+                            if (c === '"' || (c === '\'' && !(j > valIndex && /^[a-zA-Z0-9_'}\)]/.test(text[j - 1])))) { subInQuotes = true; subQuoteChar = c; continue; }
                             if (c === '(') { subParenDepth++; continue; }
                             if (c === ')') { subParenDepth = Math.max(0, subParenDepth - 1); continue; }
                             if (c === '{') { subBraceDepth++; continue; }
@@ -155,7 +155,7 @@ function parseCommandSyntax(input, parseOpts = {}) {
                                 if (c === subQuoteChar) { subInQuotes = false; subQuoteChar = null; }
                                 continue;
                             }
-                            if (c === '"' || c === '\'') { subInQuotes = true; subQuoteChar = c; continue; }
+                            if (c === '"' || (c === '\'' && !(j > valIndex && /^[a-zA-Z0-9_'}\)]/.test(text[j - 1])))) { subInQuotes = true; subQuoteChar = c; continue; }
                             if (c === '(') { subParenDepth++; continue; }
                             if (c === ')') { subParenDepth = Math.max(0, subParenDepth - 1); continue; }
                             if (c === '[') { subBracketDepth++; continue; }
@@ -194,7 +194,7 @@ function parseCommandSyntax(input, parseOpts = {}) {
                                 if (c === subQuoteChar) { subInQuotes = false; subQuoteChar = null; }
                                 continue;
                             }
-                            if (c === '"' || c === '\'') { subInQuotes = true; subQuoteChar = c; continue; }
+                            if (c === '"' || (c === '\'' && !(j > valIndex && /^[a-zA-Z0-9_'}\)]/.test(text[j - 1])))) { subInQuotes = true; subQuoteChar = c; continue; }
                             if (c === '(') { subParenDepth++; continue; }
                             if (c === ')') { subParenDepth = Math.max(0, subParenDepth - 1); continue; }
                             if (c === '[') { subBracketDepth++; continue; }
@@ -281,7 +281,7 @@ function parseCommandSyntax(input, parseOpts = {}) {
  * Normalizes raw options and performs validation against schema rules.
  *
  * @param {Object} parsed - The result from parseCommandSyntax.
- * @param {string} commandName - The name of the command (e.g. 'plot', 'ode', 'diff').
+ * @param {string} commandName - The command context (for example 'plot', 'solve', 'latex', or internal helper routes like 'deriv').
  * @returns {Object} Normalized and validated output.
  */
 function normalizeAndValidate(parsed, commandName) {
@@ -349,7 +349,7 @@ function normalizeAndValidate(parsed, commandName) {
                 continue;
             }
 
-            const isIntCmd = (normCmd === 'int');
+            const isIntegralCmd = (normCmd === 'integ');
             const [minExpr, maxExpr] = val;
             let min, max;
             const evalScope = { inf: Infinity, infinity: Infinity };
@@ -359,11 +359,11 @@ function normalizeAndValidate(parsed, commandName) {
                 const numMin = (evalMin && typeof evalMin.toNumber === 'function') ? evalMin.toNumber() : Number(evalMin);
                 if (typeof numMin === 'number' && !isNaN(numMin)) {
                     min = numMin;
-                } else if (!isIntCmd) {
+                } else if (!isIntegralCmd) {
                     errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
                 }
             } catch (err) {
-                if (!isIntCmd) {
+                if (!isIntegralCmd) {
                     errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
                 }
             }
@@ -373,17 +373,17 @@ function normalizeAndValidate(parsed, commandName) {
                 const numMax = (evalMax && typeof evalMax.toNumber === 'function') ? evalMax.toNumber() : Number(evalMax);
                 if (typeof numMax === 'number' && !isNaN(numMax)) {
                     max = numMax;
-                } else if (!isIntCmd) {
+                } else if (!isIntegralCmd) {
                     errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
                 }
             } catch (err) {
-                if (!isIntCmd) {
+                if (!isIntegralCmd) {
                     errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
                 }
             }
 
-            if (isIntCmd || (min !== undefined && max !== undefined)) {
-                if (!isIntCmd && min >= max) {
+            if (isIntegralCmd || (min !== undefined && max !== undefined)) {
+                if (!isIntegralCmd && min >= max) {
                     errors.push(`Range minimum (${min}) must be less than maximum (${max}) for variable "${key}".`);
                 } else {
                     ranges.push({ name: key, min, max, minExpr, maxExpr });
@@ -408,17 +408,23 @@ function normalizeAndValidate(parsed, commandName) {
     // 4. Process mode (allowed values depend on command)
     if (parsed.options.hasOwnProperty('mode')) {
         const val = String(parsed.options.mode).toLowerCase().trim();
-        const defaultModes = new Set(['hybrid', 'sym', 'num']);
+        const differentialModes = new Set(['hybrid', 'sym', 'num']);
         const solveModes = new Set(['factor', 'expand', 'simplify', 'hybrid', 'sym', 'num']);
         const latexModes = new Set(['formula', 'chem', 'tikz']);
-        const allowedModes = normCmd === 'solve'
-            ? solveModes
-            : normCmd === 'latex'
-                ? latexModes
-                : defaultModes;
+        let allowedModes = null;
 
-        if (allowedModes.has(val)) {
+        if (normCmd === 'solve') {
+            allowedModes = solveModes;
+        } else if (normCmd === 'latex') {
+            allowedModes = latexModes;
+        } else if (normCmd === 'ode' || normCmd === 'pde') {
+            allowedModes = differentialModes;
+        }
+
+        if (allowedModes && allowedModes.has(val)) {
             normalizedOptions.mode = val;
+        } else if (!allowedModes) {
+            errors.push(`Option "mode" is not supported for command "!${commandName}".`);
         } else {
             const expectedModes = Array.from(allowedModes).map((mode) => `'${mode}'`).join(', ');
             errors.push(`Invalid mode: expected ${expectedModes}, got "${parsed.options.mode}".`);
@@ -432,7 +438,7 @@ function normalizeAndValidate(parsed, commandName) {
         const val = String(parsed.options.kind).toLowerCase().trim();
         let isValid = false;
 
-        if (normCmd === 'int') {
+        if (normCmd === 'integ') {
             const allowed = new Set(['line', 'surface', 'volume']);
             if (allowed.has(val)) isValid = true;
         } else if (normCmd === 'plot') {
@@ -554,8 +560,8 @@ function normalizeAndValidate(parsed, commandName) {
     }
 
     // 9. Command-Local Rules
-    if (normCmd !== 'diff' && variables.some((variable) => variable.order !== 1)) {
-        errors.push(`Option "vars" only supports order markers like x:2 for command "!diff".`);
+    if (normCmd !== 'deriv' && variables.some((variable) => variable.order !== 1)) {
+        errors.push('Option "vars" only supports order markers like x:2 for derivative helpers. Use deriv[...].');
     } else if (normCmd === 'ode') {
         if (!parsed.options.hasOwnProperty('ic')) {
             errors.push('Command "!ode" requires initial conditions "ic:{...}".');

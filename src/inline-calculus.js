@@ -4,6 +4,13 @@ const VALID_VAR_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const COORDINATE_NAMES = new Set(['x', 'y', 'z']);
 const LINE_PARAM_PREFERENCES = ['t', 's', 'tau', 'theta', 'u', 'v'];
 const SURFACE_PARAM_PREFERENCES = ['u', 'v', 's', 't', 'theta', 'phi', 'r', 'w'];
+const VECTOR_VAR_PREFERENCES = ['x', 'y', 'z', 'r', 'theta', 'phi', 'u', 'v', 'w', 's', 't'];
+const SCALAR_VECTOR_INLINE_HELPERS = new Set(['grad', 'gradx', 'grady', 'gradz', 'lap']);
+const VECTOR_FIELD_INLINE_HELPERS = new Set(['div', 'curl', 'curlx', 'curly', 'curlz']);
+const VECTOR_INLINE_HELPERS = new Set([
+    ...SCALAR_VECTOR_INLINE_HELPERS,
+    ...VECTOR_FIELD_INLINE_HELPERS
+]);
 
 function unique(items = []) {
     const seen = new Set();
@@ -235,6 +242,21 @@ function orderedUniqueVariableNames(recipe) {
     return unique((recipe || []).map((entry) => entry.name));
 }
 
+function orderPreferredVariables(variableNames = []) {
+    return unique(variableNames).sort((a, b) => {
+        const aIndex = VECTOR_VAR_PREFERENCES.indexOf(a);
+        const bIndex = VECTOR_VAR_PREFERENCES.indexOf(b);
+        const aRank = aIndex === -1 ? VECTOR_VAR_PREFERENCES.length : aIndex;
+        const bRank = bIndex === -1 ? VECTOR_VAR_PREFERENCES.length : bIndex;
+
+        if (aRank !== bRank) {
+            return aRank - bRank;
+        }
+
+        return a.localeCompare(b);
+    });
+}
+
 function flattenDerivativeRecipe(recipe) {
     const sequence = [];
     for (const entry of recipe || []) {
@@ -263,6 +285,180 @@ function normalizeExpressionSource(descriptor, label) {
         return { success: false, error: `${label} requires a non-empty expression.` };
     }
     return { success: true, exprSource };
+}
+
+function buildVectorHelperLegacyError(functionName) {
+    return {
+        success: false,
+        error: `${functionName} no longer accepts positional coordinate arguments. Omit them and let the helper infer variables, or use vars:{...}.`
+    };
+}
+
+function inferScalarVectorVariables(exprSource, extractVars) {
+    const inferred = orderPreferredVariables(extractVars(exprSource));
+    return inferred.length > 0 ? inferred : ['x'];
+}
+
+function inferFieldVectorVariables(exprSource, dimension, functionName, extractVars) {
+    const components = parseTupleSource(exprSource);
+    const inferred = orderPreferredVariables(
+        components.flatMap((component) => extractVars(component))
+    );
+
+    if (inferred.length === dimension) {
+        return { success: true, variables: inferred, components };
+    }
+
+    if (inferred.length > dimension) {
+        return {
+            success: true,
+            variables: inferred.slice(0, dimension),
+            components
+        };
+    }
+
+    if (inferred.length === 0) {
+        return {
+            success: true,
+            variables: ['x', 'y', 'z'].slice(0, dimension),
+            components
+        };
+    }
+
+    if (inferred.every((name) => COORDINATE_NAMES.has(name))) {
+        const filled = [...inferred];
+        for (const defaultName of ['x', 'y', 'z']) {
+            if (filled.length === dimension) {
+                break;
+            }
+            if (!filled.includes(defaultName)) {
+                filled.push(defaultName);
+            }
+        }
+        return { success: true, variables: filled, components };
+    }
+
+    return {
+        success: false,
+        error: `Could not infer ${dimension} coordinate variables for ${functionName}. Use vars:{...} to specify them explicitly.`
+    };
+}
+
+function parseVectorHelperCall(functionName, descriptors, extractVars) {
+    const exprResult = normalizeExpressionSource(descriptors[0], functionName);
+    if (!exprResult.success) {
+        return exprResult;
+    }
+
+    const exprSource = exprResult.exprSource;
+    const rest = descriptors.slice(1);
+    let variableRecipe = null;
+
+    for (const descriptor of rest) {
+        if (descriptor.kind !== 'string') {
+            return buildVectorHelperLegacyError(functionName);
+        }
+
+        const raw = String(descriptor.source || '').trim();
+        if (!raw) {
+            continue;
+        }
+
+        const option = parseOptionToken(raw);
+        if (!option) {
+            if (VALID_VAR_RE.test(raw)) {
+                return buildVectorHelperLegacyError(functionName);
+            }
+            return { success: false, error: `Unsupported ${functionName} helper argument "${raw}".` };
+        }
+
+        if (option.key !== 'vars') {
+            return { success: false, error: `Unsupported ${functionName} helper option "${option.key}".` };
+        }
+
+        const parsedRecipe = parseVariableRecipe(option.value);
+        if (!parsedRecipe.success) {
+            return parsedRecipe;
+        }
+
+        if (parsedRecipe.variables.some((entry) => entry.order !== 1)) {
+            return {
+                success: false,
+                error: `${functionName} vars do not support derivative-style order markers.`
+            };
+        }
+
+        const rawNames = parsedRecipe.variables.map((entry) => entry.name);
+        if (new Set(rawNames).size !== rawNames.length) {
+            return {
+                success: false,
+                error: `${functionName} coordinate variables must be unique.`
+            };
+        }
+
+        variableRecipe = parsedRecipe.variables;
+    }
+
+    if (VECTOR_FIELD_INLINE_HELPERS.has(functionName)) {
+        const components = parseTupleSource(exprSource);
+        const dimension = components.length;
+        if (dimension < 2 || dimension > 3) {
+            return {
+                success: false,
+                error: `${functionName} only supports 2D or 3D vector fields.`
+            };
+        }
+
+        let varNames;
+        if (variableRecipe) {
+            varNames = parsedRecipeNames(variableRecipe);
+        } else {
+            const inferred = inferFieldVectorVariables(exprSource, dimension, functionName, extractVars);
+            if (!inferred.success) {
+                return inferred;
+            }
+            varNames = inferred.variables;
+        }
+
+        if (varNames.length !== dimension) {
+            return {
+                success: false,
+                error: `${functionName} expects ${dimension} coordinate variable${dimension === 1 ? '' : 's'} for this vector field.`
+            };
+        }
+
+        return {
+            success: true,
+            functionName,
+            exprSource,
+            varNames,
+            dimension,
+            components
+        };
+    }
+
+    const varNames = variableRecipe
+        ? parsedRecipeNames(variableRecipe)
+        : inferScalarVectorVariables(exprSource, extractVars);
+
+    if (varNames.length < 1 || varNames.length > 3) {
+        return {
+            success: false,
+            error: `${functionName} only supports 1 to 3 coordinate variables.`
+        };
+    }
+
+    return {
+        success: true,
+        functionName,
+        exprSource,
+        varNames,
+        dimension: varNames.length
+    };
+}
+
+function parsedRecipeNames(recipe) {
+    return (recipe || []).map((entry) => entry.name);
 }
 
 function parseDerivativeCall(descriptors, extractVars) {
@@ -645,6 +841,20 @@ function extractVolumeDependencies(config, extractVars) {
     return Array.from(deps);
 }
 
+function extractVectorHelperDependencies(config, extractVars) {
+    if (VECTOR_FIELD_INLINE_HELPERS.has(config.functionName)) {
+        const deps = new Set();
+        for (const component of config.components || []) {
+            for (const name of extractVars(component)) {
+                deps.add(name);
+            }
+        }
+        return Array.from(deps);
+    }
+
+    return Array.from(new Set(extractVars(config.exprSource)));
+}
+
 function extractInlineDependencies(functionName, descriptors, extractVars) {
     if (functionName === 'deriv') {
         const parsed = parseDerivativeCall(descriptors, extractVars);
@@ -672,6 +882,14 @@ function extractInlineDependencies(functionName, descriptors, extractVars) {
         return extractStandardIntegralDependencies(parsed, extractVars);
     }
 
+    if (VECTOR_INLINE_HELPERS.has(functionName)) {
+        const parsed = parseVectorHelperCall(functionName, descriptors, extractVars);
+        if (!parsed.success) {
+            return [];
+        }
+        return extractVectorHelperDependencies(parsed, extractVars);
+    }
+
     return [];
 }
 
@@ -680,6 +898,7 @@ module.exports = {
     LINE_PARAM_PREFERENCES,
     SURFACE_PARAM_PREFERENCES,
     VALID_VAR_RE,
+    VECTOR_INLINE_HELPERS,
     extractInlineDependencies,
     findTopLevelColon,
     flattenDerivativeRecipe,
@@ -690,6 +909,7 @@ module.exports = {
     parseDerivativeCall,
     parseIntegralCall,
     parseOptionToken,
+    parseVectorHelperCall,
     parseRangeOptionText,
     parseTupleSource,
     parseVariableRecipe,

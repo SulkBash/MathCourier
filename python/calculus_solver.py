@@ -81,20 +81,31 @@ def parse_parametrization(expr_str, call_dict, label):
 
 def parse_field(expr_str, call_dict):
     stripped = expr_str.strip()
-    if stripped.startswith("(") and stripped.endswith(")"):
-        inner = stripped[1:-1]
-        parts = split_top_level(inner)
-        if len(parts) < 2:
-            raise ValueError("Vector fields must contain at least two components.")
+    try:
+        expr = parse_math_expr(stripped, call_dict)
+        if isinstance(expr, (sympy.Tuple, sympy.MatrixBase, list, tuple)):
+            return {
+                "kind": "vector",
+                "components": list(expr),
+            }
         return {
-            "kind": "vector",
-            "components": [parse_math_expr(part, call_dict) for part in parts],
+            "kind": "scalar",
+            "expr": expr,
         }
-
-    return {
-        "kind": "scalar",
-        "expr": parse_math_expr(stripped, call_dict),
-    }
+    except Exception:
+        if stripped.startswith("(") and stripped.endswith(")"):
+            inner = stripped[1:-1]
+            parts = split_top_level(inner)
+            if len(parts) < 2:
+                raise ValueError("Vector fields must contain at least two components.")
+            return {
+                "kind": "vector",
+                "components": [parse_math_expr(part, call_dict) for part in parts],
+            }
+        return {
+            "kind": "scalar",
+            "expr": parse_math_expr(stripped, call_dict),
+        }
 
 
 def choose_parameter_symbols(expressions, expected_count, call_dict, preferences):

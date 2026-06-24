@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config');
 const renderer = require('../src/renderer');
 const handlePlotCommand = require('../src/commands/plot');
 const plot3dModule = require('../src/renderer/plot3d');
@@ -120,6 +121,46 @@ async function runTests() {
         );
 
         assert.deepStrictEqual(seedsA, seedsB, 'expected identical seed clouds for the same comparison box');
+    });
+
+    runAssertionTest('3D Implicit Surface Sampling Uses Dense Configured Grid', () => {
+        const coarseSteps = Math.max(12, Number(config.bot?.plot3dImplicitCoarseSteps) || 36);
+        const gridSteps = Math.max(coarseSteps + 4, Number(config.bot?.plot3dImplicitGridSteps) || 56);
+        assert.ok(
+            gridSteps > 35,
+            `expected implicit surface sampling to stay above the legacy 35-step dense grid, got ${gridSteps}`
+        );
+
+        const scene = plot3dModule._internals.buildPlot3dScene({
+            customOptions: {},
+            expr: 'x^2 + y^2 + z^2 = 1',
+            semantics: {
+                family: 'surface-implicit',
+                lhs: 'x^2 + y^2 + z^2',
+                rhs: '1',
+                coordVars: ['x', 'y', 'z'],
+                coordSystem: 'cartesian'
+            },
+            parameterDomain1: null,
+            parameterDomain2: null,
+            providedDomains: { x: true, y: true, z: true }
+        }, {
+            xDomain: [-1.5, 1.5],
+            yDomain: [-1.5, 1.5],
+            zDomain: [-1.5, 1.5]
+        });
+
+        assert.equal(scene.success, true, scene.error || 'expected an implicit surface scene');
+        assert.equal(scene.type, 'implicit');
+        assert.equal(scene.plotData.value.length, Math.pow(gridSteps + 1, 3));
+        assert.ok(
+            scene.plotData.value.some((value) => Number.isFinite(value) && value < 0),
+            'expected negative scalar values inside the implicit surface'
+        );
+        assert.ok(
+            scene.plotData.value.some((value) => Number.isFinite(value) && value > 0),
+            'expected positive scalar values outside the implicit surface'
+        );
     });
 
     runAssertionTest('3D Cartesian Vector Mask Supports Shared Spherical Radius Clip', () => {

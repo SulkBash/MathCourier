@@ -249,7 +249,7 @@ def solve_pde():
     x_min_val = input_data.get("x_min")
     x_max_val = input_data.get("x_max")
     
-    bc_dict = {} # maps x_val to expression of t
+    bc_parsed_list = []
     for bc in bcs:
         try:
             norm_bc = normalize_pde_derivatives(bc, dep_var, spatial_var, temporal_var)
@@ -265,8 +265,12 @@ def solve_pde():
                 args = lhs_parsed.args
                 spatial_arg = args[spatial_pos]
                 if spatial_arg.is_number or spatial_arg.is_constant():
-                    spatial_val = float(spatial_arg.evalf())
-                    bc_dict[spatial_val] = rhs_parsed
+                    spatial_val_float = float(spatial_arg.evalf())
+                    bc_parsed_list.append({
+                        "symbolic_x": spatial_arg,
+                        "float_x": spatial_val_float,
+                        "expr_t": rhs_parsed
+                    })
         except Exception as e:
             print(json.dumps({"success": False, "error": f"Failed to parse boundary condition '{bc}': {str(e)}"}))
             return
@@ -274,15 +278,15 @@ def solve_pde():
     # Determine spatial domain limits
     if x_min_val is not None:
         x_min = float(x_min_val)
-    elif bc_dict:
-        x_min = min(bc_dict.keys())
+    elif bc_parsed_list:
+        x_min = min(entry["float_x"] for entry in bc_parsed_list)
     else:
         x_min = 0.0
 
     if x_max_val is not None:
         x_max = float(x_max_val)
-    elif bc_dict and len(bc_dict) > 1:
-        x_max = max(bc_dict.keys())
+    elif bc_parsed_list and len(bc_parsed_list) > 1:
+        x_max = max(entry["float_x"] for entry in bc_parsed_list)
     else:
         x_max = sympy.pi.evalf()
         x_max = float(x_max)
@@ -296,11 +300,16 @@ def solve_pde():
     bc_left_expr = sympy.Integer(0)
     bc_right_expr = sympy.Integer(0)
     
-    for val, expr in bc_dict.items():
-        if abs(val - x_min) < 1e-9:
-            bc_left_expr = expr
-        elif abs(val - x_max) < 1e-9:
-            bc_right_expr = expr
+    if bc_parsed_list:
+        left_bc_entry = min(bc_parsed_list, key=lambda entry: entry["float_x"])
+        right_bc_entry = max(bc_parsed_list, key=lambda entry: entry["float_x"])
+        x_min_symbolic = left_bc_entry["symbolic_x"]
+        x_max_symbolic = right_bc_entry["symbolic_x"]
+        bc_left_expr = left_bc_entry["expr_t"]
+        bc_right_expr = right_bc_entry["expr_t"]
+    else:
+        x_min_symbolic = sympy.sympify(x_min)
+        x_max_symbolic = sympy.sympify(x_max)
 
     # 3. Parse Initial Conditions (ICs)
     ic_u_expr = None
@@ -511,7 +520,7 @@ def solve_pde():
         if is_second_order_time:
             ic_latex += f", \\quad \\frac{{\\partial {dep_var}}}{{\\partial {temporal_var}}}({spatial_var}, 0) = {sympy.latex(ic_v_expr)}"
             
-        bc_latex = f"{dep_var}({sympy.latex(sympy.sympify(x_min))}, {temporal_var}) = {sympy.latex(bc_left_expr)}, \\quad {dep_var}({sympy.latex(sympy.sympify(x_max))}, {temporal_var}) = {sympy.latex(bc_right_expr)}"
+        bc_latex = f"{dep_var}({sympy.latex(x_min_symbolic)}, {temporal_var}) = {sympy.latex(bc_left_expr)}, \\quad {dep_var}({sympy.latex(x_max_symbolic)}, {temporal_var}) = {sympy.latex(bc_right_expr)}"
         
         combined_latex = f"\\begin{{aligned}} &{pde_latex} \\\\ &{ic_latex} \\\\ &{bc_latex} \\end{{aligned}}"
 

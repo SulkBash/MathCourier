@@ -4,6 +4,70 @@ const config = require('../../config');
 
 const QUICKLATEX_ALLOWED_HOSTS = new Set(['quicklatex.com', 'www.quicklatex.com']);
 
+function parseQuickLaTeXResponse(body) {
+    const lines = String(body || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+    if (lines.length === 0) {
+        return { success: false, error: 'QuickLaTeX returned an empty response.' };
+    }
+
+    if (lines[0] !== '0') {
+        const detail = lines.slice(1).join(' ').trim();
+        return {
+            success: false,
+            error: `QuickLaTeX error: ${detail || `status ${lines[0]}`}`
+        };
+    }
+
+    if (!lines[1]) {
+        return { success: false, error: 'QuickLaTeX returned a success code without an image URL.' };
+    }
+
+    const responseParts = lines[1].split(/\s+/).filter(Boolean);
+    const imageUrl = responseParts[0];
+    const detail = lines.slice(2).join(' ').trim();
+
+    let reportedWidth = null;
+    let reportedHeight = null;
+    if (responseParts.length >= 3) {
+        const maybeWidth = Number(responseParts[responseParts.length - 2]);
+        const maybeHeight = Number(responseParts[responseParts.length - 1]);
+        if (Number.isFinite(maybeWidth) && Number.isFinite(maybeHeight)) {
+            reportedWidth = maybeWidth;
+            reportedHeight = maybeHeight;
+        }
+    }
+
+    try {
+        const parsedUrl = new url.URL(imageUrl);
+        if (/\/error\.png$/i.test(parsedUrl.pathname)) {
+            return {
+                success: false,
+                error: `QuickLaTeX error: ${detail || 'QuickLaTeX returned its error image.'}`
+            };
+        }
+    } catch (_) {
+        // Let the existing URL validation path report invalid URLs below.
+    }
+
+    if (reportedWidth === 1 && reportedHeight === 1) {
+        return {
+            success: false,
+            error: 'QuickLaTeX returned an empty 1x1 image. The input likely failed to compile.'
+        };
+    }
+
+    return {
+        success: true,
+        imageUrl,
+        reportedWidth,
+        reportedHeight
+    };
+}
+
 async function renderQuickLaTeX(formula, preamble) {
     return new Promise(async (resolve) => {
         try {
@@ -35,13 +99,13 @@ async function renderQuickLaTeX(formula, preamble) {
                 res.on('data', (chunk) => { body += chunk; });
                 res.on('end', async () => {
                     try {
-                        const lines = body.split('\n').map(l => l.trim());
-                        if (lines[0] !== '0') {
-                            resolve({ success: false, error: `QuickLaTeX error: ${lines.slice(1).join(' ')}` });
+                        const parsedResponse = parseQuickLaTeXResponse(body);
+                        if (!parsedResponse.success) {
+                            resolve(parsedResponse);
                             return;
                         }
 
-                        const imageUrl = lines[1].split(' ')[0];
+                        const imageUrl = parsedResponse.imageUrl;
 
                         // SSRF guard: only fetch from known QuickLaTeX hosts
                         let parsed;
@@ -154,5 +218,6 @@ function renderTikz(formula) {
 module.exports = {
     renderChem,
     renderTikz,
-    renderQuickLaTeX
+    renderQuickLaTeX,
+    parseQuickLaTeXResponse
 };

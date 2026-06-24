@@ -103,19 +103,22 @@ async function runTests() {
         renderer.renderPlot('y = integ("sin(t)", "t", 0, x)', { xDomain: [-10, 10], yDomain: [-3, 3] }));
 
     await runTest('Plot laplacian of x^3', () =>
-        renderer.renderPlot('y = lap("x^3", x)', { xDomain: [-3, 3], yDomain: [-20, 20] }));
+        renderer.renderPlot('y = lap("x^3")', { xDomain: [-3, 3], yDomain: [-20, 20] }));
 
     await runTest('Plot gradient field of x^2 + y^2', () =>
         renderer.renderPlot(
-            'v(x,y) = (gradx("x^2 + y^2", x, y), grady("x^2 + y^2", x, y))',
+            'v(x,y) = (gradx("x^2 + y^2"), grady("x^2 + y^2"))',
             { xDomain: [-3, 3], yDomain: [-3, 3] }
         ));
 
-    await runTest('Plot implicit gradient field of x^2 + y^2', () =>
-        renderer.renderPlot(
-            '(gradx("x^2 + y^2", x, y), grady("x^2 + y^2", x, y))',
+    await runTest('Plot implicit gradient field of x^2 + y^2 (expect ambiguity error)', async () => {
+        const res = await renderer.renderPlot(
+            '(gradx("x^2 + y^2"), grady("x^2 + y^2"))',
             { xDomain: [-3, 3], yDomain: [-3, 3] }
-        ));
+        );
+        if (!res.success) return { ...res, expectFail: true };
+        return { success: false, error: 'Expected ambiguity failure but got success' };
+    });
 
     await runTest('Plot parametric Lissajous curve', () =>
         renderer.renderPlot('(cos(3*t), sin(2*t))', { domains: [[0, 2*Math.PI]] }));
@@ -158,7 +161,7 @@ async function runTests() {
         handlePlotCommand('x^2 + y^2 = 1 view:3d x:[-2, 2] y:[-2, 2]'));
 
     await runTest('Plot3d laplacian surface', () =>
-        renderer.renderPlot3d('z = lap("x^2 + y^2", x, y)', { xDomain: [-3, 3], yDomain: [-3, 3], zDomain: [0, 8] }));
+        renderer.renderPlot3d('z = lap("x^2 + y^2")', { xDomain: [-3, 3], yDomain: [-3, 3], zDomain: [0, 8] }));
 
     await runTest('Plot command handle 3D parametric torus surface', () =>
         handlePlotCommand('(cos(u)*(2 + cos(v)), sin(u)*(2 + cos(v)), sin(v)) view:3d kind:surface vars:{u, v} u:[0, 2*pi] v:[0, 2*pi]'));

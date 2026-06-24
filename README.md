@@ -6,16 +6,11 @@ Uses a local headless browser (Puppeteer + KaTeX) for fast rendering, with a Cod
 
 ## What it does
 
-- `!latex <formula>` / `!tex <formula>` renders a single equation
+- `!latex <content>` renders formulas, chemistry, and diagrams
 - `$$ ... $$` in any message auto-renders the equation in context with surrounding text
-- `!chem <chemfig code>` draws molecular structures via QuickLaTeX
-- `!tikz <code>` renders TikZ diagrams via QuickLaTeX
 - `!plot <expr>` plots functions, vector fields, and implicit equations
-- `!solve <equation(s)>` solves algebraic equations or square systems
-- `!diff` / `!int` differentiate and integrate expressions symbolically, including line, surface, and volume integrals
-- `!grad` / `!lap` / `!div` / `!curl` compute vector differential operators in 2D or 3D
-- `!ode` solves differential equations symbolically or numerically and graphs trajectories
-- `!desp <eq> for <var>` isolates a target variable symbolically
+- `!plot view:3d ...` renders surfaces, implicit volumes, curves, vector fields, and animations
+- `!solve <expression>` handles equations, calculus, vector calculus, matrices, ODEs, PDEs, and variable isolation
 
 Output is a dark-themed card with rounded corners, drop shadows, and a small watermark. It looks good on both light and dark WhatsApp themes.
 
@@ -23,7 +18,7 @@ Output is a dark-themed card with rounded corners, drop shadows, and a small wat
 
 **Prerequisites:**
 - Node.js v18+
-- Python 3 with `sympy`, `numpy`, `scipy` for the calculus, ODE, and rearrange solvers
+- Python 3 with `sympy`, `numpy`, `scipy` for symbolic solving, calculus, ODEs, and PDEs
 
 ```bash
 # Install Node dependencies
@@ -85,13 +80,13 @@ connects five fundamental constants.
 ### Molecular structures (chemfig)
 
 ```text
-!chem \chemfig{A-B*6(=-=-=-)}
+!latex \chemfig{A-B*6(=-=-=-)}
 ```
 
 ### TikZ and circuit diagrams
 
 ```text
-!tikz
+!latex
 \draw[thick, fill=blue!10] (0,0) circle (1.5);
 \node at (0,0) {TikZ Works!};
 ```
@@ -99,7 +94,7 @@ connects five fundamental constants.
 You can also draw circuits using `circuitikz`:
 
 ```text
-!tikz
+!latex
 \draw (0,0) to[R, l=$R$] (2,0)
       to[C, l=$C$] (2,2)
       to[L, l=$L$] (0,2)
@@ -113,13 +108,13 @@ Or just send a `\begin{tikzpicture}` block directly.
 ```text
 !plot sin(x) * cos(x/2)
 !plot x^2 + y^2 = 1
-!plot y = ln(x) [-1, 20] [-5, 5]
-!plot y = lap("x^3", x) [-3, 3] [-20, 20]
-!plot v(x,y) = (gradx("x^2 + y^2", x, y), grady("x^2 + y^2", x, y)) [-3, 3] [-3, 3]
-!plot (-y, x) [-5, 5] [-5, 5]
+!plot y = ln(x) x:[-1, 20] y:[-5, 5]
+!plot y = lap("x^3") x:[-3, 3] y:[-20, 20]
+!plot (-y, x) kind:vector x:[-5, 5] y:[-5, 5]
+!plot z = sin(x)*cos(y) view:3d x:[-3, 3] y:[-3, 3]
 ```
 
-Brackets at the end set custom x/y domains.
+Use labeled ranges such as `x:[min, max]`, `y:[min, max]`, and `z:[min, max]`.
 
 ### Equation Solving
 
@@ -132,35 +127,33 @@ Brackets at the end set custom x/y domains.
 ### Calculus
 
 ```text
-!diff x^2 * sin(x)
-!int sin(x) x 0 pi
-!int line (-y, x) path (cos(t), sin(t)) [0, 2*pi]
-!int surface (0, 0, z) surface (sin(u)*cos(v), sin(u)*sin(v), cos(u)) [0, pi] [0, 2*pi]
-!int volume x*y*z [0, 1] [0, 2] [0, 3]
+!solve deriv[x^2 * sin(x), x]
+!solve integ[sin(x), x, 0, pi]
+!solve integ[(-y, x), kind:line, param:{cos(t), sin(t)}, t:[0, 2*pi]]
+!solve integ[(0, 0, z), kind:surface, param:{sin(u)*cos(v), sin(u)*sin(v), cos(u)}, u:[0, pi], v:[0, 2*pi]]
+!solve integ[x*y*z, kind:volume, x:[0, 1], y:[0, 2], z:[0, 3]]
 ```
 
 ### Vector Differential Operators
 
 ```text
-!grad x^2 * y * z
-!grad x^2 + y^2, x, y
-!lap x^2 + y^2, x, y
-!div (x^2, y^2, z^2)
-!curl (-y, x, 0)
-!plot3d z = lap("x^2 + y^2", x, y) [-3, 3] [-3, 3] [0, 8]
-!plot3d F(x,y,z) = (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]
-!plot3d (-y, x, z/2) [-4, 4] [-4, 4] [-4, 4]
+!solve grad[x^2 * y * z, vars:{x, y, z}]
+!solve lap[x^2 + y^2, vars:{x, y}]
+!solve div[(x^2, y^2, z^2), vars:{x, y, z}]
+!solve curl[(-y, x, 0), vars:{x, y, z}]
+!plot z = lap("x^2 + y^2") view:3d x:[-3, 3] y:[-3, 3] z:[0, 8]
+!plot F(x,y,z) = (-y, x, z/2) view:3d kind:vector vars:{x, y, z} x:[-4, 4] y:[-4, 4] z:[-4, 4]
 ```
 
 ### Differential Equations (ODEs)
 
 ```text
-!ode dy/dx = -y, y(0) = 1
-!ode y'' + y = 0, y(0) = 1, y'(0) = 0 [-10, 10]
+!solve dy/dx = -y ic:{y(0)=1}
+!solve y'' + y = 0 ic:{y(0)=1; y'(0)=0} x:[-10, 10]
 ```
 
 ### Variable Isolation
 
 ```text
-!desp E = m * c^2 for c
+!solve E = m * c^2 vars:c
 ```

@@ -56,6 +56,32 @@ def normalize_eq_str(eq_str, dep_vars, ind_var_name):
     eq_str = eq_str.replace('^', '**')
     return eq_str
 
+
+def is_linear_system(ode_eqs, dep_syms, ind_sym):
+    dep_functions = list(dep_syms.values())
+    dep_nodes = set()
+    for eq in ode_eqs:
+        expr = eq.lhs - eq.rhs
+        for node in sympy.preorder_traversal(expr):
+            if node in dep_functions:
+                dep_nodes.add(node)
+            elif isinstance(node, sympy.Derivative) and node.expr in dep_functions:
+                dep_nodes.add(node)
+    
+    dep_nodes = list(dep_nodes)
+    for eq in ode_eqs:
+        expr = eq.lhs - eq.rhs
+        for node in dep_nodes:
+            try:
+                deriv = sympy.diff(expr, node)
+                deriv_atoms = set(sympy.preorder_traversal(deriv))
+                if deriv_atoms.intersection(dep_nodes):
+                    return False
+            except Exception:
+                return False
+    return True
+
+
 def solve_ode():
     try:
         input_data = json.loads(sys.stdin.read())
@@ -228,119 +254,130 @@ def solve_ode():
 
     # Try SymPy symbolic solver first
     if mode in ("sym", "hybrid"):
-        try:
-            # Solve symbolically
-            sol = sympy.dsolve(ode_eqs, list(dep_syms.values()), ics=ics_dict)
+        skip_symbolic = False
+        if len(ode_eqs) > 1:
+            if not is_linear_system(ode_eqs, dep_syms, ind_sym):
+                skip_symbolic = True
+        
+        if skip_symbolic:
+            if mode == "sym":
+                print(json.dumps({"success": False, "error": "Analytical solver does not support non-linear systems symbolically."}))
+                return
+        else:
+            try:
+                # Solve symbolically
+                sol = sympy.dsolve(ode_eqs, list(dep_syms.values()), ics=ics_dict)
             
-            # If successfully solved
-            if sol:
-                # Format Latex representation
-                if isinstance(sol, list):
-                    sol_list = sol
-                else:
-                    sol_list = [sol]
-
-                latex_parts = []
-                for s in sol_list:
-                    if isinstance(s, sympy.Eq):
-                        latex_parts.append(sympy.latex(s))
-                
-                if len(latex_parts) > 1:
-                    symbolic_latex = "\\begin{cases} " + " \\\\ ".join(latex_parts) + " \\end{cases}"
-                elif len(latex_parts) == 1:
-                    symbolic_latex = latex_parts[0]
-                else:
-                    symbolic_latex = sympy.latex(sol)
-
-                # Generate points for each solved equation
-                funcs = {}
-                points_generated = True
-                for s in sol_list:
-                    if isinstance(s, sympy.Eq):
-                        # LHS is function (e.g. y(x)), RHS is expression
-                        lhs_func = s.lhs
-                        rhs_expr = s.rhs
-                        
-                        # Find name of function
-                        func_name = str(lhs_func.func)
-                        funcs[func_name] = sympy.lambdify(ind_sym, rhs_expr, modules=['numpy', 'math'])
+                # If successfully solved
+                if sol:
+                    # Format Latex representation
+                    if isinstance(sol, list):
+                        sol_list = sol
                     else:
-                        points_generated = False
-                        break
+                        sol_list = [sol]
 
-                if points_generated:
-                    x_vals = np.linspace(x_min, x_max, 400)
-                    if plot_axes:
-                        x_var_name = plot_axes[0]
-                        y_var_name = plot_axes[1]
-                        
-                        trajectory = []
-                        for xv in x_vals:
-                            try:
-                                # Get x-axis value
-                                if x_var_name == ind_var_name:
-                                    x_val = float(xv)
-                                else:
-                                    x_val = funcs[x_var_name](xv)
-                                    if isinstance(x_val, (complex, np.complex128)):
-                                        x_val = x_val.real if abs(x_val.imag) < 1e-9 else None
-                                    x_val = float(x_val)
-                                
-                                # Get y-axis value
-                                if y_var_name == ind_var_name:
-                                    y_val = float(xv)
-                                else:
-                                    y_val = funcs[y_var_name](xv)
-                                    if isinstance(y_val, (complex, np.complex128)):
-                                        y_val = y_val.real if abs(y_val.imag) < 1e-9 else None
-                                    y_val = float(y_val)
-                                
-                                if x_val is not None and y_val is not None and not np.isnan(x_val) and not np.isinf(x_val) and not np.isnan(y_val) and not np.isinf(y_val):
-                                    trajectory.append({"x": x_val, "y": y_val})
-                            except Exception:
-                                pass
-                        
-                        if len(trajectory) > 2:
-                            curves[f"{x_var_name} vs {y_var_name}"] = trajectory
+                    latex_parts = []
+                    for s in sol_list:
+                        if isinstance(s, sympy.Eq):
+                            latex_parts.append(sympy.latex(s))
+                    
+                    if len(latex_parts) > 1:
+                        symbolic_latex = "\\begin{cases} " + " \\\\ ".join(latex_parts) + " \\end{cases}"
+                    elif len(latex_parts) == 1:
+                        symbolic_latex = latex_parts[0]
+                    else:
+                        symbolic_latex = sympy.latex(sol)
+
+                    # Generate points for each solved equation
+                    funcs = {}
+                    points_generated = True
+                    for s in sol_list:
+                        if isinstance(s, sympy.Eq):
+                            # LHS is function (e.g. y(x)), RHS is expression
+                            lhs_func = s.lhs
+                            rhs_expr = s.rhs
+                            
+                            # Find name of function
+                            func_name = str(lhs_func.func)
+                            funcs[func_name] = sympy.lambdify(ind_sym, rhs_expr, modules=['numpy', 'math'])
                         else:
                             points_generated = False
-                    else:
-                        for func_name, f_lambdified in funcs.items():
-                            pts = []
+                            break
+
+                    if points_generated:
+                        x_vals = np.linspace(x_min, x_max, 400)
+                        if plot_axes:
+                            x_var_name = plot_axes[0]
+                            y_var_name = plot_axes[1]
+                            
+                            trajectory = []
                             for xv in x_vals:
                                 try:
-                                    yv = f_lambdified(xv)
-                                    if isinstance(yv, (complex, np.complex128)):
-                                        yv = yv.real if abs(yv.imag) < 1e-9 else None
-                                    yv = float(yv)
-                                    if np.isnan(yv) or np.isinf(yv):
-                                        yv = None
-                                    pts.append({"x": float(xv), "y": yv})
+                                    # Get x-axis value
+                                    if x_var_name == ind_var_name:
+                                        x_val = float(xv)
+                                    else:
+                                        x_val = funcs[x_var_name](xv)
+                                        if isinstance(x_val, (complex, np.complex128)):
+                                            x_val = x_val.real if abs(x_val.imag) < 1e-9 else None
+                                        x_val = float(x_val)
+                                    
+                                    # Get y-axis value
+                                    if y_var_name == ind_var_name:
+                                        y_val = float(xv)
+                                    else:
+                                        y_val = funcs[y_var_name](xv)
+                                        if isinstance(y_val, (complex, np.complex128)):
+                                            y_val = y_val.real if abs(y_val.imag) < 1e-9 else None
+                                        y_val = float(y_val)
+                                    
+                                    if x_val is not None and y_val is not None and not np.isnan(x_val) and not np.isinf(x_val) and not np.isnan(y_val) and not np.isinf(y_val):
+                                        trajectory.append({"x": x_val, "y": y_val})
                                 except Exception:
-                                    pts.append({"x": float(xv), "y": None})
+                                    pass
                             
-                            valid_pts = [p for p in pts if p["y"] is not None]
-                            if len(valid_pts) > 2:
-                                curves[func_name] = pts
+                            if len(trajectory) > 2:
+                                curves[f"{x_var_name} vs {y_var_name}"] = trajectory
                             else:
                                 points_generated = False
-                                break
+                        else:
+                            for func_name, f_lambdified in funcs.items():
+                                pts = []
+                                for xv in x_vals:
+                                    try:
+                                        yv = f_lambdified(xv)
+                                        if isinstance(yv, (complex, np.complex128)):
+                                            yv = yv.real if abs(yv.imag) < 1e-9 else None
+                                        yv = float(yv)
+                                        if np.isnan(yv) or np.isinf(yv):
+                                            yv = None
+                                        pts.append({"x": float(xv), "y": yv})
+                                    except Exception:
+                                        pts.append({"x": float(xv), "y": None})
+                                
+                                valid_pts = [p for p in pts if p["y"] is not None]
+                                if len(valid_pts) > 2:
+                                    curves[func_name] = pts
+                                else:
+                                    points_generated = False
+                                    break
 
-                if points_generated and curves:
-                    symbolic_success = True
-                    combined_latex = f"\\begin{{aligned}} & {ode_latex} \\\\ & {symbolic_latex} \\end{{aligned}}"
-                    print(json.dumps({
-                        "success": True,
-                        "has_symbolic": True,
-                        "symbolic_latex": combined_latex,
-                        "curves": curves
-                    }))
+                    if points_generated and curves:
+                        symbolic_success = True
+                        combined_latex = f"\\begin{{aligned}} & {ode_latex} \\\\ & {symbolic_latex} \\end{{aligned}}"
+                        print(json.dumps({
+                            "success": True,
+                            "has_symbolic": True,
+                            "symbolic_latex": combined_latex,
+                            "curves": curves
+                        }))
+                        return
+            except Exception as e:
+                # Fall back to numerical if in hybrid mode
+                if mode == "sym":
+                    print(json.dumps({"success": False, "error": f"Symbolic solver failed: {str(e)}"}))
                     return
-        except Exception as e:
-            # Fall back to numerical if in hybrid mode
-            if mode == "sym":
-                print(json.dumps({"success": False, "error": f"Symbolic solver failed: {str(e)}"}))
-                return
+
 
     # If symbolic solver was forced and failed
     if mode == "sym":

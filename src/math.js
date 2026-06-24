@@ -7,6 +7,7 @@ const {
     inferParameterNames,
     parseDerivativeCall,
     parseIntegralCall,
+    parseVectorHelperCall,
     parseTupleSource
 } = require('./inline-calculus');
 const math = create(all);
@@ -157,33 +158,20 @@ function formatVectorTex(source) {
 }
 
 function parseInlineBindings(functionName, args, scope) {
-    if (args.length < 2 || args.length > 4) {
-        throw new Error(`${functionName} expects an expression followed by 1 to 3 coordinate symbols.`);
+    const parsed = parseVectorHelperCall(
+        functionName,
+        buildInlineArgDescriptors(args),
+        extractVarsFromSource
+    );
+    if (!parsed.success) {
+        throw new Error(parsed.error);
     }
 
-    const exprSource = String(getRawExpressionSource(args[0] || '')).trim();
-    if (!exprSource) {
-        throw new Error(`${functionName} requires a non-empty expression.`);
-    }
-
-    const localScope = cloneScope(scope);
-    const symbolNodes = args.slice(1);
-    const varNames = symbolNodes.map((node) => {
-        if (!node || !node.isSymbolNode) {
-            throw new Error(`${functionName} expects coordinate symbols like x, y, or z after the expression.`);
-        }
-        return node.name;
-    });
-
-    if (new Set(varNames).size !== varNames.length) {
-        throw new Error(`${functionName} coordinate symbols must be unique.`);
-    }
-
-    symbolNodes.forEach((node) => {
-        localScope.set(node.name, node.compile().evaluate(scope));
-    });
-
-    return { exprSource, varNames, localScope };
+    return {
+        exprSource: parsed.exprSource,
+        varNames: parsed.varNames,
+        localScope: cloneScope(scope)
+    };
 }
 
 const vectorInlineCache = new Map();
@@ -298,7 +286,7 @@ function makeGradientComponentHelper(componentIndex, label) {
     const helper = function (args, math, scope) {
         const { exprSource, varNames, localScope } = parseInlineBindings(label, args, scope);
         if (componentIndex >= varNames.length) {
-            throw new Error(`${label} requires at least ${componentIndex + 1} coordinate symbols.`);
+            throw new Error(`${label} requires at least ${componentIndex + 1} coordinate variables.`);
         }
         const gradientData = buildGradientData(exprSource, varNames);
         return evaluateCompiledScalar(gradientData.compiled[componentIndex], localScope);
@@ -306,8 +294,14 @@ function makeGradientComponentHelper(componentIndex, label) {
     helper.rawArgs = true;
     helper.toTex = function (node, options) {
         const exprTex = formatExpressionTex(getRawExpressionSource(node.args[0]));
-        const varNode = node.args[componentIndex + 1];
-        const varTex = varNode ? varNode.toTex(options) : `x_${componentIndex + 1}`;
+        let varTex = `x_${componentIndex + 1}`;
+        try {
+            const parsed = parseVectorHelperCall(label, buildInlineArgDescriptors(node.args), extractVarsFromSource);
+            const variableName = parsed.success ? parsed.varNames[componentIndex] : null;
+            if (variableName) {
+                varTex = formatExpressionTex(variableName);
+            }
+        } catch (_) {}
         return `\\frac{\\partial}{\\partial ${varTex}}\\left(${exprTex}\\right)`;
     };
     return helper;

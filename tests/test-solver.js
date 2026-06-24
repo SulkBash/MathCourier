@@ -9,6 +9,13 @@ const cases = [
         latexIncludes: ['x = 3', 'y = 2']
     },
     {
+        name: 'Linear system prefers exact fractions',
+        input: 'x + y + z = 6; 2*x - y + z = 3; x + 2*y - z = 3',
+        expectSuccess: true,
+        latexIncludes: ['x = \\frac{9}{7}', 'y = \\frac{15}{7}', 'z = \\frac{18}{7}'],
+        latexExcludes: ['1.28571429', '2.14285714', '2.57142857']
+    },
+    {
         name: 'Quadratic equation',
         input: 'x^2 - 5*x + 6 = 0',
         expectSuccess: true,
@@ -78,7 +85,7 @@ const cases = [
         name: 'Integral helper inside equation',
         input: 'integ("t^2", "t", 0, x) - 9 = 0',
         expectSuccess: true,
-        latexIncludes: ['\\frac{x^{3}}{3} - 9 = 0', 'x = 3']
+        latexIncludes: ['\\int\\limits_{0}^{x} t^{2}\\, dt - 9 = 0', 'x = 3']
     },
     {
         name: 'Variable isolation for c',
@@ -172,7 +179,7 @@ const cases = [
         name: 'Calculus simplification mode',
         input: 'deriv[x^3, x] - integ[2*x, x] mode:simplify',
         expectSuccess: true,
-        latexIncludes: ['2 x^{2} &= 2 x^{2}']
+        latexIncludes: ['\\frac{d}{d x} x^{3} - \\int 2 x\\, dx &= 2 x^{2}']
     },
     {
         name: 'Relational matrix equation uses symbolic backend',

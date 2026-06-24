@@ -15,37 +15,31 @@ assert(!generalHelp.includes('!desp <'));
 assert(!generalHelp.includes('!matrix <'));
 console.log('PASS: General help advertises only the unified public commands');
 
-const plotAliasHelp = getHelp('!plot3d');
-assert(plotAliasHelp.includes('*2D And 3D Plotting*'));
-assert(plotAliasHelp.includes('kind:parametric'));
-assert(plotAliasHelp.includes('animate:t'));
-console.log('PASS: Plot aliases still resolve to the unified plot page');
+const plotHelp = getHelp('plot');
+assert(plotHelp.includes('*2D And 3D Plotting*'));
+assert(plotHelp.includes('kind:parametric'));
+assert(plotHelp.includes('animate:t'));
+assert(getHelp('!plot3d').includes('Command not found: !plot3d'));
+console.log('PASS: Plot help documents only the unified !plot surface');
 
-const latexHelp = getHelp('tex');
+const latexHelp = getHelp('latex');
 assert(latexHelp.includes('*Unified Latex Rendering*'));
 assert(latexHelp.includes('mode:chem'));
 assert(latexHelp.includes('mode:tikz'));
 assert(latexHelp.includes('$$ ... $$'));
 assert(!latexHelp.includes('Legacy'));
+assert(getHelp('tex').includes('Command not found: !tex'));
+assert(getHelp('chem').includes('Command not found: !chem'));
+assert(getHelp('tikz').includes('Command not found: !tikz'));
+console.log('PASS: Legacy latex command aliases no longer resolve in help');
 
-const chemHelp = getHelp('chem');
-assert(chemHelp.includes('*Unified Latex Rendering*'));
-assert(chemHelp.includes('\\chemfig{H-O-H}'));
-
-const tikzHelp = getHelp('tikz');
-assert(tikzHelp.includes('*Unified Latex Rendering*'));
-assert(tikzHelp.includes('\\begin{tikzpicture}'));
-console.log('PASS: Latex, chem, and tikz aliases now share one page');
-
-const solveHelp = getHelp('!grad');
-assert(solveHelp.includes('*grad Helper*'));
-assert(solveHelp.includes('grad("x^2*y*z", x, y, z)'));
-assert(solveHelp.includes('1 to 3 coordinate symbols'));
-
-const matrixHelp = getHelp('matrix');
-assert(matrixHelp.includes('*Unified Solve Command*'));
-assert(matrixHelp.includes('det([1, 2; 3, 4])'));
-console.log('PASS: Solve aliases now resolve to the unified solve page');
+const solveHelp = getHelp('solve');
+assert(solveHelp.includes('*Unified Solve Command*'));
+assert(solveHelp.includes('grad[x^2*y*z, vars:{x, y, z}]'));
+assert(solveHelp.includes('det([1, 2; 3, 4])'));
+assert(getHelp('matrix').includes('Command not found: !matrix'));
+assert(getHelp('ode').includes('Command not found: !ode'));
+console.log('PASS: Solve help documents helper-based syntax and no legacy command aliases');
 
 const helperHelp = getHelp('deriv');
 assert(helperHelp.includes('*deriv Helper*'));
@@ -80,17 +74,24 @@ assert(modeHelp.includes('mode:expand'));
 assert(modeHelp.includes('mode:sym'));
 assert(modeHelp.includes('mode:num'));
 assert(modeHelp.includes('mode:hybrid'));
+assert(!modeHelp.includes('mode:diff'));
+assert(!modeHelp.includes('mode:grad'));
 console.log('PASS: Option pages reflect the unified solve and latex modes');
 
 const curlHelp = getHelp('curl');
 assert(curlHelp.includes('*curl Helper*'));
-assert(curlHelp.includes('curl("(Fx, Fy)", x, y)'));
+assert(curlHelp.includes('curl[(Fx, Fy)]'));
 assert(curlHelp.includes('scalar curl'));
 
 const divHelp = getHelp('div');
 assert(divHelp.includes('*div Helper*'));
-assert(divHelp.includes('div("(Fx, Fy, Fz)", x, y, z)'));
+assert(divHelp.includes('div[(Fx, Fy, Fz), vars:{x, y, z}]'));
 console.log('PASS: Vector helper pages describe their argument shapes');
+
+const animateHelp = getHelp('animate');
+assert(animateHelp.includes('0` through `2*pi'));
+assert(!animateHelp.includes('must also be provided'));
+console.log('PASS: Animate help documents the default sweep range');
 
 assert.strictEqual(getHelp.isHelpText(getHelp()), true);
 assert.strictEqual(getHelp.isHelpText(getHelp('latex')), true);

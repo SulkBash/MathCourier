@@ -38,7 +38,7 @@ function inferDefaultVariable(exprStr, actionLabel, excludeVars = []) {
 
 function solveDerivative(inputStr) {
     const rawParsed = parseCommandSyntax(inputStr);
-    const parsed = normalizeAndValidate(rawParsed, 'diff');
+    const parsed = normalizeAndValidate(rawParsed, 'deriv');
     if (!parsed.success) {
         return Promise.resolve({ success: false, error: parsed.errors.join('\n') });
     }
@@ -117,7 +117,7 @@ function solveDerivative(inputStr) {
 
 function solveIntegral(inputStr) {
     const rawParsed = parseCommandSyntax(inputStr);
-    const parsed = normalizeAndValidate(rawParsed, 'int');
+    const parsed = normalizeAndValidate(rawParsed, 'integ');
     if (!parsed.success) {
         return Promise.resolve({ success: false, error: parsed.errors.join('\n') });
     }

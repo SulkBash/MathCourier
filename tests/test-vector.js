@@ -76,21 +76,21 @@ const cases = [
     },
     {
         name: 'Inline lap evaluates numerically through mathjs',
-        run: () => math.evaluate('lap("x^2 + y^2", x, y)', { x: 3, y: 4 }),
+        run: () => math.evaluate('lap("x^2 + y^2")', { x: 3, y: 4 }),
         verify: (result) => {
             assert.strictEqual(result, 4);
         }
     },
     {
         name: 'Inline div evaluates numerically through mathjs',
-        run: () => math.evaluate('div("(x^2, y^2)", x, y)', { x: 3, y: 4 }),
+        run: () => math.evaluate('div("(x^2, y^2)")', { x: 3, y: 4 }),
         verify: (result) => {
             assert.strictEqual(result, 14);
         }
     },
     {
         name: 'Inline curl evaluates 2D scalar curl through mathjs',
-        run: () => math.evaluate('curl("(-y, x)", x, y)', { x: 3, y: 4 }),
+        run: () => math.evaluate('curl("(-y, x)")', { x: 3, y: 4 }),
         verify: (result) => {
             assert.strictEqual(result, 2);
         }
@@ -98,9 +98,9 @@ const cases = [
     {
         name: 'Inline gradient helpers evaluate through mathjs',
         run: () => ({
-            vector: math.evaluate('grad("x^2 + y^2", x, y)', { x: 3, y: 4 }),
-            gx: math.evaluate('gradx("x^2 + y^2", x, y)', { x: 3, y: 4 }),
-            gy: math.evaluate('grady("x^2 + y^2", x, y)', { x: 3, y: 4 })
+            vector: math.evaluate('grad("x^2 + y^2")', { x: 3, y: 4 }),
+            gx: math.evaluate('gradx("x^2 + y^2")', { x: 3, y: 4 }),
+            gy: math.evaluate('grady("x^2 + y^2")', { x: 3, y: 4 })
         }),
         verify: (result) => {
             assert.deepStrictEqual(result.vector, [6, 8]);
@@ -109,12 +109,25 @@ const cases = [
         }
     },
     {
+        name: 'Legacy positional vector helper syntax is rejected',
+        run: () => {
+            assert.throws(
+                () => math.evaluate('grad("x^2 + y^2", x, y)', { x: 3, y: 4 }),
+                /no longer accepts positional coordinate arguments/
+            );
+            return true;
+        },
+        verify: (result) => {
+            assert.strictEqual(result, true);
+        }
+    },
+    {
         name: 'Inline 3D curl component helpers evaluate through mathjs',
         run: () => ({
-            vector: math.evaluate('curl("(0, 0, x*y)", x, y, z)', { x: 3, y: 4, z: 5 }),
-            cx: math.evaluate('curlx("(0, 0, x*y)", x, y, z)', { x: 3, y: 4, z: 5 }),
-            cy: math.evaluate('curly("(0, 0, x*y)", x, y, z)', { x: 3, y: 4, z: 5 }),
-            cz: math.evaluate('curlz("(0, 0, x*y)", x, y, z)', { x: 3, y: 4, z: 5 })
+            vector: math.evaluate('curl("(0, 0, x*y)")', { x: 3, y: 4, z: 5 }),
+            cx: math.evaluate('curlx("(0, 0, x*y)")', { x: 3, y: 4, z: 5 }),
+            cy: math.evaluate('curly("(0, 0, x*y)")', { x: 3, y: 4, z: 5 }),
+            cz: math.evaluate('curlz("(0, 0, x*y)")', { x: 3, y: 4, z: 5 })
         }),
         verify: (result) => {
             assert.deepStrictEqual(result.vector, [3, -4, 0]);
