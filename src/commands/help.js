@@ -83,7 +83,8 @@ const detailedHelp = {
         '',
         '*Options*',
         '- `view:2d|3d` - rendering mode; default is 2d',
-        '- `<var>:[min, max]` - domain for any axis or parameter',
+        '- `<var>:[min, max]` - sampling domain for any axis or parameter',
+        '- `xlim:[min, max]`, `ylim:[min, max]`, `zlim:[min, max]` - display viewport (overrides axis range without changing sampling)',
         '- `camera:<axis>` or `camera:<axis><angle>` - animated camera rotation in 3D',
         '- `animate:<param>` - animate a named parameter in 3D',
         '- `kind:parametric`, `kind:polar`, `kind:vector` - 2D plot kinds',
@@ -99,6 +100,7 @@ const detailedHelp = {
         '- `!plot r = 1 + cos(theta) kind:polar theta:[0, 2*pi]`',
         '- `!plot (-y, x) kind:vector x:[-5, 5] y:[-5, 5]`',
         '- `!plot z = sin(x)*cos(y) view:3d x:[-3, 3] y:[-3, 3]`',
+        '- `!plot z = sin(x)*cos(y) view:3d x:[-5, 5] y:[-5, 5] xlim:[-3, 3] ylim:[-3, 3]`',
         '- `!plot z = sin(x - t)*cos(y) view:3d animate:t x:[-3, 3] y:[-3, 3] t:[0, 2*pi]`'
     ]),
 
@@ -498,6 +500,29 @@ const detailedHelp = {
         '- `!solve integ[(0,0,z), kind:surface, param:{sin(u)*cos(v), sin(u)*sin(v), cos(u)}, u:[0, pi], v:[0, 2*pi]]`',
         '',
         '*Used by*: `!solve` field-integral helpers'
+    ]),
+
+    xlim: block([
+        '*xlim / ylim / zlim - Display Viewport*',
+        '',
+        'Clamps the visible axis range without changing the sampling domain.',
+        'Format: `xlim:[min, max]`  `ylim:[min, max]`  `zlim:[min, max]`',
+        '',
+        '*Difference from domain ranges*',
+        '- `x:[min, max]` controls where the math is *evaluated* (sampling domain)',
+        '- `xlim:[min, max]` controls what the *viewer sees* (camera / axis range)',
+        '- You can sample a wider area than you display, or zoom in without re-sampling.',
+        '',
+        '*Rules*',
+        '- All three are optional and independent of each other.',
+        '- `zlim` is only meaningful for `view:3d`.',
+        '- When omitted the viewport defaults to the sampling domain.',
+        '',
+        '*Examples*',
+        '- `!plot z = sin(x)*cos(y) view:3d x:[-5,5] y:[-5,5] xlim:[-3,3] ylim:[-3,3]`',
+        '- `!plot y = sin(x) x:[-20, 20] xlim:[-5, 5] ylim:[-2, 2]`',
+        '',
+        '*Used by*: `!plot`'
     ])
 };
 
@@ -543,7 +568,12 @@ function getHelp(cmd = '') {
         boundary: 'bc',
         variable: 'vars',
         variables: 'vars',
-        options: 'syntax'
+        options: 'syntax',
+        ylim: 'xlim',
+        zlim: 'xlim',
+        viewport: 'xlim',
+        limits: 'xlim',
+        lim: 'xlim'
     };
 
     const key = aliases[normalized] || normalized;
