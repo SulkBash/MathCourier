@@ -2156,7 +2156,6 @@ function buildPlot3dScene(context, opts) {
         }
 
         type = 'implicit';
-        const compiled = math.compile(combined);
         const xMin = opts.xDomain[0];
         const xMax = opts.xDomain[1];
         const yMin = opts.yDomain[0];
@@ -2166,38 +2165,58 @@ function buildPlot3dScene(context, opts) {
         const zMax = (opts.zDomain && opts.zDomain[1] !== undefined) ? opts.zDomain[1] : xMax;
         opts.zDomain = [zMin, zMax];
 
-        const coarseSteps = DEFAULT_IMPLICIT_SURFACE_COARSE_STEPS;
+        const coarseSteps = opts.isEvolutionAnimated
+            ? Math.max(12, Math.floor(DEFAULT_IMPLICIT_SURFACE_COARSE_STEPS / 2))
+            : DEFAULT_IMPLICIT_SURFACE_COARSE_STEPS;
         const coarseXStep = (xMax - xMin) / coarseSteps;
         const coarseYStep = (yMax - yMin) / coarseSteps;
         const coarseZStep = (zMax - zMin) / coarseSteps;
         const coarseV = [];
-        for (let i = 0; i <= coarseSteps; i++) {
-            const x = xMin + i * coarseXStep;
-            const row = [];
-            for (let j = 0; j <= coarseSteps; j++) {
-                const y = yMin + j * coarseYStep;
-                const col = [];
-                for (let k = 0; k <= coarseSteps; k++) {
-                    const z = zMin + k * coarseZStep;
-                    if (shouldSkipCartesianPoint(opts, x, y, z)) {
-                        col.push(NaN);
-                        continue;
+        if (context.isSeparableImplicit && context.coarseLhsValues && context.rhsCompiled) {
+            const rhsScope = mergeEvalScope(opts, {});
+            const rhsValue = toReal(context.rhsCompiled.evaluate(rhsScope));
+            for (let i = 0; i <= coarseSteps; i++) {
+                const row = [];
+                for (let j = 0; j <= coarseSteps; j++) {
+                    const col = [];
+                    for (let k = 0; k <= coarseSteps; k++) {
+                        const lhsVal = context.coarseLhsValues[i][j][k];
+                        col.push(isNaN(lhsVal) ? NaN : lhsVal - rhsValue);
                     }
-
-                    const val = evaluateImplicitSurfaceValue(
-                        compiled,
-                        coordSystem,
-                        semantics.coordVars,
-                        opts,
-                        x,
-                        y,
-                        z
-                    );
-                    col.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                    row.push(col);
                 }
-                row.push(col);
+                coarseV.push(row);
             }
-            coarseV.push(row);
+        } else {
+            const compiled = math.compile(combined);
+            for (let i = 0; i <= coarseSteps; i++) {
+                const x = xMin + i * coarseXStep;
+                const row = [];
+                for (let j = 0; j <= coarseSteps; j++) {
+                    const y = yMin + j * coarseYStep;
+                    const col = [];
+                    for (let k = 0; k <= coarseSteps; k++) {
+                        const z = zMin + k * coarseZStep;
+                        if (shouldSkipCartesianPoint(opts, x, y, z)) {
+                            col.push(NaN);
+                            continue;
+                        }
+
+                        const val = evaluateImplicitSurfaceValue(
+                            compiled,
+                            coordSystem,
+                            semantics.coordVars,
+                            opts,
+                            x,
+                            y,
+                            z
+                        );
+                        col.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                    }
+                    row.push(col);
+                }
+                coarseV.push(row);
+            }
         }
 
         const activeX = [];
@@ -2289,7 +2308,9 @@ function buildPlot3dScene(context, opts) {
         }
 
         // Feed Plotly a denser scalar field so implicit surfaces render with less faceting.
-        const gridSteps = DEFAULT_IMPLICIT_SURFACE_GRID_STEPS;
+        const gridSteps = opts.isEvolutionAnimated
+            ? Math.max(coarseSteps + 4, Math.floor(DEFAULT_IMPLICIT_SURFACE_GRID_STEPS / 2))
+            : DEFAULT_IMPLICIT_SURFACE_GRID_STEPS;
         const evalXStep = (evalXMax - evalXMin) / gridSteps;
         const evalYStep = (evalYMax - evalYMin) / gridSteps;
         const evalZStep = (evalZMax - evalZMin) / gridSteps;
@@ -2298,34 +2319,72 @@ function buildPlot3dScene(context, opts) {
         const zVals = [];
         const valueVals = [];
 
-        for (let i = 0; i <= gridSteps; i++) {
-            const x = evalXMin + i * evalXStep;
-            for (let j = 0; j <= gridSteps; j++) {
-                const y = evalYMin + j * evalYStep;
-                for (let k = 0; k <= gridSteps; k++) {
-                    const z = evalZMin + k * evalZStep;
-                    xVals.push(x);
-                    yVals.push(y);
-                    zVals.push(z);
+        if (context.isSeparableImplicit && context.lhsCompiled && context.rhsCompiled) {
+            const rhsScope = mergeEvalScope(opts, {});
+            const rhsValue = toReal(context.rhsCompiled.evaluate(rhsScope));
+            for (let i = 0; i <= gridSteps; i++) {
+                const x = evalXMin + i * evalXStep;
+                for (let j = 0; j <= gridSteps; j++) {
+                    const y = evalYMin + j * evalYStep;
+                    for (let k = 0; k <= gridSteps; k++) {
+                        const z = evalZMin + k * evalZStep;
+                        xVals.push(x);
+                        yVals.push(y);
+                        zVals.push(z);
 
-                    if (shouldSkipCartesianPoint(opts, x, y, z)) {
-                        valueVals.push(NaN);
-                        continue;
+                        if (shouldSkipCartesianPoint(opts, x, y, z)) {
+                            valueVals.push(NaN);
+                            continue;
+                        }
+
+                        try {
+                            const lhsVal = evaluateImplicitSurfaceValue(
+                                context.lhsCompiled,
+                                coordSystem,
+                                semantics.coordVars,
+                                opts,
+                                x,
+                                y,
+                                z
+                            );
+                            valueVals.push(!isNaN(lhsVal) && isFinite(lhsVal) ? lhsVal - rhsValue : NaN);
+                        } catch (e) {
+                            valueVals.push(NaN);
+                        }
                     }
+                }
+            }
+        } else {
+            const compiled = math.compile(combined);
+            for (let i = 0; i <= gridSteps; i++) {
+                const x = evalXMin + i * evalXStep;
+                for (let j = 0; j <= gridSteps; j++) {
+                    const y = evalYMin + j * evalYStep;
+                    for (let k = 0; k <= gridSteps; k++) {
+                        const z = evalZMin + k * evalZStep;
+                        xVals.push(x);
+                        yVals.push(y);
+                        zVals.push(z);
 
-                    try {
-                        const val = evaluateImplicitSurfaceValue(
-                            compiled,
-                            coordSystem,
-                            semantics.coordVars,
-                            opts,
-                            x,
-                            y,
-                            z
-                        );
-                        valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
-                    } catch (e) {
-                        valueVals.push(NaN);
+                        if (shouldSkipCartesianPoint(opts, x, y, z)) {
+                            valueVals.push(NaN);
+                            continue;
+                        }
+
+                        try {
+                            const val = evaluateImplicitSurfaceValue(
+                                compiled,
+                                coordSystem,
+                                semantics.coordVars,
+                                opts,
+                                x,
+                                y,
+                                z
+                            );
+                            valueVals.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                        } catch (e) {
+                            valueVals.push(NaN);
+                        }
                     }
                 }
             }
@@ -2542,8 +2601,77 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             semantics,
             parameterDomain1: domainInfo.parameterDomain1,
             parameterDomain2: domainInfo.parameterDomain2,
-            providedDomains: domainInfo.providedDomains
+            providedDomains: domainInfo.providedDomains,
+            isSeparableImplicit: false,
+            lhsCompiled: null,
+            rhsCompiled: null,
+            coarseLhsValues: null
         };
+
+        const isSeparableImplicit = semantics.family === 'surface-implicit' &&
+            evolutionRequested &&
+            !expressionUsesAnySymbol(semantics.lhs, [evolutionVar]) &&
+            !expressionUsesAnySymbol(semantics.rhs, semantics.coordVars);
+
+        if (isSeparableImplicit) {
+            try {
+                plotContext.lhsCompiled = math.compile(preprocessExpr(semantics.lhs));
+                plotContext.rhsCompiled = math.compile(preprocessExpr(semantics.rhs));
+                
+                const coarseSteps = baseOpts.isEvolutionAnimated
+                    ? Math.max(12, Math.floor(DEFAULT_IMPLICIT_SURFACE_COARSE_STEPS / 2))
+                    : DEFAULT_IMPLICIT_SURFACE_COARSE_STEPS;
+                
+                const xMin = domainInfo.xDomain[0];
+                const xMax = domainInfo.xDomain[1];
+                const yMin = domainInfo.yDomain[0];
+                const yMax = domainInfo.yDomain[1];
+                const zMin = (domainInfo.zDomain && domainInfo.zDomain[0] !== undefined) ? domainInfo.zDomain[0] : xMin;
+                const zMax = (domainInfo.zDomain && domainInfo.zDomain[1] !== undefined) ? domainInfo.zDomain[1] : xMax;
+                
+                const coarseXStep = (xMax - xMin) / coarseSteps;
+                const coarseYStep = (yMax - yMin) / coarseSteps;
+                const coarseZStep = (zMax - zMin) / coarseSteps;
+
+                const coarseLhsValues = [];
+                for (let i = 0; i <= coarseSteps; i++) {
+                    const x = xMin + i * coarseXStep;
+                    const row = [];
+                    for (let j = 0; j <= coarseSteps; j++) {
+                        const y = yMin + j * coarseYStep;
+                        const col = [];
+                        for (let k = 0; k <= coarseSteps; k++) {
+                            const z = zMin + k * coarseZStep;
+                            if (shouldSkipCartesianPoint(baseOpts, x, y, z)) {
+                                col.push(NaN);
+                                continue;
+                            }
+                            const val = evaluateImplicitSurfaceValue(
+                                plotContext.lhsCompiled,
+                                coordSystem,
+                                semantics.coordVars,
+                                baseOpts,
+                                x,
+                                y,
+                                z
+                            );
+                            col.push(!isNaN(val) && isFinite(val) ? val : NaN);
+                        }
+                        row.push(col);
+                    }
+                    coarseLhsValues.push(row);
+                }
+                
+                plotContext.coarseLhsValues = coarseLhsValues;
+                plotContext.isSeparableImplicit = true;
+            } catch (err) {
+                console.warn('Failed to precompute LHS grid for separable implicit surface:', err.message);
+                plotContext.lhsCompiled = null;
+                plotContext.rhsCompiled = null;
+                plotContext.coarseLhsValues = null;
+                plotContext.isSeparableImplicit = false;
+            }
+        }
 
         page = await katexModule.createRenderPage();
 
