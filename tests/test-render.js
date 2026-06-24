@@ -90,8 +90,8 @@ async function runTests() {
     await runTest('Plot vector field', () =>
         renderer.renderPlot('v(x,y)=(sin(x)/xy,cos(y)/xy)', { xDomain: [-2, 2], yDomain: [-2, 2] }));
 
-    await runTest('Plot implicit vector field', () =>
-        renderer.renderPlot('(-y, x)', { xDomain: [-5, 5], yDomain: [-5, 5] }));
+    await runTest('Plot explicit vector field kind override', () =>
+        renderer.renderPlot('(-y, x)', { xDomain: [-5, 5], yDomain: [-5, 5], kind: 'vector' }));
 
     await runTest('Plot ln(x)', () =>
         renderer.renderPlot('y = ln(x)', { xDomain: [-10, 10], yDomain: [-10, 10] }));
@@ -138,6 +138,12 @@ async function runTests() {
 
     await runTest('Plot command handle implicit polar lemniscate', () =>
         handlePlotCommand('r^2 = 9 * cos(2*theta) kind:polar theta:[0, 2*pi] x:[-4, 4] y:[-4, 4]'));
+
+    await runTest('Plot command rejects ambiguous tuple without kind', async () => {
+        const res = await handlePlotCommand('(-y, x) x:[-5, 5] y:[-5, 5]');
+        if (!res.success) return { ...res, expectFail: true };
+        return { success: false, error: 'Expected ambiguity failure but got success' };
+    });
 
     await runTest('Plot command handle scalar with custom horizontal variable', () =>
         handlePlotCommand('cos(t) vars:{t} t:[0, 2*pi] y:[-2, 2]'));
@@ -186,19 +192,19 @@ async function runTests() {
 
     const solver = require('../src/solver');
     await runTest('Solve quadratic', async () => {
-        const res = solver.solveEquation('x^2 - 5x + 6 = 0');
+        const res = await solver.solveEquation('x^2 - 5x + 6 = 0');
         if (res.success) return await renderer.render(res.latex, true);
         return res;
     });
 
     await runTest('Solve system', async () => {
-        const res = solver.solveEquation('x + y = 5; x - y = 1');
+        const res = await solver.solveEquation('x + y = 5; x - y = 1');
         if (res.success) return await renderer.render(res.latex, true);
         return res;
     });
 
     await runTest('Solve transcendental cos(x) - x', async () => {
-        const res = solver.solveEquation('cos(x) - x = 0');
+        const res = await solver.solveEquation('cos(x) - x = 0');
         if (res.success) return await renderer.render(res.latex, true);
         return res;
     });

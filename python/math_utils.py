@@ -3,10 +3,11 @@ import sympy
 from sympy.parsing.sympy_parser import (
     standard_transformations,
     implicit_multiplication_application,
+    rationalize,
     parse_expr,
 )
 
-transformations = (standard_transformations + (implicit_multiplication_application,))
+transformations = (standard_transformations + (implicit_multiplication_application, rationalize))
 VALID_INLINE_VAR_RE = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 

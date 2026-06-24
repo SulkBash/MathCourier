@@ -13,12 +13,12 @@ A WhatsApp bot that receives math-related commands and replies with rendered car
 - Auto-render inline `$$ ... $$` blocks in ordinary chat messages
 - Plot 2D explicit functions, implicit equations, parametric curves, polar curves, and vector fields
 - Plot 3D explicit surfaces, implicit surfaces, parametric curves/surfaces, and vector fields with optional camera animation
-- Solve equations and linear systems numerically or symbolically
+- Solve equations, inequalities, and linear systems numerically or symbolically
+- Isolate variables symbolically through `!solve ... vars:<var>`
 - Differentiate and integrate expressions, including multivariable and field-integral workflows
 - Compute gradient, Laplacian, divergence, and curl
 - Compute matrix arithmetic, determinants, inverses, eigenvalues/eigenvectors, and RREF
 - Solve ODEs symbolically or numerically
-- Rearrange equations to isolate a variable
 - Render chemfig structures and TikZ/circuit diagrams through QuickLaTeX
 
 ---
@@ -36,21 +36,12 @@ src/
     rateLimit.js        - Per-sender sliding-window rate limiter
     validate.js         - Input length validation middleware
   commands/
-    latex.js            - Command handler for !latex / !tex
-    plot.js             - Command handler for !plot, including 3D via view:3d
+    latex.js            - Unified !latex router for formulas, chemfig, and TikZ
+    plot.js             - Unified !plot handler, including 3D via view:3d
     plot3d.js           - Legacy compatibility wrapper for deprecated !plot3d syntax
-    solve.js            - Command handler for !solve
-    matrix.js           - Command handler for !matrix
-    diff.js             - Command handler for !diff
-    int.js              - Command handler for !int
-    ode.js              - Command handler for !ode
-    desp.js             - Command handler for !desp
-    grad.js             - Command handler for !grad
-    lap.js              - Command handler for !lap
-    div.js              - Command handler for !div
-    curl.js             - Command handler for !curl
-    chem.js             - Command handler for !chem / !chemfig
-    tikz.js             - Command handler for !tikz
+    solve.js            - Unified !solve router for algebra, calculus, matrices, ODEs, and PDEs
+    ode.js              - Internal ODE sub-route used by !solve
+    pde.js              - Internal PDE sub-route used by !solve
     help.js             - Help menu text
   renderer/
     index.js            - Renderer entrypoint, lock management, and fallback routing
@@ -63,28 +54,33 @@ src/
   solver/
     index.js            - Solver entrypoint re-exporting all solver functions
     subprocess.js       - Python subprocess bridge (JSON over stdin/stdout)
-    equations.js        - Equation and linear-system solvers
+    equations.js        - Equation, inequality, isolation, and expression-mode solvers
     calculus.js         - Differentiation/integration parsing and dispatch
     ode.js              - ODE parsing and solver helpers
-    rearrange.js        - Rearrangement / isolation helpers
+    pde.js              - PDE parsing and solver helpers
     vector.js           - Gradient, Laplacian, divergence, and curl solvers
     matrix.js           - Matrix parsing and linear algebra helpers
 python/
   math_utils.py         - Shared SymPy parser local_dict and inline helper definitions
+  equation_solver.py    - Unified SymPy backend for symbolic solving and expression modes
   calculus_solver.py    - SymPy calculus and field-integral backend
   ode_solver.py         - SymPy / SciPy ODE backend
-  rearrange_solver.py   - SymPy variable-isolation backend
+  pde_solver.py         - SymPy / numerical PDE backend
 tests/
   test-render.js        - Renderer and 2D plotting integration test suite
   test-plot3d.js        - 3D plotting tests
   test-solver.js        - Equation solver tests
+  test-solve-router.js  - Unified !solve routing tests
+  test-latex-router.js  - Unified !latex routing tests
   test-calculus.js      - Calculus solver tests
   test-ode.js           - ODE solver tests
-  test-rearrange.js     - Rearrangement solver tests
+  test-pde.js           - PDE solver tests
   test-vector.js        - Vector-operator solver tests
   test-matrix.js        - Matrix solver tests
   test-help.js          - Help command unit tests
+  test-parser.js        - Command syntax parser tests
   test-labeled-domains.js - Labeled domain integration tests
+  test-inline-calculus.js - Inline helper tests
 test_output/            - Generated render output (gitignored)
 .wwebjs_auth/           - WhatsApp session files (gitignored)
 .wwebjs_cache/          - Puppeteer cache (gitignored)
@@ -106,27 +102,24 @@ bot.js
     -> dispatches to command handler
 
 Commands
-    !latex / !tex / $$...$$      -> commands/latex.js -> renderer.render()
-    !chem / !chemfig             -> commands/chem.js  -> renderer.renderChem()
-    !tikz / tikzpicture block    -> commands/tikz.js  -> renderer.renderTikz()
-    !plot                        -> commands/plot.js  -> renderer.renderPlot() / renderer.renderPlot3d()
-    !solve                       -> commands/solve.js -> solver.solveEquation() -> renderer.render()
-    !matrix                      -> commands/matrix.js -> solver.solveMatrixExpression() -> renderer.render()
-    !diff                        -> commands/diff.js  -> solver.solveDerivative() -> renderer.render()
-    !int                         -> commands/int.js   -> solver.solveIntegral() -> renderer.render()
-    !ode                         -> commands/ode.js   -> solver.solveOde() -> renderer.renderOde()
-    !grad / !lap / !div / !curl  -> commands/*        -> solver.vector helpers -> renderer.render()
-    !desp                        -> commands/desp.js  -> solver.rearrangeEquation() -> renderer.render()
+    !latex / !tex / !chem / !tikz / $$...$$
+        -> commands/latex.js -> renderer.render() / renderChem() / renderTikz()
+    !plot
+        -> commands/plot.js -> renderer.renderPlot() / renderer.renderPlot3d()
+    !solve / legacy math aliases
+        -> commands/solve.js
+        -> auto-detects equation vs matrix vs ODE vs PDE vs helper route
+        -> solver.* and renderer.*
 
 Solver backends
     Pure JS / mathjs:
       - equations, matrices, vector differential operators
       - many local inline helpers used by !plot
     Python bridge:
+      - symbolic equation solving, inequalities, and isolation
       - symbolic calculus fallback
       - line/surface/volume integrals
       - ODE solving
-      - symbolic rearrangement
 
 Renderer backends
     Shared Puppeteer page + KaTeX:
@@ -146,22 +139,10 @@ All Python subprocesses are called by `src/solver/subprocess.js` via `runSubproc
 
 | Command | Aliases | Handler | Module |
 |---|---|---|---|
-| `!latex <formula>` | `!tex` | `handleLatexCommand()` | `src/commands/latex.js` |
-| `$$ .. $$` anywhere in a message | none | `renderMixed()` | `bot.js` |
-| `!chem <chemfig code>` | `!chemfig` | `handleChemCommand()` | `src/commands/chem.js` |
-| `!tikz <code>` | `\begin{tikzpicture}` | `handleTikzCommand()` | `src/commands/tikz.js` |
-| `!plot <expr> [options]` | none | `handlePlotCommand()` | `src/commands/plot.js` |
-| `!solve <equation(s)>` | none | `handleSolveCommand()` | `src/commands/solve.js` |
-| `!matrix <expression>` | none | `handleMatrixCommand()` | `src/commands/matrix.js` |
-| `!diff <expr> [variables/orders]` | none | `handleDiffCommand()` | `src/commands/diff.js` |
-| `!int <expr> [variables/limits]` | none | `handleIntCommand()` | `src/commands/int.js` |
-| `!ode [options] <equation(s)>, <IC(s)> [ranges]` | none | `handleOdeCommand()` | `src/commands/ode.js` |
-| `!grad <scalar_field> [, vars]` | none | `handleGradCommand()` | `src/commands/grad.js` |
-| `!lap <scalar_field> [, vars]` | none | `handleLapCommand()` | `src/commands/lap.js` |
-| `!div <vector_field> [, vars]` | none | `handleDivCommand()` | `src/commands/div.js` |
-| `!curl <vector_field> [, vars]` | none | `handleCurlCommand()` | `src/commands/curl.js` |
-| `!desp <equation> for <var>` | none | `handleRearrangeCommand()` | `src/commands/desp.js` |
-| `!help` | none | `helpText` | `src/commands/help.js` |
+| `!latex <content>` | `!tex`, `!chem`, `!chemfig`, `!tikz`, bare `\begin{tikzpicture}`, inline `$$...$$` auto-render | `handleLatexCommand()` / `renderMixed()` | `src/commands/latex.js`, `bot.js` |
+| `!plot <expr> [options]` | `!plot3d` compatibility wrapper | `handlePlotCommand()` | `src/commands/plot.js` |
+| `!solve <expression> [options]` | `!diff`, `!int`, `!grad`, `!lap`, `!div`, `!curl`, `!matrix`, `!ode`, `!pde` | `handleSolveCommand()` | `src/commands/solve.js` |
+| `!help [topic]` | none | `getHelp()` | `src/commands/help.js` |
 
 ---
 
@@ -187,10 +168,17 @@ Prefer pure Node.js / mathjs when the task is fast and local:
 - inline helpers used by plots
 
 Use the Python bridge only where it adds real value:
+- symbolic equation solving and exact expression modes
 - symbolic calculus fallback
 - field integrals
 - ODE solving
-- symbolic rearrangement
+
+### 3.5. The public command surface is intentionally tiny
+User-facing commands are `!latex`, `!plot`, `!solve`, and `!help`.
+
+- New rendering features should usually become a `!latex` mode or auto-detected branch.
+- New math features should usually become a `!solve` sub-route, inline helper, or solver backend.
+- Prefer extending the unified routers over adding new top-level command prefixes.
 
 ### 4. Python subprocesses must follow the JSON contract exactly
 When adding a new Python solver:
@@ -234,6 +222,13 @@ All command entry points go through:
 
 Do not add a new bot entry path that bypasses `handleCommandMessage()`.
 
+### 8.5. Router precedence is part of the product surface
+`src/commands/solve.js` is the unified router for algebra, matrices, ODEs, PDEs, and helper-based math.
+
+- Relational solving takes precedence over matrix evaluation.
+- Bare tuples should not be guessed as vector operations inside `!solve`; use a helper or explicit route.
+- When updating routing behavior, keep `command_refactor.md`, help text, and router tests in sync.
+
 ### 9. QuickLaTeX SSRF protections are mandatory
 `src/renderer/quicklatex.js` validates the returned image URL before fetching it. Do not weaken the protocol or hostname checks.
 
@@ -257,11 +252,15 @@ npm run test:matrix
 npm run test:help
 npm run test:labeled
 node tests/test-help.js
+node tests/test-parser.js
 node tests/test-labeled-domains.js
 node tests/test-solver.js
+node tests/test-solve-router.js
+node tests/test-latex-router.js
 node tests/test-calculus.js
 node tests/test-ode.js
-node tests/test-rearrange.js
+node tests/test-pde.js
+node tests/test-inline-calculus.js
 node tests/test-plot3d.js
 node tests/test-render.js
 
@@ -269,7 +268,7 @@ node tests/test-render.js
 npm start
 ```
 
-**Python requirements** (needed for symbolic calculus fallback, field integrals, ODEs, and rearrangement):
+**Python requirements** (needed for symbolic solving, field integrals, ODEs, and PDEs):
 
 ```bash
 pip install sympy numpy scipy
@@ -322,18 +321,18 @@ pip install sympy numpy scipy
 
 ---
 
-## Adding a new command
+## Adding a new capability
 
-1. Add a `parseCommand(body, '!newcmd')` call inside `handleCommandMessage()` in `bot.js`.
-2. Add the corresponding `else if` branch that sets `mode` and `input`.
-3. Create `src/commands/newcmd.js` and export a handler.
-4. Import the handler in `bot.js` and wire it into the dispatch block.
-5. If the command needs shared solver logic, add it under `src/solver/` and export it from `src/solver/index.js`.
-6. If it needs Python, add a script under `python/` that follows the JSON subprocess contract and call it through `runSubprocess()` in `src/solver/subprocess.js`.
-7. Update `src/commands/help.js`.
-8. Add a focused test under `tests/`.
+Prefer extending the unified command surface instead of adding new top-level prefixes.
 
-If the new command renders media, return renderer-style objects with `success`, `data`, and metadata fields instead of replying directly from the command layer.
+1. Decide whether the feature belongs under `!latex`, `!plot`, or `!solve`.
+2. Extend the relevant router in `src/commands/latex.js`, `src/commands/plot.js`, or `src/commands/solve.js`.
+3. If shared solver logic is needed, add it under `src/solver/` and export it from `src/solver/index.js`.
+4. If Python is needed, add a script under `python/` that follows the JSON subprocess contract and call it through `runSubprocess()` in `src/solver/subprocess.js`.
+5. Update `src/commands/help.js` in the same change.
+6. Add focused tests under `tests/`, especially router coverage when auto-detection or mode overrides are involved.
+
+Only add a brand-new top-level command if the product direction explicitly changes away from the unified `!latex` / `!plot` / `!solve` architecture.
 
 ---
 
@@ -346,6 +345,7 @@ If the new command renders media, return renderer-style objects with `success`, 
 - Animated 3D renders depend on `ffmpeg`; if you are debugging animation output, check whether the environment has it installed.
 - The KaTeX HTML file written into `node_modules/katex/dist/render_temp.html` is generated at startup. Do not edit it directly.
 - Matrix literals use semicolon-separated rows: `[1, 2; 3, 4]`.
+- Bare tuples under `!solve` are intentionally ambiguous; use helpers like `curl[...]` or force a route with `mode:...`.
 - `src/solver/subprocess.js` calls `python`, not `python3`. Make sure `python` resolves to Python 3.
 - `python/math_utils.py` pre-maps uppercase `A-Z` to `sympy.Symbol` so SymPy does not reinterpret letters like `E` and `I`.
 - Delete `.wwebjs_auth/` to force a fresh QR scan.

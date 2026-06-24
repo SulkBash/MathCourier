@@ -68,11 +68,6 @@ async function run() {
     );
     console.log('PASS: Inline implicit derivative evaluates numerically');
 
-    const rearrangedImplicit = await solver.rearrangeEquation('deriv("x^2 + y^2 = 4", "dep:y", "x") = z vars:x');
-    assert(rearrangedImplicit.success, rearrangedImplicit.error);
-    assert(rearrangedImplicit.latex.includes('x ='));
-    console.log('PASS: Rearrangement supports inline implicit derivative');
-
     const equationVars = extractVariables(math.parse('deriv("x^3*y^2", "vars:{x:2, y}") - 1'));
     assert.deepStrictEqual(equationVars.sort(), ['x', 'y']);
     console.log('PASS: Equation solving sees helper dependencies hidden inside quoted helper args');
@@ -80,16 +75,6 @@ async function run() {
     const plotVars = extractExpressionVariables('integ("sin(t)", "vars:t") + 1');
     assert(plotVars.includes('t'));
     console.log('PASS: Plot semantics sees inline helper dependencies');
-
-    const rearrangedDerivative = await solver.rearrangeEquation('deriv("x^3", "vars:{x:2}") = y vars:x');
-    assert(rearrangedDerivative.success, rearrangedDerivative.error);
-    assert(rearrangedDerivative.latex.includes('x ='));
-    console.log('PASS: Rearrangement supports richer inline derivative syntax');
-
-    const rearrangedIntegral = await solver.rearrangeEquation('integ("1", "vars:t") = y vars:t');
-    assert(rearrangedIntegral.success, rearrangedIntegral.error);
-    assert(rearrangedIntegral.latex.includes('t ='));
-    console.log('PASS: Rearrangement supports richer inline integral syntax');
 
     // Bracket notation tests (quote-free deriv[...] and integ[...])
     approxEqual(
@@ -105,11 +90,6 @@ async function run() {
         5e-3
     );
     console.log('PASS: Quote-free integ[...] bracket notation evaluates numerically');
-
-    const rearrangedBracketImplicit = await solver.rearrangeEquation('deriv[x^2 + y^2 = 4, dep:y, x] = z vars:x');
-    assert(rearrangedBracketImplicit.success, rearrangedBracketImplicit.error);
-    assert(rearrangedBracketImplicit.latex.includes('x ='));
-    console.log('PASS: Rearrangement supports quote-free deriv[...] bracket notation');
 
     console.log('--- INLINE CALCULUS TESTS PASSED ---');
 }

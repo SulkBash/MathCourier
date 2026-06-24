@@ -186,6 +186,38 @@ runTest('View, Mode, and Kind enum validation', () => {
     assert(n3.errors.some(e => e.includes('Invalid kind')), 'Missing kind validation error');
 });
 
+runTest('Solve mode validation accepts symbolic and expression modes', () => {
+    const validModes = ['factor', 'expand', 'simplify', 'sym', 'num', 'hybrid'];
+
+    for (const mode of validModes) {
+        const parsed = parseCommandSyntax(`x^2 - 5*x + 6 mode:${mode}`);
+        const normalized = normalizeAndValidate(parsed, 'solve');
+        assert(normalized.success, `Should accept solve mode:${mode}`);
+        assert(normalized.options.mode === mode, `Expected solve mode ${mode}, got ${normalized.options.mode}`);
+    }
+
+    const invalidParsed = parseCommandSyntax('x^2 - 5*x + 6 mode:formula');
+    const invalidNormalized = normalizeAndValidate(invalidParsed, 'solve');
+    assert(!invalidNormalized.success, 'Should reject unsupported solve modes');
+    assert(invalidNormalized.errors.some(e => e.includes('Invalid mode')), 'Missing invalid solve mode error');
+});
+
+runTest('Latex mode validation accepts rendering modes', () => {
+    const validModes = ['formula', 'chem', 'tikz'];
+
+    for (const mode of validModes) {
+        const parsed = parseCommandSyntax(`x^2 + y^2 = 1 mode:${mode}`);
+        const normalized = normalizeAndValidate(parsed, 'latex');
+        assert(normalized.success, `Should accept latex mode:${mode}`);
+        assert(normalized.options.mode === mode, `Expected latex mode ${mode}, got ${normalized.options.mode}`);
+    }
+
+    const invalidParsed = parseCommandSyntax('x^2 + y^2 = 1 mode:factor');
+    const invalidNormalized = normalizeAndValidate(invalidParsed, 'latex');
+    assert(!invalidNormalized.success, 'Should reject solve-only modes for latex');
+    assert(invalidNormalized.errors.some(e => e.includes('Invalid mode')), 'Missing invalid latex mode error');
+});
+
 runTest('Camera and Animate structured option parsing', () => {
     // Valid camera and view:3d
     const p1 = parseCommandSyntax('z = x^2 view:3d camera:z360 animate:t');
@@ -215,23 +247,17 @@ runTest('Camera and Animate structured option parsing', () => {
 });
 
 runTest('Command-local rules', () => {
-    // !desp requires exactly one variable
-    const p1 = parseCommandSyntax('y = m*x + c vars:{m, x}');
-    const n1 = normalizeAndValidate(p1, 'desp');
-    assert(!n1.success, 'Should fail: desp requires exactly 1 variable');
-    assert(n1.errors.some(e => e.includes('requires exactly one variable')), 'Missing desp variables count error');
-
     // !ode requires ic option
-    const p2 = parseCommandSyntax('dy/dx = -y x:[0, 5]');
-    const n2 = normalizeAndValidate(p2, 'ode');
-    assert(!n2.success, 'Should fail: ode requires ic');
-    assert(n2.errors.some(e => e.includes('requires initial conditions')), 'Missing ode ic error');
+    const p1 = parseCommandSyntax('dy/dx = -y x:[0, 5]');
+    const n1 = normalizeAndValidate(p1, 'ode');
+    assert(!n1.success, 'Should fail: ode requires ic');
+    assert(n1.errors.some(e => e.includes('requires initial conditions')), 'Missing ode ic error');
 
     // !pde requires ic and bc options
-    const p3 = parseCommandSyntax('du/dt = d2u/dx2 x:[0, pi]');
-    const n3 = normalizeAndValidate(p3, 'pde');
-    assert(!n3.success, 'Should fail: pde requires ic and bc');
-    assert(n3.errors.some(e => e.includes('requires initial conditions')), 'Missing pde ic/bc error');
+    const p2 = parseCommandSyntax('du/dt = d2u/dx2 x:[0, pi]');
+    const n2 = normalizeAndValidate(p2, 'pde');
+    assert(!n2.success, 'Should fail: pde requires ic and bc');
+    assert(n2.errors.some(e => e.includes('requires initial conditions')), 'Missing pde ic/bc error');
 });
 
 runTest('Phase option validation and normalization', () => {

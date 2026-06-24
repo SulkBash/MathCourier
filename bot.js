@@ -3,11 +3,10 @@ const qrcode = require('qrcode-terminal');
 const renderer = require('./src/renderer');
 const config = require('./config');
 
+const handleLatexCommand = require('./src/commands/latex');
 const handlePlotCommand = require('./src/commands/plot');
-const handleOdeCommand = require('./src/commands/ode');
-const handlePdeCommand = require('./src/commands/pde');
+const handleSolveCommand = require('./src/commands/solve');
 const helpText = require('./src/commands/help');
-const solver = require('./src/solver');
 
 const READY_WATCHDOG_MS = 45000;
 
@@ -97,44 +96,122 @@ client.on('ready', async () => {
 });
 
 const COMMAND_REGISTRY = {
-    'latex': { handler: async (input) => renderer.render(input, true) },
-    'chem':  { handler: async (input) => renderer.renderChem(input) },
-    'tikz':  { handler: async (input) => renderer.renderTikz(input) },
-    'solve':  { solver: solver.solveEquation },
-    'matrix': { solver: solver.solveMatrixExpression },
-    'desp':   { solver: solver.rearrangeEquation },
-    'diff':   { solver: solver.solveDerivative },
-    'int':    { solver: solver.solveIntegral },
-    'grad':   { solver: solver.solveGradient },
-    'lap':    { solver: solver.solveLaplacian },
-    'div':    { solver: solver.solveDivergence },
-    'curl':   { solver: solver.solveCurl }
+    latex: { handler: handleLatexCommand },
+    plot: { handler: handlePlotCommand },
+    solve: { handler: handleSolveCommand }
+};
+
+const LEGACY_ALIASES = {
+    tex: { command: 'latex' },
+    chem: { command: 'latex', injectMode: 'chem' },
+    chemfig: { command: 'latex', injectMode: 'chem' },
+    tikz: { command: 'latex', injectMode: 'tikz' },
+    diff: { command: 'solve', prefixBody: 'diff' },
+    int: { command: 'solve', prefixBody: 'int' },
+    grad: { command: 'solve', prefixBody: 'grad' },
+    lap: { command: 'solve', prefixBody: 'lap' },
+    div: { command: 'solve', prefixBody: 'div' },
+    curl: { command: 'solve', prefixBody: 'curl' },
+    matrix: { command: 'solve', prefixBody: 'matrix' },
+    desp: { command: 'solve' },
+    ode: { command: 'solve' },
+    pde: { command: 'solve' }
 };
 
 async function executeRegistryCommand(commandName, input) {
     const cmd = COMMAND_REGISTRY[commandName];
     if (!cmd) return { success: false, error: 'Unknown command' };
 
-    if (cmd.handler) {
-        return await cmd.handler(input);
+    if (typeof cmd.handler !== 'function') {
+        return { success: false, error: `Command "!${commandName}" is not currently available.` };
     }
 
-    const res = await cmd.solver(input);
-    if (!res.success) {
-        return { success: false, error: res.error };
-    }
-    return await renderer.render(res.latex, true);
+    return await cmd.handler(input);
 }
 
-/**
- * Checks if `body` starts with `prefix + ' '` and returns the text after it,
- * or null if it doesn't match.
- */
-function parseCommand(body, prefix) {
-    if (body.startsWith(prefix + ' ')) {
-        return body.slice(prefix.length + 1).trim();
+function appendOption(input, optionToken) {
+    const trimmedInput = String(input || '').trim();
+    return trimmedInput ? `${trimmedInput} ${optionToken}` : optionToken;
+}
+
+function rewriteLegacyAlias(aliasConfig, input) {
+    let rewrittenInput = String(input || '').trim();
+
+    if (aliasConfig.prefixBody) {
+        rewrittenInput = rewrittenInput
+            ? `${aliasConfig.prefixBody} ${rewrittenInput}`
+            : aliasConfig.prefixBody;
     }
-    return null;
+
+    if (aliasConfig.injectMode) {
+        rewrittenInput = appendOption(rewrittenInput, `mode:${aliasConfig.injectMode}`);
+    }
+
+    return {
+        command: aliasConfig.command,
+        input: rewrittenInput
+    };
+}
+
+function extractBangCommand(body) {
+    const match = String(body || '').match(/^!([a-zA-Z][a-zA-Z0-9_]*)(?:\s+([\s\S]*))?$/);
+    if (!match) {
+        return null;
+    }
+
+    return {
+        command: match[1].toLowerCase(),
+        input: (match[2] || '').trim()
+    };
+}
+
+function resolveCommandRoute(body) {
+    const invocation = extractBangCommand(body);
+    if (invocation) {
+        if (COMMAND_REGISTRY[invocation.command]) {
+            return {
+                triggered: true,
+                mode: invocation.command,
+                input: invocation.input
+            };
+        }
+
+        const aliasConfig = LEGACY_ALIASES[invocation.command];
+        if (aliasConfig) {
+            const rewritten = rewriteLegacyAlias(aliasConfig, invocation.input);
+            return {
+                triggered: true,
+                mode: rewritten.command,
+                input: rewritten.input
+            };
+        }
+    }
+
+    if (body.includes('\\begin{tikzpicture}')) {
+        return {
+            triggered: true,
+            mode: 'latex',
+            input: appendOption(body, 'mode:tikz')
+        };
+    }
+
+    if (config.bot.autoRenderBlock && body.includes('$$')) {
+        const first = body.indexOf('$$');
+        const last = body.lastIndexOf('$$');
+        if (first !== last) {
+            return {
+                triggered: true,
+                mode: 'mixed',
+                input: body
+            };
+        }
+    }
+
+    return {
+        triggered: false,
+        mode: null,
+        input: ''
+    };
 }
 
 async function handleCommandMessage(msg) {
@@ -148,10 +225,10 @@ async function handleCommandMessage(msg) {
         console.log(`msg from [${msg.author || msg.from}]: "${snippet}${body.length > 40 ? '...' : ''}"`);
     }
 
-    const helpInput = parseCommand(body, '!help');
-    if (body.toLowerCase() === '!help' || helpInput !== null) {
+    const invocation = extractBangCommand(body);
+    if (invocation && invocation.command === 'help') {
         try {
-            const targetCmd = helpInput ? helpInput.trim() : '';
+            const targetCmd = invocation.input ? invocation.input.trim() : '';
             await msg.reply(helpText(targetCmd));
         } catch (err) {
             console.error('Failed to send help message:', err.message);
@@ -159,65 +236,8 @@ async function handleCommandMessage(msg) {
         return;
     }
 
-    let triggered = false;
-    let mode = null;   // 'latex' | 'chem' | 'tikz' | 'plot' | 'solve' | 'matrix' | 'grad' | 'lap' | 'div' | 'curl' | 'mixed'
-    let input = '';
-
-    const latexInput = parseCommand(body, '!latex') || parseCommand(body, '!tex');
-    const chemInput = parseCommand(body, '!chem') || parseCommand(body, '!chemfig');
-    const tikzInput = parseCommand(body, '!tikz');
-    const plotInput = parseCommand(body, '!plot');
-    const solveInput = parseCommand(body, '!solve');
-    const matrixInput = parseCommand(body, '!matrix');
-    const odeInput = parseCommand(body, '!ode');
-    const pdeInput = parseCommand(body, '!pde');
-    const despInput = parseCommand(body, '!desp');
-    const diffInput = parseCommand(body, '!diff');
-    const intInput = parseCommand(body, '!int');
-    const gradInput = parseCommand(body, '!grad');
-    const lapInput = parseCommand(body, '!lap');
-    const divInput = parseCommand(body, '!div');
-    const curlInput = parseCommand(body, '!curl');
-
-    if (latexInput) {
-        triggered = true; mode = 'latex'; input = latexInput;
-    } else if (chemInput) {
-        triggered = true; mode = 'chem'; input = chemInput;
-    } else if (tikzInput) {
-        triggered = true; mode = 'tikz'; input = tikzInput;
-    } else if (plotInput) {
-        triggered = true; mode = 'plot'; input = plotInput;
-    } else if (solveInput) {
-        triggered = true; mode = 'solve'; input = solveInput;
-    } else if (matrixInput) {
-        triggered = true; mode = 'matrix'; input = matrixInput;
-    } else if (odeInput) {
-        triggered = true; mode = 'ode'; input = odeInput;
-    } else if (pdeInput) {
-        triggered = true; mode = 'pde'; input = pdeInput;
-    } else if (despInput) {
-        triggered = true; mode = 'desp'; input = despInput;
-    } else if (diffInput) {
-        triggered = true; mode = 'diff'; input = diffInput;
-    } else if (intInput) {
-        triggered = true; mode = 'int'; input = intInput;
-    } else if (gradInput) {
-        triggered = true; mode = 'grad'; input = gradInput;
-    } else if (lapInput) {
-        triggered = true; mode = 'lap'; input = lapInput;
-    } else if (divInput) {
-        triggered = true; mode = 'div'; input = divInput;
-    } else if (curlInput) {
-        triggered = true; mode = 'curl'; input = curlInput;
-    } else if (body.includes('\\begin{tikzpicture}')) {
-        triggered = true; mode = 'tikz'; input = body;
-    } else if (config.bot.autoRenderBlock && body.includes('$$')) {
-        const first = body.indexOf('$$');
-        const last = body.lastIndexOf('$$');
-        if (first !== last) {
-            triggered = true; mode = 'mixed'; input = body;
-        }
-    }
+    const route = resolveCommandRoute(body);
+    const { triggered, mode, input } = route;
 
     if (!triggered) return;
 
@@ -236,7 +256,7 @@ async function handleCommandMessage(msg) {
         return;
     }
 
-    console.log(`Processing LaTeX request from: ${sender}`);
+    console.log(`Processing request from: ${sender}`);
     try {
         try {
             const chat = await msg.getChat();
@@ -246,16 +266,10 @@ async function handleCommandMessage(msg) {
         }
 
         let result;
-        if (COMMAND_REGISTRY[mode]) {
-            result = await executeRegistryCommand(mode, input);
-        } else if (mode === 'plot') {
-            result = await handlePlotCommand(input);
-        } else if (mode === 'ode') {
-            result = await handleOdeCommand(input);
-        } else if (mode === 'pde') {
-            result = await handlePdeCommand(input);
-        } else if (mode === 'mixed') {
+        if (mode === 'mixed') {
             result = await renderMixed(input);
+        } else if (COMMAND_REGISTRY[mode]) {
+            result = await executeRegistryCommand(mode, input);
         } else {
             result = { success: false, error: 'Unknown command mode.' };
         }

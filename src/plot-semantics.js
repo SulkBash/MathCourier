@@ -307,6 +307,20 @@ function shouldTreatBareTupleAsVector(components, domainsCount) {
     return hasXYZ;
 }
 
+function detectTupleParameterVariable(expr, components = []) {
+    const searchSpace = Array.isArray(components) && components.length > 0 ? components : [expr];
+
+    if (searchSpace.some((component) => expressionUsesAnySymbol(component, ['t']))) {
+        return 't';
+    }
+
+    if (searchSpace.some((component) => expressionUsesAnySymbol(component, ['theta']))) {
+        return 'theta';
+    }
+
+    return null;
+}
+
 function analyze2dPlot(expr, options = {}) {
     const text = String(expr || '').trim();
     const kind = options.kind ? String(options.kind).trim().toLowerCase() : null;
@@ -317,8 +331,17 @@ function analyze2dPlot(expr, options = {}) {
     const tuple = namedVectorField ? null : parseVectorTuple(text, 2);
     const tupleVars = unique((tuple || []).flatMap((component) => extractExpressionVariables(component)));
     const exprVars = extractExpressionVariables(text);
+    const tupleParameterVar = tuple && !kind && !namedVectorField
+        ? detectTupleParameterVariable(text, tuple)
+        : null;
 
-    if (kind === 'vector' || namedVectorField || (tuple && (explicitVars.length === 2 || (!kind && !expressionUsesAnySymbol(text, ['t', 'theta']))))) {
+    if (tuple && !kind && !namedVectorField && !tupleParameterVar) {
+        throw new Error(
+            'Ambiguous plot: Please specify kind:vector to plot a vector field, or kind:parametric to plot a parametric curve.'
+        );
+    }
+
+    if (kind === 'vector' || namedVectorField) {
         const coordVars = inferCoordinateVariables({
             explicitVars: explicitVars.length >= 2 ? explicitVars : (namedVectorField ? namedVectorField.vars : []),
             rangeNames,
@@ -334,7 +357,7 @@ function analyze2dPlot(expr, options = {}) {
         };
     }
 
-    if (kind === 'parametric' || (tuple && (explicitVars.length === 1 || tupleVars.length === 1 || expressionUsesAnySymbol(text, ['t'])))) {
+    if (kind === 'parametric' || (tuple && tupleParameterVar)) {
         return {
             family: 'parametric',
             components: tuple,
@@ -342,8 +365,8 @@ function analyze2dPlot(expr, options = {}) {
                 explicitVars,
                 rangeNames,
                 exprVars: tupleVars,
-                preferred: ['t'],
-                fallback: 't'
+                preferred: tupleParameterVar === 'theta' ? ['theta', 't'] : ['t', 'theta'],
+                fallback: tupleParameterVar || 't'
             })
         };
     }

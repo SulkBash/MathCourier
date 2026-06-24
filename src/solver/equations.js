@@ -1,26 +1,33 @@
 const math = require('../math');
+const path = require('path');
+const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 const { extractInlineDependencies } = require('../inline-calculus');
-const { splitTopLevel } = require('../utils');
+const { runSubprocess } = require('./subprocess');
+const { splitTopLevel, preprocessCalculusHelpers } = require('../utils');
+
+const EQUATION_SOLVER_PATH = path.join(__dirname, '../../python/', 'equation_solver.py');
+const EXPRESSION_MODES = new Set(['simplify', 'factor', 'expand']);
+const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
+const MATRIX_FUNCTION_RE = /\b(?:det|inv|inverse|eigen|eig|eigs|rref)\s*\(/i;
+
+function collectPlainVariables(source) {
+    try {
+        const parsed = math.parse(source);
+        return extractVariables(parsed);
+    } catch (_) {
+        return [];
+    }
+}
+
+function buildInlineArgDescriptors(args = []) {
+    return args.map((arg) => ({
+        kind: (arg && typeof arg.value === 'string') ? 'string' : 'expr',
+        source: String((arg && typeof arg.value === 'string') ? arg.value : arg.toString())
+    }));
+}
 
 function extractVariables(node) {
     const vars = new Set();
-    const ignored = ['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity'];
-
-    function collectPlainVariables(source) {
-        try {
-            const parsed = math.parse(source);
-            return extractVariables(parsed);
-        } catch (_) {
-            return [];
-        }
-    }
-
-    function buildInlineArgDescriptors(args = []) {
-        return args.map((arg) => ({
-            kind: (arg && typeof arg.value === 'string') ? 'string' : 'expr',
-            source: String((arg && typeof arg.value === 'string') ? arg.value : arg.toString())
-        }));
-    }
 
     function traverse(n, parent) {
         if (!n) return;
@@ -34,26 +41,25 @@ function extractVariables(node) {
                     collectPlainVariables
                 );
                 helperDeps.forEach((name) => {
-                    if (!ignored.includes(name) && !math[name]) {
+                    if (!IGNORED_SYMBOLS.has(name) && !math[name]) {
                         vars.add(name);
                     }
                 });
-                return; // Stop traversing children of this function call node (deriv/integ)
+                return;
             }
         }
 
         if (n.isSymbolNode) {
-            // Ignore function names when they are the function being called
             if (parent && parent.isFunctionNode && parent.fn === n) {
                 return;
             }
+
             const name = n.name;
-            if (!ignored.includes(name) && !math[name]) {
+            if (!IGNORED_SYMBOLS.has(name) && !math[name]) {
                 vars.add(name);
             }
         }
 
-        // Recurse to child nodes
         n.forEach((child) => traverse(child, n));
     }
 
@@ -66,7 +72,6 @@ function formatVal(val) {
     if (!isFinite(val)) return val > 0 ? '\\infty' : '-\\infty';
     if (Math.abs(val) < 1e-10) return '0';
     if (Math.abs(val) < 1e-3 || Math.abs(val) > 1e6) {
-        // scientific notation formatted in LaTeX
         const str = val.toExponential(4);
         const parts = str.split('e');
         const num = parts[0];
@@ -76,272 +81,454 @@ function formatVal(val) {
     return Number(val.toFixed(6)).toString();
 }
 
-function solveEquation(inputStr) {
-    const eqStrs = inputStr.split(';').map(s => s.trim()).filter(Boolean);
-    if (eqStrs.length === 0) {
-        return { success: false, error: 'No equation provided.' };
-    }
+function findTopLevelRelation(text) {
+    const source = String(text || '');
+    let parenDepth = 0;
+    let bracketDepth = 0;
+    let braceDepth = 0;
+    let inQuotes = false;
+    let quoteChar = null;
 
-    const allVars = new Set();
-    const parsedEqs = [];
-    
-    for (const eqStr of eqStrs) {
-        let normalized = '';
-        const parts = splitTopLevel(eqStr, '=');
-        if (parts.length > 1) {
-            if (parts.length !== 2) {
-                return { success: false, error: `Equation "${eqStr}" must contain exactly one top-level '=' sign.` };
+    for (let index = 0; index < source.length; index++) {
+        const char = source[index];
+
+        if (inQuotes) {
+            if (char === '\\' && index + 1 < source.length) {
+                index++;
+                continue;
             }
-            normalized = `(${parts[0]}) - (${parts[1]})`;
-        } else {
-            normalized = eqStr;
+            if (char === quoteChar) {
+                inQuotes = false;
+                quoteChar = null;
+            }
+            continue;
         }
-        
-        try {
-            const node = math.parse(normalized);
-            parsedEqs.push({ node, str: eqStr });
-            const eqVars = extractVariables(node);
-            eqVars.forEach(v => allVars.add(v));
-        } catch (err) {
-            return { success: false, error: `Parsing error in equation "${eqStr}": ${err.message}` };
+
+        if (char === '"' || char === '\'') {
+            inQuotes = true;
+            quoteChar = char;
+            continue;
+        }
+
+        if (char === '(') {
+            parenDepth++;
+            continue;
+        }
+        if (char === ')') {
+            parenDepth = Math.max(0, parenDepth - 1);
+            continue;
+        }
+        if (char === '[') {
+            bracketDepth++;
+            continue;
+        }
+        if (char === ']') {
+            bracketDepth = Math.max(0, bracketDepth - 1);
+            continue;
+        }
+        if (char === '{') {
+            braceDepth++;
+            continue;
+        }
+        if (char === '}') {
+            braceDepth = Math.max(0, braceDepth - 1);
+            continue;
+        }
+
+        if (parenDepth !== 0 || bracketDepth !== 0 || braceDepth !== 0) {
+            continue;
+        }
+
+        const twoChar = source.slice(index, index + 2);
+        if (twoChar === '<=' || twoChar === '>=') {
+            return { index, operator: twoChar };
+        }
+        if (char === '=' || char === '<' || char === '>') {
+            return { index, operator: char };
         }
     }
 
-    const variables = Array.from(allVars).sort();
-    const m = parsedEqs.length;
+    return null;
+}
+
+function buildResidualSource(statementText) {
+    const source = String(statementText || '').trim();
+    const relation = findTopLevelRelation(source);
+
+    if (!relation) {
+        return {
+            normalized: source,
+            operator: null,
+            lhsText: source,
+            rhsText: null
+        };
+    }
+
+    const lhsText = source.slice(0, relation.index).trim();
+    const rhsText = source.slice(relation.index + relation.operator.length).trim();
+    if (!lhsText || !rhsText) {
+        throw new Error(`Equation "${source}" is missing one side of the relation operator.`);
+    }
+
+    return {
+        normalized: `(${lhsText}) - (${rhsText})`,
+        operator: relation.operator,
+        lhsText,
+        rhsText
+    };
+}
+
+function formatEquationTex(statement) {
+    try {
+        if (statement.operator) {
+            const lhsTex = math.parse(statement.lhsText).toTex();
+            const rhsTex = math.parse(statement.rhsText).toTex();
+            const relationTex = statement.operator === '<='
+                ? '\\le'
+                : statement.operator === '>='
+                    ? '\\ge'
+                    : statement.operator;
+            return `${lhsTex} ${relationTex} ${rhsTex}`;
+        }
+
+        return `${math.parse(statement.str).toTex()} = 0`;
+    } catch (_) {
+        if (statement.operator) {
+            return `${statement.lhsText} ${statement.operator} ${statement.rhsText}`;
+        }
+        return `${statement.str} = 0`;
+    }
+}
+
+function splitStatements(body) {
+    return splitTopLevel(String(body || ''), ';')
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+}
+
+function parseStatementsForLocalSolver(statements) {
+    const allVars = new Set();
+    const parsedStatements = [];
+
+    for (const statementText of statements) {
+        const preprocessedText = preprocessCalculusHelpers(statementText);
+        const residualInfo = buildResidualSource(preprocessedText);
+        let node;
+        try {
+            node = math.parse(residualInfo.normalized);
+        } catch (err) {
+            throw new Error(`Parsing error in equation "${statementText}": ${err.message}`);
+        }
+
+        const eqVars = extractVariables(node);
+        eqVars.forEach((name) => allVars.add(name));
+
+        parsedStatements.push({
+            ...residualInfo,
+            node,
+            str: statementText
+        });
+    }
+
+    return {
+        parsedStatements,
+        variables: Array.from(allVars).sort()
+    };
+}
+
+function hasInequalityStatements(statements) {
+    return statements.some((statementText) => {
+        const relation = findTopLevelRelation(statementText);
+        return relation && relation.operator !== '=';
+    });
+}
+
+function hasMatrixSyntaxStatements(statements) {
+    return statements.some((statementText) => {
+        const preprocessed = preprocessCalculusHelpers(String(statementText || ''));
+        return MATRIX_FUNCTION_RE.test(preprocessed) || preprocessed.includes('[');
+    });
+}
+
+function buildRangePayload(ranges) {
+    const payload = {};
+    for (const range of ranges || []) {
+        payload[range.name] = [range.minExpr, range.maxExpr];
+    }
+    return payload;
+}
+
+function buildEquationPayload(statements, parsed, mode = null) {
+    return {
+        equations: statements,
+        variables: (parsed.variables || []).map((entry) => entry.name),
+        ranges: buildRangePayload(parsed.ranges),
+        mode
+    };
+}
+
+function runEquationSubprocess(payload) {
+    return runSubprocess(EQUATION_SOLVER_PATH, payload);
+}
+
+function isExactishLatex(latex) {
+    if (!latex || latex.includes('\\approx')) {
+        return false;
+    }
+
+    return !/(^|[^\\])\d+\.\d+/.test(latex);
+}
+
+function shouldTrySymbolicUpgrade(localResult, statements, variables) {
+    if (!localResult || !localResult.success) {
+        return false;
+    }
+    if (statements.length !== 1 || variables.length !== 1) {
+        return false;
+    }
+
+    return !isExactishLatex(localResult.latex);
+}
+
+function chooseError(primary, fallback) {
+    if (!primary) {
+        return fallback;
+    }
+    if (!fallback || !fallback.error) {
+        return primary;
+    }
+    if (fallback.error === 'Internal solver error. The expression may be malformed or unsupported.') {
+        return primary;
+    }
+    return fallback;
+}
+
+function solveEquationLocally(parsedStatements, variables) {
+    const m = parsedStatements.length;
     const n = variables.length;
 
-    // Case 0: No variables
     if (n === 0) {
         try {
-            const E = parsedEqs[0].node;
-            const val = E.evaluate();
-            const isTautology = Math.abs(val) < 1e-10;
-            let latex = '\\begin{aligned}\n';
-            let eqTex = '';
-            try {
-                if (parsedEqs[0].str.includes('=')) {
-                    const parts = parsedEqs[0].str.split('=');
-                    eqTex = `${math.parse(parts[0]).toTex()} = ${math.parse(parts[1]).toTex()}`;
-                } else {
-                    eqTex = `${math.parse(parsedEqs[0].str).toTex()} = 0`;
-                }
-            } catch (e) {
-                eqTex = parsedEqs[0].str;
-            }
-            latex += `${eqTex} \\\\\n`;
-            if (isTautology) {
-                latex += '\\implies \\text{Tautology (always true)}\n';
-            } else {
-                latex += '\\implies \\text{Contradiction (no solution)}\n';
-            }
-            latex += '\\end{aligned}';
-            return { success: true, latex };
+            const value = parsedStatements[0].node.evaluate();
+            const isTautology = Math.abs(value) < 1e-10;
+            return {
+                success: true,
+                latex: [
+                    '\\begin{aligned}',
+                    `${formatEquationTex(parsedStatements[0])} \\\\`,
+                    isTautology
+                        ? '\\implies \\text{Tautology (always true)}'
+                        : '\\implies \\text{Contradiction (no solution)}',
+                    '\\end{aligned}'
+                ].join('\n')
+            };
         } catch (err) {
             return { success: false, error: `Evaluation error: ${err.message}` };
         }
     }
 
-    // Case 1: System of linear equations (or multi-equation systems)
     if (m > 1 || n > 1) {
         let isLinearSystem = true;
         const A = [];
         const b = [];
-        
-        for (let j = 0; j < m; j++) {
-            const E = parsedEqs[j].node;
-            const rowCoeffs = [];
-            for (let i = 0; i < n; i++) {
-                const xVar = variables[i];
+
+        for (let rowIndex = 0; rowIndex < m; rowIndex++) {
+            const equationNode = parsedStatements[rowIndex].node;
+            const rowCoefficients = [];
+
+            for (let columnIndex = 0; columnIndex < n; columnIndex++) {
+                const variableName = variables[columnIndex];
                 try {
-                    const D = math.derivative(E, xVar);
-                    const D_simp = math.simplify(D);
-                    const dVars = extractVariables(D_simp);
-                    if (dVars.length > 0) {
+                    const derivative = math.derivative(equationNode, variableName);
+                    const simplifiedDerivative = math.simplify(derivative);
+                    const derivativeVars = extractVariables(simplifiedDerivative);
+                    if (derivativeVars.length > 0) {
                         isLinearSystem = false;
                         break;
                     }
-                    const val = math.evaluate(D_simp.toString());
-                    rowCoeffs.push(val);
-                } catch (e) {
+
+                    rowCoefficients.push(math.evaluate(simplifiedDerivative.toString()));
+                } catch (_) {
                     isLinearSystem = false;
                     break;
                 }
             }
-            if (!isLinearSystem) break;
-            
+
+            if (!isLinearSystem) {
+                break;
+            }
+
             const zeroScope = {};
-            variables.forEach(v => { zeroScope[v] = 0; });
+            variables.forEach((name) => {
+                zeroScope[name] = 0;
+            });
+
             try {
-                const c_j = E.evaluate(zeroScope);
-                A.push(rowCoeffs);
-                b.push(-c_j);
-            } catch (e) {
+                const constantTerm = equationNode.evaluate(zeroScope);
+                A.push(rowCoefficients);
+                b.push(-constantTerm);
+            } catch (_) {
                 isLinearSystem = false;
                 break;
             }
         }
 
         if (!isLinearSystem) {
-            return { success: false, error: 'Non-linear systems of equations are not supported. Only single non-linear equations or systems of linear equations are supported.' };
+            return {
+                success: false,
+                error: 'Non-linear systems of equations are not supported locally.'
+            };
         }
 
         if (m !== n) {
-            return { success: false, error: `Linear system is not square: ${m} equations but ${n} variables (${variables.join(', ')}). A unique solution requires exactly as many equations as variables.` };
+            return {
+                success: false,
+                error: `Linear system is not square: ${m} equations but ${n} variables (${variables.join(', ')}). A unique solution requires exactly as many equations as variables.`
+            };
         }
 
         try {
-            const sol = math.lusolve(A, b);
-            let latex = '\\begin{aligned}\n';
-            latex += '\\begin{cases}\n';
-            latex += parsedEqs.map(eq => {
-                try {
-                    if (eq.str.includes('=')) {
-                        const parts = eq.str.split('=');
-                        return `${math.parse(parts[0]).toTex()} = ${math.parse(parts[1]).toTex()}`;
-                    }
-                    return `${math.parse(eq.str).toTex()} = 0`;
-                } catch (e) {
-                    return eq.str;
-                }
-            }).join(' \\\\\n') + '\n\\end{cases} \\\\\n';
-            latex += '\\implies ';
-            const solLines = [];
-            for (let i = 0; i < n; i++) {
-                const val = sol[i][0];
-                let formattedVal;
-                if (typeof val === 'number') {
-                    formattedVal = Number(val.toFixed(8)).toString();
-                } else if (val && val.isComplex) {
-                    const re = Number(val.re.toFixed(8)).toString();
-                    const im = Number(val.im.toFixed(8)).toString();
-                    if (Math.abs(val.im) < 1e-10) {
-                        formattedVal = re;
+            const solution = math.lusolve(A, b);
+            const formattedSolutions = [];
+
+            for (let index = 0; index < n; index++) {
+                const value = solution[index][0];
+                let formattedValue;
+                if (typeof value === 'number') {
+                    formattedValue = Number(value.toFixed(8)).toString();
+                } else if (value && value.isComplex) {
+                    const re = Number(value.re.toFixed(8)).toString();
+                    const im = Number(value.im.toFixed(8)).toString();
+                    if (Math.abs(value.im) < 1e-10) {
+                        formattedValue = re;
                     } else {
-                        const sign = val.im >= 0 ? '+' : '-';
-                        const imAbs = Math.abs(val.im);
+                        const sign = value.im >= 0 ? '+' : '-';
+                        const imAbs = Math.abs(value.im);
                         const imStr = imAbs === 1 ? 'i' : `${Number(imAbs.toFixed(8)).toString()}i`;
-                        formattedVal = `${re} ${sign} ${imStr}`;
+                        formattedValue = `${re} ${sign} ${imStr}`;
                     }
                 } else {
-                    formattedVal = math.format(val, { precision: 8 });
+                    formattedValue = math.format(value, { precision: 8 });
                 }
-                solLines.push(`${variables[i]} = ${formattedVal}`);
+
+                formattedSolutions.push(`${variables[index]} = ${formattedValue}`);
             }
-            latex += solLines.join(', \\quad ') + '\n\\end{aligned}';
-            return { success: true, latex };
+
+            return {
+                success: true,
+                latex: [
+                    '\\begin{aligned}',
+                    '\\begin{cases}',
+                    parsedStatements.map((statement) => formatEquationTex(statement)).join(' \\\\\n'),
+                    '\\end{cases} \\\\',
+                    `\\implies ${formattedSolutions.join(', \\quad ')}`,
+                    '\\end{aligned}'
+                ].join('\n')
+            };
         } catch (err) {
             return { success: false, error: `Could not solve linear system: ${err.message}` };
         }
     }
 
-    // Case 2: Single equation with exactly one variable
-    const xVar = variables[0];
-    const E = parsedEqs[0].node;
-    
-    let eqTex = '';
-    try {
-        if (parsedEqs[0].str.includes('=')) {
-            const parts = parsedEqs[0].str.split('=');
-            eqTex = `${math.parse(parts[0]).toTex()} = ${math.parse(parts[1]).toTex()}`;
-        } else {
-            eqTex = `${math.parse(parsedEqs[0].str).toTex()} = 0`;
-        }
-    } catch (e) {
-        eqTex = parsedEqs[0].str;
-    }
+    const variableName = variables[0];
+    const equationNode = parsedStatements[0].node;
+    const equationTex = formatEquationTex(parsedStatements[0]);
 
-    // Try Symbolic Linear Solver first
     let isLinear = false;
     let linearCoeff = null;
-    let constTerm = null;
+    let constantTerm = null;
     try {
-        const D = math.derivative(E, xVar);
-        const D_simp = math.simplify(D);
-        const dVars = extractVariables(D_simp);
-        if (dVars.length === 0) {
+        const derivative = math.derivative(equationNode, variableName);
+        const simplifiedDerivative = math.simplify(derivative);
+        const derivativeVars = extractVariables(simplifiedDerivative);
+        if (derivativeVars.length === 0) {
             isLinear = true;
-            linearCoeff = math.evaluate(D_simp.toString());
-            constTerm = E.evaluate({ [xVar]: 0 });
+            linearCoeff = math.evaluate(simplifiedDerivative.toString());
+            constantTerm = equationNode.evaluate({ [variableName]: 0 });
         }
-    } catch (e) {}
+    } catch (_) {
+        isLinear = false;
+    }
 
     if (isLinear && linearCoeff !== 0) {
-        const root = -constTerm / linearCoeff;
-        const rootStr = Number(root.toFixed(8)).toString();
-        let latex = '\\begin{aligned}\n';
-        latex += `${eqTex} \\\\\n`;
-        latex += `\\implies ${xVar} = ${rootStr}\n`;
-        latex += '\\end{aligned}';
-        return { success: true, latex };
+        const root = -constantTerm / linearCoeff;
+        return {
+            success: true,
+            latex: [
+                '\\begin{aligned}',
+                `${equationTex} \\\\`,
+                `\\implies ${variableName} = ${Number(root.toFixed(8)).toString()}`,
+                '\\end{aligned}'
+            ].join('\n')
+        };
     }
 
-    // Try Symbolic Polynomial Solver (degree 2 and 3)
-    let isPolynomial = false;
-    let polyRoots = null;
-    let polyDegree = 0;
+    let polynomialRoots = null;
     try {
-        const rat = math.rationalize(E, {}, true);
-        if (rat.variables.length === 1 && rat.variables[0] === xVar && (rat.denominator === null || rat.denominator === undefined)) {
-            isPolynomial = true;
-            const coeffs = rat.coefficients;
-            polyDegree = coeffs.length - 1;
-            if (polyDegree >= 1 && polyDegree <= 3) {
-                polyRoots = math.polynomialRoot(...coeffs);
+        const rationalized = math.rationalize(equationNode, {}, true);
+        if (
+            rationalized.variables.length === 1 &&
+            rationalized.variables[0] === variableName &&
+            (rationalized.denominator === null || rationalized.denominator === undefined)
+        ) {
+            const degree = rationalized.coefficients.length - 1;
+            if (degree >= 1 && degree <= 3) {
+                polynomialRoots = math.polynomialRoot(...rationalized.coefficients);
             }
         }
-    } catch (e) {
-        isPolynomial = false;
+    } catch (_) {
+        polynomialRoots = null;
     }
 
-    if (polyRoots) {
-        let latex = '\\begin{aligned}\n';
-        latex += `${eqTex} \\\\\n`;
-        latex += '\\implies ';
-        const rootsStrList = polyRoots.map((r, idx) => {
-            let rStr = '';
-            if (typeof r === 'number') {
-                rStr = Number(r.toFixed(8)).toString();
-            } else if (r && r.isComplex) {
-                const re = Number(r.re.toFixed(8)).toString();
-                const im = Number(r.im.toFixed(8)).toString();
-                if (Math.abs(r.im) < 1e-10) {
-                    rStr = re;
-                } else {
-                    const sign = r.im >= 0 ? '+' : '-';
-                    const imAbs = Math.abs(r.im);
-                    const imStr = imAbs === 1 ? 'i' : `${Number(imAbs.toFixed(8)).toString()}i`;
-                    rStr = `${re} ${sign} ${imStr}`;
-                }
-            } else {
-                rStr = math.format(r, { precision: 8 });
+    if (polynomialRoots) {
+        const roots = polynomialRoots.map((root, index) => {
+            if (typeof root === 'number') {
+                return `${variableName}_${index + 1} = ${Number(root.toFixed(8)).toString()}`;
             }
-            return `${xVar}_{${idx + 1}} = ${rStr}`;
+            if (root && root.isComplex) {
+                const re = Number(root.re.toFixed(8)).toString();
+                const im = Number(root.im.toFixed(8)).toString();
+                if (Math.abs(root.im) < 1e-10) {
+                    return `${variableName}_${index + 1} = ${re}`;
+                }
+                const sign = root.im >= 0 ? '+' : '-';
+                const imAbs = Math.abs(root.im);
+                const imStr = imAbs === 1 ? 'i' : `${Number(imAbs.toFixed(8)).toString()}i`;
+                return `${variableName}_${index + 1} = ${re} ${sign} ${imStr}`;
+            }
+            return `${variableName}_${index + 1} = ${math.format(root, { precision: 8 })}`;
         });
-        latex += rootsStrList.join(', \\quad ') + '\n\\end{aligned}';
-        return { success: true, latex };
+
+        return {
+            success: true,
+            latex: [
+                '\\begin{aligned}',
+                `${equationTex} \\\\`,
+                `\\implies ${roots.join(', \\quad ')}`,
+                '\\end{aligned}'
+            ].join('\n')
+        };
     }
 
-    // Fallback: Numerical Newton-Raphson Solver
-    const compiledF = E.compile();
+    const compiledF = equationNode.compile();
     const f = (xVal) => {
         try {
-            const res = compiledF.evaluate({ [xVar]: xVal });
-            if (res && typeof res === 'object') {
-                if (res.isComplex) return Math.abs(res.im) < 1e-10 ? res.re : NaN;
-                return res.toNumber ? res.toNumber() : NaN;
+            const result = compiledF.evaluate({ [variableName]: xVal });
+            if (result && typeof result === 'object') {
+                if (result.isComplex) return Math.abs(result.im) < 1e-10 ? result.re : NaN;
+                return result.toNumber ? result.toNumber() : NaN;
             }
-            return typeof res === 'number' ? res : NaN;
-        } catch (err) {
+            return typeof result === 'number' ? result : NaN;
+        } catch (_) {
             return NaN;
         }
     };
 
     let compiledDf = null;
     let hasCalculusHelper = false;
-    E.traverse((n) => {
-        if (n && n.isFunctionNode && n.fn && n.fn.isSymbolNode) {
-            if (['deriv', 'integ'].includes(n.fn.name)) {
+    equationNode.traverse((node) => {
+        if (node && node.isFunctionNode && node.fn && node.fn.isSymbolNode) {
+            if (node.fn.name === 'deriv' || node.fn.name === 'integ') {
                 hasCalculusHelper = true;
             }
         }
@@ -349,27 +536,35 @@ function solveEquation(inputStr) {
 
     if (!hasCalculusHelper) {
         try {
-            const D = math.derivative(E, xVar);
-            compiledDf = D.compile();
-        } catch (e) {}
+            compiledDf = math.derivative(equationNode, variableName).compile();
+        } catch (_) {
+            compiledDf = null;
+        }
     }
 
     const df = (xVal) => {
         if (compiledDf) {
             try {
-                const res = compiledDf.evaluate({ [xVar]: xVal });
-                let val = NaN;
-                if (res && typeof res === 'object') {
-                    if (res.isComplex) val = Math.abs(res.im) < 1e-10 ? res.re : NaN;
-                    else val = res.toNumber ? res.toNumber() : NaN;
+                const result = compiledDf.evaluate({ [variableName]: xVal });
+                let value = NaN;
+                if (result && typeof result === 'object') {
+                    if (result.isComplex) {
+                        value = Math.abs(result.im) < 1e-10 ? result.re : NaN;
+                    } else {
+                        value = result.toNumber ? result.toNumber() : NaN;
+                    }
                 } else {
-                    val = typeof res === 'number' ? res : NaN;
+                    value = typeof result === 'number' ? result : NaN;
                 }
-                if (!isNaN(val) && isFinite(val)) return val;
-            } catch (e) {}
+
+                if (!isNaN(value) && isFinite(value)) {
+                    return value;
+                }
+            } catch (_) {
+                // Fall back to finite differences.
+            }
         }
-        
-        // Numerical derivative fallback (finite differences)
+
         const h = 1e-7;
         const fPlus = f(xVal + h);
         const fMinus = f(xVal - h);
@@ -380,61 +575,141 @@ function solveEquation(inputStr) {
     };
 
     const candidates = [0, 1, -1, 0.5, -0.5, 2, -2, 5, -5, 10, -10];
-    let foundConv = false;
-    let history = [];
     let rootVal = null;
 
     for (const x0 of candidates) {
         let x = x0;
-        history = [];
         let converged = false;
-        
-        for (let k = 0; k <= 30; k++) {
+
+        for (let step = 0; step <= 30; step++) {
             const y = f(x);
             const dy = df(x);
-            
-            history.push({ step: k, x, fx: y, dfx: dy });
-            
+
             if (isNaN(y) || isNaN(dy) || !isFinite(y) || !isFinite(dy)) {
                 break;
             }
-            
+
             if (Math.abs(y) < 1e-10) {
                 converged = true;
                 rootVal = x;
                 break;
             }
-            
+
             if (Math.abs(dy) < 1e-12) {
                 break;
             }
-            
+
             const nextX = x - y / dy;
-            
             if (Math.abs(nextX - x) < 1e-12) {
                 converged = true;
                 rootVal = nextX;
                 break;
             }
-            
+
             x = nextX;
         }
-        
+
         if (converged) {
-            foundConv = true;
             break;
         }
     }
 
-    if (foundConv) {
-        let latex = '\\begin{aligned}\n';
-        latex += `${eqTex} \\\\\n`;
-        latex += `\\implies ${xVar} \\approx ${Number(rootVal.toFixed(10)).toString()}\n`;
-        latex += '\\end{aligned}';
-        return { success: true, latex };
+    if (rootVal !== null) {
+        return {
+            success: true,
+            latex: [
+                '\\begin{aligned}',
+                `${equationTex} \\\\`,
+                `\\implies ${variableName} \\approx ${Number(rootVal.toFixed(10)).toString()}`,
+                '\\end{aligned}'
+            ].join('\n')
+        };
     }
 
-    return { success: false, error: 'Numerical solver could not converge to a root. Please verify if the equation has real roots.' };
+    return {
+        success: false,
+        error: 'Numerical solver could not converge to a root. Please verify if the equation has real roots.'
+    };
+}
+
+async function solveEquation(inputStr) {
+    const rawParsed = parseCommandSyntax(inputStr);
+    const parsed = normalizeAndValidate(rawParsed, 'solve');
+    if (!parsed.success) {
+        return { success: false, error: parsed.errors.join('\n') };
+    }
+
+    const body = (parsed.body || '').trim();
+    if (!body) {
+        return { success: false, error: 'No equation provided.' };
+    }
+
+    const statements = splitStatements(body);
+    if (statements.length === 0) {
+        return { success: false, error: 'No equation provided.' };
+    }
+
+    const mode = parsed.options.mode || null;
+    const targetVariables = parsed.variables.map((entry) => entry.name);
+    const hasInequality = hasInequalityStatements(statements);
+    const hasMatrixSyntax = hasMatrixSyntaxStatements(statements);
+    const shouldUsePythonDirectly =
+        EXPRESSION_MODES.has(mode) ||
+        hasInequality ||
+        hasMatrixSyntax ||
+        targetVariables.length > 0 ||
+        parsed.ranges.length > 0;
+
+    if (shouldUsePythonDirectly) {
+        return runEquationSubprocess(buildEquationPayload(statements, parsed, mode));
+    }
+
+    let localMeta = null;
+    let localParseError = null;
+    try {
+        localMeta = parseStatementsForLocalSolver(statements);
+    } catch (err) {
+        localParseError = { success: false, error: err.message };
+    }
+
+    if (!localMeta) {
+        const symbolicFallback = await runEquationSubprocess(buildEquationPayload(statements, parsed, mode));
+        if (symbolicFallback.success) {
+            return symbolicFallback;
+        }
+        return chooseError(localParseError, symbolicFallback);
+    }
+
+    if (statements.length === 1 && localMeta.variables.length > 1) {
+        const localVariableError = {
+            success: false,
+            error: `Multiple variables detected: ${localMeta.variables.join(', ')}. Please specify vars:<variable>.`
+        };
+        const symbolicFallback = await runEquationSubprocess(buildEquationPayload(statements, parsed, null));
+        if (symbolicFallback.success) {
+            return symbolicFallback;
+        }
+        return chooseError(localVariableError, symbolicFallback);
+    }
+
+    const localResult = solveEquationLocally(localMeta.parsedStatements, localMeta.variables);
+    if (localResult.success) {
+        if (shouldTrySymbolicUpgrade(localResult, statements, localMeta.variables)) {
+            const symbolicResult = await runEquationSubprocess(buildEquationPayload(statements, parsed, null));
+            if (symbolicResult.success) {
+                return symbolicResult;
+            }
+        }
+
+        return localResult;
+    }
+
+    const symbolicFallback = await runEquationSubprocess(buildEquationPayload(statements, parsed, null));
+    if (symbolicFallback.success) {
+        return symbolicFallback;
+    }
+
+    return chooseError(localResult, symbolicFallback);
 }
 
 module.exports = {

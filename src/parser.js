@@ -405,13 +405,23 @@ function normalizeAndValidate(parsed, commandName) {
     }
     normalizedOptions.view = view;
 
-    // 4. Process mode (allowed: 'hybrid', 'sym', 'num')
+    // 4. Process mode (allowed values depend on command)
     if (parsed.options.hasOwnProperty('mode')) {
         const val = String(parsed.options.mode).toLowerCase().trim();
-        if (val === 'hybrid' || val === 'sym' || val === 'num') {
+        const defaultModes = new Set(['hybrid', 'sym', 'num']);
+        const solveModes = new Set(['factor', 'expand', 'simplify', 'hybrid', 'sym', 'num']);
+        const latexModes = new Set(['formula', 'chem', 'tikz']);
+        const allowedModes = normCmd === 'solve'
+            ? solveModes
+            : normCmd === 'latex'
+                ? latexModes
+                : defaultModes;
+
+        if (allowedModes.has(val)) {
             normalizedOptions.mode = val;
         } else {
-            errors.push(`Invalid mode: expected 'hybrid', 'sym', or 'num', got "${parsed.options.mode}".`);
+            const expectedModes = Array.from(allowedModes).map((mode) => `'${mode}'`).join(', ');
+            errors.push(`Invalid mode: expected ${expectedModes}, got "${parsed.options.mode}".`);
         }
     } else if (normCmd === 'ode') {
         normalizedOptions.mode = 'hybrid';
@@ -544,11 +554,7 @@ function normalizeAndValidate(parsed, commandName) {
     }
 
     // 9. Command-Local Rules
-    if (normCmd === 'desp') {
-        if (variables.length !== 1) {
-            errors.push('Command "!desp" requires exactly one variable in "vars".');
-        }
-    } else if (normCmd !== 'diff' && variables.some((variable) => variable.order !== 1)) {
+    if (normCmd !== 'diff' && variables.some((variable) => variable.order !== 1)) {
         errors.push(`Option "vars" only supports order markers like x:2 for command "!diff".`);
     } else if (normCmd === 'ode') {
         if (!parsed.options.hasOwnProperty('ic')) {
