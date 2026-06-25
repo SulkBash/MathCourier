@@ -130,7 +130,7 @@ const detailedHelp = {
         '',
         '*Calculus*',
         '- `!solve deriv[x^3, x]`',
-        '- `!solve integ[sin(x), x, 0, pi]`',
+        '- `!solve integ[sin(x), x:[0, pi]]`',
         '- `!solve deriv[x^3, x] - integ[2*x, x] mode:simplify`',
         '- Helper signatures are documented in `!help deriv` and `!help integ`',
         '',
@@ -180,12 +180,12 @@ const detailedHelp = {
         '',
         '*Quoted forms also work when needed*',
         '- `deriv("x^3", "x")`',
-        '- `integ("sin(t)", "t", 0, x)`',
+        '- `integ("sin(t)", "t:[0, x]")`',
         '',
         '*Good places to use them*',
         '- `!plot y = deriv[x^2 + y^2 = 4, dep:y, x]`',
         '- `!solve deriv[x^3, x] - 12 = 0`',
-        '- `!solve integ[t^2, t, 0, x] = 9 vars:x`'
+        '- `!solve integ[t^2, t:[0, x]] = 9 vars:x`'
     ]),
 
     deriv: block([
@@ -226,7 +226,7 @@ const detailedHelp = {
         '',
         '*Argument patterns*',
         '- `integ[expr, x]` - integrate with respect to `x`',
-        '- `integ[expr, x, 0, pi]` - one-variable definite integral',
+        '- `integ[expr, x:[0, pi]]` - one-variable definite integral',
         '- `integ[expr, x:[0, 1], y:[0, 2]]` - labeled multivariable definite integral',
         '- `integ[field, kind:line, param:{...}, t:[a, b]]` - line integral',
         '- `integ[field, kind:surface, param:{...}, u:[...], v:[...]]` - surface integral',
@@ -241,14 +241,14 @@ const detailedHelp = {
         '',
         '*Examples*',
         '- `integ[sin(x), x]`',
-        '- `integ[sin(x), x, 0, pi]`',
+        '- `integ[sin(x), x:[0, pi]]`',
         '- `integ[x^2 + y^2, x:[0, 1], y:[0, 2]]`',
         '- `integ[(-y, x), kind:line, param:{cos(t), sin(t)}, t:[0, 2*pi]]`',
         '- `integ[(0, 0, z), kind:surface, param:{sin(u)*cos(v), sin(u)*sin(v), cos(u)}, u:[0, pi], v:[0, 2*pi]]`',
         '- `integ[x*y*z, kind:volume, x:[0, 1], y:[0, 2], z:[0, 3]]`',
         '',
         '*Also accepted*',
-        '- `integ("sin(t)", "t", 0, x)`',
+        '- `integ("sin(t)", "t:[0, x]")`',
         '- `integ("x^2 + y^2", "x:[0, 1]", "y:[0, 2]")`'
     ]),
 

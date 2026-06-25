@@ -83,9 +83,15 @@ const cases = [
     },
     {
         name: 'Integral helper inside equation',
-        input: 'integ("t^2", "t", 0, x) - 9 = 0',
+        input: 'integ("t^2", "t:[0, x]") - 9 = 0',
         expectSuccess: true,
         latexIncludes: ['\\int\\limits_{0}^{x} t^{2}\\, dt - 9 = 0', 'x = 3']
+    },
+    {
+        name: 'Legacy definite integ helper syntax is rejected',
+        input: 'integ("t^2", "t", 0, x) - 9 = 0',
+        expectSuccess: false,
+        errorIncludes: ['Definite integ syntax no longer accepts positional bounds']
     },
     {
         name: 'Variable isolation for c',

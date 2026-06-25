@@ -497,7 +497,7 @@ function buildLegacySolveGuidance(mode) {
         return 'Legacy route "diff" has been removed. Use !solve deriv[expr, x] instead.';
     }
     if (normalized === 'int') {
-        return 'Legacy route "int" has been removed. Use !solve integ[expr, x] or a field-integral helper instead.';
+        return 'Legacy route "int" has been removed. Use !solve integ[expr, x] for antiderivatives or integ[expr, x:[a, b]] for definite integrals.';
     }
     if (normalized === 'grad' || normalized === 'lap' || normalized === 'div' || normalized === 'curl') {
         return `Legacy route "${normalized}" has been removed. Use !solve ${normalized}[...] instead.`;

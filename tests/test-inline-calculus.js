@@ -91,6 +91,12 @@ async function run() {
     );
     console.log('PASS: Quote-free integ[...] bracket notation evaluates numerically');
 
+    assert.throws(
+        () => math.evaluate('integ[sin(x), x, 0, pi]'),
+        /Definite integ syntax no longer accepts positional bounds/
+    );
+    console.log('PASS: Legacy positional definite integ[...] syntax is rejected');
+
     console.log('--- INLINE CALCULUS TESTS PASSED ---');
 }
 

@@ -590,17 +590,10 @@ function parseIntegralCall(descriptors, extractVars) {
         if (rest.length === 1) {
             variableRecipe = [{ name: varName, order: 1 }];
             usesLegacySyntax = true;
-        } else if (rest.length === 3) {
-            ranges = [{
-                name: varName,
-                lowerSource: rest[1].source,
-                upperSource: rest[2].source
-            }];
-            usesLegacySyntax = true;
         } else {
             return {
                 success: false,
-                error: 'Legacy integ syntax expects either integ("expr", "x") or integ("expr", "x", lower, upper).'
+                error: 'Definite integ syntax no longer accepts positional bounds. Use integ[expr, x:[lower, upper]] or integ("expr", "x:[lower, upper]").'
             };
         }
     } else {

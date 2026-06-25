@@ -813,14 +813,11 @@ def integ_inline(expr, *args):
         variable_name = remaining[0]
         if len(remaining) == 1:
             variable_recipe = [(sympy.Symbol(variable_name), 1)]
-        elif len(remaining) == 3:
-            ranges = [{
-                "name": variable_name,
-                "lower": str(remaining[1]),
-                "upper": str(remaining[2]),
-            }]
         else:
-            raise ValueError('Legacy integ syntax expects integ("expr", "x") or integ("expr", "x", lower, upper).')
+            raise ValueError(
+                'Definite integ syntax no longer accepts positional bounds. '
+                'Use integ[expr, x:[lower, upper]] or integ("expr", "x:[lower, upper]").'
+            )
     else:
         for arg in remaining:
             if not isinstance(arg, str):

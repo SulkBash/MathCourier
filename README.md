@@ -63,7 +63,7 @@ A local-first WhatsApp bot built with `whatsapp-web.js`, `Puppeteer`, `KaTeX`, `
 | --- | --- | --- |
 | `!latex <content>` | Formulas, mixed text, chemistry, `chemfig`, TikZ, and `circuitikz` | `!latex \sum_{i=1}^{n} i = \frac{n(n+1)}{2}` |
 | `!plot <expression> [options]` | 2D plots, 3D plots, vector fields, parametric curves, and animation | `!plot z = sin(x)*cos(y) view:3d x:[-3, 3] y:[-3, 3]` |
-| `!solve <expression> [options]` | Equations, calculus, matrices, ODEs, PDEs, and variable isolation | `!solve integ[sin(x), x, 0, pi]` |
+| `!solve <expression> [options]` | Equations, calculus, matrices, ODEs, PDEs, and variable isolation | `!solve integ[sin(x), x:[0, pi]]` |
 | `!help [topic]` | Syntax help, command help, helper docs, and option docs | `!help plot` |
 
 ## Syntax Tips

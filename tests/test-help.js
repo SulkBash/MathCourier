@@ -50,7 +50,8 @@ assert(!helperHelp.includes('Legacy'));
 
 const integHelp = getHelp('integ');
 assert(integHelp.includes('*integ Helper*'));
-assert(integHelp.includes('integ[expr, x, 0, pi]'));
+assert(integHelp.includes('integ[expr, x:[0, pi]]'));
+assert(!integHelp.includes('integ[expr, x, 0, pi]'));
 assert(integHelp.includes('kind:line'));
 assert(integHelp.includes('param:{...}'));
 

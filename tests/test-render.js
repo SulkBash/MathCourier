@@ -100,7 +100,7 @@ async function runTests() {
         renderer.renderPlot('y = deriv("x^3", "x", x)', { xDomain: [-3, 3], yDomain: [-10, 10] }));
 
     await runTest('Plot integral of sin(t)', () =>
-        renderer.renderPlot('y = integ("sin(t)", "t", 0, x)', { xDomain: [-10, 10], yDomain: [-3, 3] }));
+        renderer.renderPlot('y = integ("sin(t)", "t:[0, x]")', { xDomain: [-10, 10], yDomain: [-3, 3] }));
 
     await runTest('Plot laplacian of x^3', () =>
         renderer.renderPlot('y = lap("x^3")', { xDomain: [-3, 3], yDomain: [-20, 20] }));

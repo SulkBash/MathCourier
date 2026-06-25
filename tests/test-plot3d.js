@@ -236,7 +236,7 @@ async function runTests() {
     );
 
     await runTest('3D Static Surface Integral', () =>
-        handlePlotCommand('z = integ("cos(t)*y", "t", 0, x) view:3d x:[-5, 5] y:[-5, 5]')
+        handlePlotCommand('z = integ("cos(t)*y", "t:[0, x]") view:3d x:[-5, 5] y:[-5, 5]')
     );
 
     await runTest('3D Static Parametric Curve', () =>

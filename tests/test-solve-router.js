@@ -92,10 +92,10 @@ async function run() {
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
-        const result = await handleSolveCommand('integ[sin(x), x, 0, pi]');
+        const result = await handleSolveCommand('integ[sin(x), x:[0, pi]]');
         assert.strictEqual(result.route, 'render');
         assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveEquation', 'render']);
-        assert.strictEqual(calls[0].input, 'integ[sin(x), x, 0, pi] mode:simplify');
+        assert.strictEqual(calls[0].input, 'integ[sin(x), x:[0, pi]] mode:simplify');
         console.log('PASS: integ[...] routes through the unified equation solver');
     }
 
