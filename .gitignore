@@ -11,6 +11,11 @@ test_output/
 *.png
 *.jpg
 *.jpeg
+!assets/
+!assets/readme/
+!assets/readme/*.png
+!assets/readme/*.jpg
+!assets/readme/*.jpeg
 
 # Logs
 *.log

@@ -36,7 +36,7 @@ async function runTests() {
 
     await runTest('Mixed text + equation', () =>
         renderer.render(
-            'Solving the quadratic equation:\nFor $a x^2 + b x + c = 0$, the roots are given by:\n$$\\displaystyle x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$',
+            'Solving the quadratic equation:\nFor a quadratic of the form ax^2 + bx + c = 0, the roots are given by:\n$$\\displaystyle x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$',
             false));
 
     await runTest('Invalid LaTeX (expect error)', async () => {
