@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { formatVarToTex } = require('../utils');
 const { analyze3dPlot, expressionUsesAnySymbol } = require('../plot-semantics');
+const { getFfmpegCommand } = require('../runtime');
 const ZERO_TOLERANCE = 1e-9;
 const MAX_CONCURRENT_PLOT3D = Math.max(1, Number(config.bot?.plot3dMaxConcurrency) || 3);
 const DEFAULT_ANIMATION_FRAMES = Math.max(6, Number(config.bot?.plot3dAnimationFrames) || 12);
@@ -1645,7 +1646,7 @@ function buildTempVideoPath() {
 function compileVideo(frameBuffers, fps = DEFAULT_ANIMATION_FPS) {
     return new Promise((resolve, reject) => {
         const outputPath = buildTempVideoPath();
-        const ffmpeg = spawn('ffmpeg', [
+        const ffmpeg = spawn(getFfmpegCommand(), [
             '-y',
             '-loglevel', 'error',
             '-f', 'image2pipe',

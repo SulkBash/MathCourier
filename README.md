@@ -78,16 +78,23 @@ A local-first WhatsApp bot built with `whatsapp-web.js`, `Puppeteer`, `KaTeX`, `
 
 ### Prerequisites
 
-- Node.js 18+
-- Python 3 with `sympy`, `numpy`, and `scipy`
-- Optional: `ffmpeg` for animated 3D MP4 output
+- Node.js 20.x
+- npm 10.x
+- Python 3 available as `python`, `python3`, or via `PYTHON_BIN`
+- Python packages: `sympy`, `numpy`, and `scipy`
+- Optional: `ffmpeg` on `PATH` or via `FFMPEG_BIN` for animated 3D MP4 output
+
+Tested during the current package-hardening pass with Node `20.19.5` and npm `10.8.2`. The Python bridge expects a working Python 3 interpreter plus the required packages, and `npm run doctor` is the source of truth for whether your local environment is ready.
 
 ### Install
 
 ```bash
 npm install
 pip install sympy numpy scipy
+npm run doctor
 ```
+
+The repo intentionally remains terminal-first. There is no separate setup UI; `npm run doctor` is the local setup/status entry point before QR auth or full startup.
 
 ### Smoke-test the renderer
 
@@ -97,6 +104,15 @@ npm test
 
 This writes sample output to `test_output/` so you can verify that Puppeteer, KaTeX, and plotting are working before connecting the bot to WhatsApp.
 
+### Useful package commands
+
+```bash
+npm run doctor
+npm run test:core
+npm run test:renderers
+npm run test:ci
+```
+
 ### Run the bot
 
 ```bash
@@ -105,6 +121,13 @@ npm start
 
 1. Scan the QR code from WhatsApp -> Linked Devices.
 2. The login session is stored in `.wwebjs_auth/`, so you normally only scan once.
+
+## Privacy And Repo Safety
+
+- WhatsApp session state stays local in `.wwebjs_auth/` and `.wwebjs_cache/`; those directories are gitignored.
+- Generated output and scratch/runtime cache directories such as `test_output/`, `scratch/`, `.cache/`, `.tmp/`, `tmp/`, and `runtime_cache/` are local-only and not part of the published repo surface.
+- The preview images under `assets/readme/` are generated sample outputs from this project, not screenshots of live chats, QR codes, or personal account data.
+- The current pre-publish audit and asset provenance notes live in [`PUBLIC_REPO_AUDIT.md`](PUBLIC_REPO_AUDIT.md).
 
 ## Example Commands
 
@@ -150,6 +173,13 @@ Another standalone formula example:
 !solve dy/dx = -y ic:{y(0)=1}
 ```
 
+## Dependency Notes
+
+- Direct npm dependencies are pinned to exact registry releases and locked in `package-lock.json` for reproducible installs.
+- `whatsapp-web.js` is an unofficial WhatsApp Web client. It is the main maintenance-risk dependency in this project because upstream WhatsApp changes can break login or messaging behavior without warning.
+- `puppeteer` is part of the supported local render path and may require a working Chromium/Chrome environment depending on your host setup.
+- Public-release audit policy: install-blocking issues and high-severity dependency problems are blockers; lower-severity findings still need triage and an explicit follow-up plan before release.
+
 ## Configuration
 
 Most runtime and visual tuning lives in [`config.js`](config.js):
@@ -177,8 +207,8 @@ WhatsApp message
 ## Troubleshooting
 
 - If QR login gets stuck, delete `.wwebjs_auth/` and start the bot again
-- If symbolic solving fails, make sure `python` resolves to Python 3 and `sympy`, `numpy`, and `scipy` are installed
-- If animated 3D output falls back to a static image, install `ffmpeg`
+- If symbolic solving fails, run `npm run doctor`. If needed, point the solver bridge at a specific interpreter with `PYTHON_BIN`.
+- If animated 3D output falls back to a static image, install `ffmpeg` or point to it explicitly with `FFMPEG_BIN`.
 - If local rendering fails, check your Chromium/Puppeteer install first by running `npm test`
 
 ## License

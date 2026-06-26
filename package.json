@@ -1,24 +1,63 @@
 {
   "name": "latex-render-bot",
-  "version": "1.0.0",
-  "description": "WhatsApp bot that renders LaTeX in group chats.",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first WhatsApp bot that renders LaTeX, plots math, and solves equations into PNG and MP4 replies.",
   "main": "bot.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SulkBash/LaTeXRender.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SulkBash/LaTeXRender/issues"
+  },
+  "homepage": "https://github.com/SulkBash/LaTeXRender#readme",
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "latex",
+    "math",
+    "plotting",
+    "sympy",
+    "puppeteer"
+  ],
+  "engines": {
+    "node": ">=20 <21",
+    "npm": ">=10"
+  },
+  "packageManager": "npm@10.8.2",
   "scripts": {
     "start": "node bot.js",
-    "test": "node tests/test-render.js",
+    "doctor": "node scripts/doctor.js",
+    "setup-check": "npm run doctor",
+    "test": "npm run test:smoke",
+    "test:smoke": "node tests/test-render.js",
+    "test:core": "npm run test:parser && npm run test:help && npm run test:inline && npm run test:labeled && npm run test:latex-router && npm run test:solve-router && npm run test:solver && npm run test:calculus && npm run test:vector && npm run test:matrix && npm run test:ode",
+    "test:renderers": "npm run test:smoke && npm run test:quicklatex && npm run test:plot3d-internals",
+    "test:ci": "npm run test:core && npm run test:renderers",
     "test:parser": "node tests/test-parser.js",
-    "test:calculus": "node tests/test-calculus-safety.js",
+    "test:help": "node tests/test-help.js",
     "test:inline": "node tests/test-inline-calculus.js",
+    "test:labeled": "node tests/test-labeled-domains.js",
+    "test:latex-router": "node tests/test-latex-router.js",
+    "test:solve-router": "node tests/test-solve-router.js",
+    "test:solver": "node tests/test-solver.js",
+    "test:calculus": "node tests/test-calculus.js",
     "test:vector": "node tests/test-vector.js",
     "test:matrix": "node tests/test-matrix.js",
-    "test:help": "node tests/test-help.js",
-    "test:labeled": "node tests/test-labeled-domains.js"
+    "test:ode": "node tests/test-ode.js",
+    "test:pde": "node tests/test-pde.js",
+    "test:quicklatex": "node tests/test-quicklatex.js",
+    "test:plot3d": "node tests/test-plot3d.js",
+    "test:plot3d-internals": "node tests/test-plot3d-internals.js",
+    "test:plot-anim": "node tests/test-plot-anim.js"
   },
   "dependencies": {
-    "katex": "^0.16.9",
-    "mathjs": "^15.2.0",
-    "puppeteer": "^21.6.1",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main"
+    "katex": "0.16.47",
+    "mathjs": "15.2.0",
+    "puppeteer": "24.38.0",
+    "qrcode-terminal": "0.12.0",
+    "whatsapp-web.js": "1.34.7"
   }
 }

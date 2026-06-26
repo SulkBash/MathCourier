@@ -1,5 +1,9 @@
 node_modules/
 
+# Local agent/editor state
+.agents/
+.codex/
+
 # WhatsApp session data
 .wwebjs_auth/
 .wwebjs_cache/
@@ -16,6 +20,13 @@ test_output/
 !assets/readme/*.png
 !assets/readme/*.jpg
 !assets/readme/*.jpeg
+
+# Local scratch and runtime caches
+scratch/
+.cache/
+.tmp/
+tmp/
+runtime_cache/
 
 # Logs
 *.log

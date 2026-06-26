@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const { preprocessCalculusHelpers } = require('../utils');
+const { resolvePythonCommand } = require('../runtime');
 
 const SUBPROCESS_TIMEOUT_MS = 30000;
 const SUBPROCESS_MAX_STDOUT = 512 * 1024;
@@ -28,7 +29,16 @@ function runSubprocess(scriptPath, payload) {
         let stderrData = '';
         let settled = false;
 
-        const pyProcess = spawn('python', [scriptPath]);
+        const python = resolvePythonCommand({ refresh: true });
+        if (!python) {
+            resolve({
+                success: false,
+                error: 'Python 3 interpreter not found. Install Python 3 or set PYTHON_BIN to a working interpreter.'
+            });
+            return;
+        }
+
+        const pyProcess = spawn(python.command, [...(python.args || []), scriptPath]);
 
         const timer = setTimeout(() => {
             if (settled) return;
