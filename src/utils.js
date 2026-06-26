@@ -132,6 +132,10 @@ const INLINE_BRACKET_HELPERS = [
     'div'
 ];
 
+function quoteMathStringLiteral(value) {
+    return JSON.stringify(String(value));
+}
+
 function preprocessCalculusHelpers(input) {
     if (typeof input !== 'string') return input;
 
@@ -209,9 +213,7 @@ function preprocessCalculusHelpers(input) {
                     ) {
                         return trimmed;
                     }
-                    // Otherwise wrap in double quotes, escaping any inner double quotes
-                    const escaped = trimmed.replace(/"/g, '\\"');
-                    return `"${escaped}"`;
+                    return quoteMathStringLiteral(trimmed);
                 }).join(', ');
 
                 result += `${helperName}(${quotedArgs})`;

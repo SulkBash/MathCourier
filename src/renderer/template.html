@@ -34,6 +34,7 @@
     <div id="watermark"></div>
   </div>
   <script>
+    const TRUSTED_PLOTLY_SCRIPT_SRC = {{plotlyScriptSrcJson}};
     let renderConfigCache = null;
     let plotlyLoadPromise = null;
 
@@ -83,6 +84,35 @@
       watermarkDiv.style.fontFamily = watermark.fontFamily || '';
     }
 
+    function getTrustedPlotlyScriptSrc() {
+      if (!TRUSTED_PLOTLY_SCRIPT_SRC) {
+        return null;
+      }
+
+      try {
+        const parsedUrl = new URL(TRUSTED_PLOTLY_SCRIPT_SRC, window.location.href);
+        const normalizedPath = parsedUrl.pathname.replace(/\\/g, '/').toLowerCase();
+
+        if (parsedUrl.protocol !== 'file:') {
+          throw new Error(`Unexpected Plotly.js protocol: ${parsedUrl.protocol}`);
+        }
+        if (parsedUrl.hostname) {
+          throw new Error(`Unexpected Plotly.js host: ${parsedUrl.hostname}`);
+        }
+        if (parsedUrl.search || parsedUrl.hash) {
+          throw new Error('Unexpected Plotly.js URL suffix.');
+        }
+        if (!normalizedPath.endsWith('/plotly.min.js')) {
+          throw new Error(`Unexpected Plotly.js asset path: ${parsedUrl.pathname}`);
+        }
+
+        return parsedUrl.toString();
+      } catch (err) {
+        console.error('Refusing to load an unexpected Plotly.js URL:', err);
+        return null;
+      }
+    }
+
     function ensurePlotlyLoaded() {
       if (typeof Plotly !== 'undefined') {
         return Promise.resolve();
@@ -92,8 +122,7 @@
         return plotlyLoadPromise;
       }
 
-      const renderConfig = getRenderConfig();
-      const plotlyScriptSrc = renderConfig.plotlyScriptSrc;
+      const plotlyScriptSrc = getTrustedPlotlyScriptSrc();
       if (!plotlyScriptSrc) {
         return Promise.reject(new Error('Plotly.js script source is not configured.'));
       }
@@ -807,9 +836,7 @@
             mathDiv.dataset.lastLatex = latex;
           }
         } else {
-          if (mathDiv.innerHTML) {
-            mathDiv.innerHTML = '';
-          }
+          mathDiv.replaceChildren();
           delete mathDiv.dataset.lastLatex;
         }
 

@@ -1,6 +1,7 @@
 const assert = require('assert');
 const math = require('../src/math');
 const solver = require('../src/solver');
+const { preprocessCalculusHelpers } = require('../src/utils');
 const { extractVariables } = require('../src/solver/equations');
 const { extractExpressionVariables } = require('../src/plot-semantics');
 
@@ -75,6 +76,13 @@ async function run() {
     const plotVars = extractExpressionVariables('integ("sin(t)", "vars:t") + 1');
     assert(plotVars.includes('t'));
     console.log('PASS: Plot semantics sees inline helper dependencies');
+
+    const rawWindowsPath = String.raw`C:\temp\value`;
+    assert.strictEqual(
+        preprocessCalculusHelpers(`deriv[${rawWindowsPath}, vars:x]`),
+        `deriv(${JSON.stringify(rawWindowsPath)}, ${JSON.stringify('vars:x')})`
+    );
+    console.log('PASS: Bracket helper preprocessing preserves backslashes in generated string literals');
 
     // Bracket notation tests (quote-free deriv[...] and integ[...])
     approxEqual(

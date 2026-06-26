@@ -38,7 +38,14 @@ function getRuntimeTemplatePath() {
 }
 
 function replaceTemplateToken(templateHtml, token, value) {
-    return templateHtml.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), value);
+    return templateHtml.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), () => value);
+}
+
+function serializeInlineTemplateData(value) {
+    return JSON.stringify(value)
+        .replace(/</g, '\\u003c')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
 }
 
 function buildTemplateHtml() {
@@ -73,13 +80,13 @@ function buildTemplateHtml() {
     templateHtml = replaceTemplateToken(templateHtml, '{{katexJsSrc}}', buildTemplateUrl(katexJsPath));
     templateHtml = replaceTemplateToken(templateHtml, '{{mhchemJsSrc}}', buildTemplateUrl(mhchemJsPath));
     templateHtml = replaceTemplateToken(templateHtml, '{{autoRenderJsSrc}}', buildTemplateUrl(autoRenderJsPath));
+    templateHtml = replaceTemplateToken(templateHtml, '{{plotlyScriptSrcJson}}', serializeInlineTemplateData(plotlyScriptSrc));
 
-    const renderConfig = JSON.stringify({
-        plotlyScriptSrc,
+    const renderConfig = serializeInlineTemplateData({
         style: config.style
-    }).replace(/</g, '\\u003c');
+    });
 
-    return templateHtml.replace('{{renderConfig}}', renderConfig);
+    return replaceTemplateToken(templateHtml, '{{renderConfig}}', renderConfig);
 }
 
 function writeRuntimeTemplate() {
