@@ -1,6 +1,6 @@
-# WhatsApp LaTeX Render Bot
+# MathCourier
 
-[![CI](https://github.com/SulkBash/LaTeXRender/actions/workflows/ci.yml/badge.svg)](https://github.com/SulkBash/LaTeXRender/actions/workflows/ci.yml)
+[![CI](https://github.com/SulkBash/MathCourier/actions/workflows/ci.yml/badge.svg)](https://github.com/SulkBash/MathCourier/actions/workflows/ci.yml)
 
 Render equations, plots, solver output, chemistry, and animated math visuals directly inside WhatsApp.
 
@@ -8,7 +8,7 @@ Render equations, plots, solver output, chemistry, and animated math visuals dir
   <img src="assets/readme/gaussian-integral.png" alt="Gaussian integral rendered as a dark themed card" width="900">
 </p>
 
-A local-first WhatsApp bot built with `whatsapp-web.js`, `Puppeteer`, `KaTeX`, `mathjs`, and Python/SymPy backends. It works in group chats and DMs, turns math commands into polished PNG cards, and can export animated 2D and 3D scenes as MP4 clips when `ffmpeg` is available.
+MathCourier is a local-first WhatsApp bot built with `whatsapp-web.js`, `Puppeteer`, `KaTeX`, `mathjs`, and Python/SymPy backends. It works in group chats and DMs, turns math commands into polished PNG cards, and can export animated 2D and 3D scenes as MP4 clips when `ffmpeg` is available.
 
 ## Highlights
 

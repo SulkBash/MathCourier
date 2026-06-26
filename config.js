@@ -12,7 +12,7 @@ module.exports = {
         boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3)',
 
         watermark: {
-            text: 'LaTeX Render Bot',
+            text: 'MathCourier',
             color: 'rgba(248, 250, 252, 0.4)',
             fontSize: '11px',
             fontFamily: 'monospace'
@@ -35,9 +35,9 @@ module.exports = {
     },
 
     bot: {
-        name: 'LaTeX Bot',
+        name: 'MathCourier',
         autoRenderBlock: true,
-        errorPrefix: '*LaTeX Error:* ',
+        errorPrefix: '*MathCourier Error:* ',
         useFallback: true,
         fallbackEngine: 'codecogs',
         plot3dMaxConcurrency: 3,

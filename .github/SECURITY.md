@@ -20,7 +20,7 @@ Preferred reporting path:
 
 1. Use GitHub's private vulnerability reporting feature for this repository, if it is enabled.
 2. If private reporting is not available yet, contact the maintainer privately through GitHub at <https://github.com/SulkBash>.
-3. Include `[security] LaTeXRender` in the subject or opening line so the report can be triaged quickly.
+3. Include `[security] MathCourier` in the subject or opening line so the report can be triaged quickly.
 
 Please include:
 

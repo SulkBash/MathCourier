@@ -1,7 +1,7 @@
 const block = (lines) => lines.join('\n');
 
 const generalHelp = block([
-    '*LaTeX Render Bot Help*',
+    '*MathCourier Help*',
     '',
     'A math assistant bot for WhatsApp.',
     'Render formulas, plot 2D and 3D math, and solve symbolic or numeric problems from chat.',
@@ -590,7 +590,7 @@ function getHelp(cmd = '') {
         return detailedHelp[key];
     }
 
-    return `*LaTeX Render Bot* - Command not found: !${normalized}\n\nType \`!help\` to see all available commands.`;
+    return `*MathCourier* - Command not found: !${normalized}\n\nType \`!help\` to see all available commands.`;
 }
 
 getHelp.isHelpText = isHelpText;
