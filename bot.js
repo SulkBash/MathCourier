@@ -3,6 +3,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const renderer = require('./src/renderer');
 const config = require('./config');
+const botIdentity = require('./src/bot-identity');
 const {
     getConfiguredBrowserExecutablePath,
     getFfmpegCommand,
@@ -16,6 +17,7 @@ const {
 } = require('./src/runtime');
 
 const handleLatexCommand = require('./src/commands/latex');
+const handleBotNameCommand = require('./src/commands/botname');
 const handlePlotCommand = require('./src/commands/plot');
 const handleSolveCommand = require('./src/commands/solve');
 const helpText = require('./src/commands/help');
@@ -42,8 +44,14 @@ function logStartupHealthSummary() {
     const python = resolvePythonCommand({ refresh: true });
     const ffmpeg = probeFfmpegCommand();
     const browserExecutablePath = getConfiguredBrowserExecutablePath();
+    const botProfile = botIdentity.getActiveBotProfile({ refresh: true });
 
     console.log('Runtime health summary:');
+    if (botProfile) {
+        console.log(`- Bot address name: ${botProfile.address}`);
+    } else {
+        console.warn('- Bot address name: not configured yet. MathCourier will prompt for one before full startup.');
+    }
     console.log(`- WhatsApp auth root: ${runtimePaths.whatsappAuthDir}`);
     console.log(`- WhatsApp session dir: ${sessionDirPath}`);
     console.log(`- WhatsApp web cache: ${runtimePaths.whatsappCacheDir}`);
@@ -225,7 +233,8 @@ function extractBangCommand(body) {
 }
 
 function resolveCommandRoute(body) {
-    const invocation = extractBangCommand(body);
+    const normalizedBody = String(body || '').trim();
+    const invocation = extractBangCommand(normalizedBody);
     if (invocation) {
         if (COMMAND_REGISTRY[invocation.command]) {
             return {
@@ -236,22 +245,30 @@ function resolveCommandRoute(body) {
         }
     }
 
-    if (body.includes('\\begin{tikzpicture}')) {
+    if (normalizedBody.startsWith('!')) {
         return {
-            triggered: true,
-            mode: 'latex',
-            input: appendOption(body, 'mode:tikz')
+            triggered: false,
+            mode: null,
+            input: ''
         };
     }
 
-    if (config.bot.autoRenderBlock && body.includes('$$')) {
-        const first = body.indexOf('$$');
-        const last = body.lastIndexOf('$$');
+    if (normalizedBody.includes('\\begin{tikzpicture}')) {
+        return {
+            triggered: true,
+            mode: 'latex',
+            input: appendOption(normalizedBody, 'mode:tikz')
+        };
+    }
+
+    if (config.bot.autoRenderBlock && normalizedBody.includes('$$')) {
+        const first = normalizedBody.indexOf('$$');
+        const last = normalizedBody.lastIndexOf('$$');
         if (first !== last) {
             return {
                 triggered: true,
                 mode: 'mixed',
-                input: body
+                input: normalizedBody
             };
         }
     }
@@ -263,35 +280,63 @@ function resolveCommandRoute(body) {
     };
 }
 
+async function maybeHandleBotNameCommand(msg, input) {
+    if (!msg.fromMe) {
+        return false;
+    }
+
+    try {
+        await msg.reply(handleBotNameCommand(input));
+    } catch (err) {
+        console.error('Failed to send bot-name reply:', err.message);
+    }
+
+    return true;
+}
+
 async function handleCommandMessage(msg) {
     if (!msg.body || typeof msg.body !== 'string') return;
 
-    const body = msg.body.trim();
-    if (typeof helpText.isHelpText === 'function' && helpText.isHelpText(body)) return;
+    const rawBody = msg.body.trim();
+    if (typeof helpText.isHelpText === 'function' && helpText.isHelpText(rawBody)) return;
+
+    const rawInvocation = extractBangCommand(rawBody);
+    if (rawInvocation && rawInvocation.command === 'botname') {
+        await maybeHandleBotNameCommand(msg, rawInvocation.input);
+        return;
+    }
+
+    const activeBotProfile = botIdentity.getActiveBotProfile();
+    const addressedMessage = activeBotProfile
+        ? botIdentity.extractAddressedBody(rawBody, activeBotProfile.name)
+        : null;
+
+    if (!addressedMessage) {
+        return;
+    }
+
+    const body = addressedMessage.body;
+    if (!body) {
+        return;
+    }
 
     if (body.startsWith('!') || body.includes('$$')) {
-        const snippet = body.substring(0, 40).replace(/\n/g, ' ');
+        const snippet = rawBody.substring(0, 40).replace(/\n/g, ' ');
         console.log(`msg from [${msg.author || msg.from}]: "${snippet}${body.length > 40 ? '...' : ''}"`);
     }
 
     const invocation = extractBangCommand(body);
+    if (invocation && invocation.command === 'botname') {
+        await maybeHandleBotNameCommand(msg, invocation.input);
+        return;
+    }
+
     if (invocation && invocation.command === 'help') {
         try {
             const targetCmd = invocation.input ? invocation.input.trim() : '';
             await msg.reply(helpText(targetCmd));
         } catch (err) {
             console.error('Failed to send help message:', err.message);
-        }
-        return;
-    }
-
-    if (invocation && !COMMAND_REGISTRY[invocation.command]) {
-        try {
-            await msg.reply(
-                `${config.bot.errorPrefix}Unknown command "!${invocation.command}". Use !help for the supported commands: !latex, !plot, !solve, !help.`
-            );
-        } catch (err) {
-            console.error('Failed to send unknown-command reply:', err.message);
         }
         return;
     }
@@ -463,6 +508,7 @@ async function runStartupProbe(options = {}) {
             rendererVerified,
             runtimePaths: { ...runtimePaths },
             sessionDirPath,
+            botProfile: botIdentity.getActiveBotProfile(),
             browserExecutablePath: getConfiguredBrowserExecutablePath() || null,
             python: resolvePythonCommand({ refresh: true }),
             ffmpeg: probeFfmpegCommand()
@@ -481,6 +527,7 @@ async function startBot(options = {}) {
 
     console.log('Starting MathCourier...');
     ensureRuntimeDirectories();
+    await botIdentity.ensureBotProfile({ interactive: true });
 
     if (logSummary) {
         logStartupHealthSummary();
@@ -499,6 +546,11 @@ async function startBot(options = {}) {
 }
 
 module.exports = {
+    __testing: {
+        extractBangCommand,
+        handleCommandMessage,
+        resolveCommandRoute
+    },
     buildClientOptions,
     createClient,
     ensureRuntimeDirectories,

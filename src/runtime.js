@@ -64,6 +64,21 @@ function getWhatsAppWebCacheOptions() {
     };
 }
 
+function getConfiguredBotName() {
+    return getRuntimeConfig().botName || null;
+}
+
+function getBotIdentityPath() {
+    const configuredPath = getRuntimeConfig().botIdentityPath || null;
+    if (configuredPath) {
+        return resolveRepoPath(configuredPath, null);
+    }
+
+    const { rendererCacheDir } = resolveRuntimePaths();
+    const clientId = getWhatsAppClientId() || 'default';
+    return path.join(rendererCacheDir, `bot-profile-${clientId}.json`);
+}
+
 function getConfiguredBrowserExecutablePath() {
     return resolveRepoPath(getRuntimeConfig().browserExecutablePath, null);
 }
@@ -181,7 +196,9 @@ function probeFfmpegCommand() {
 }
 
 module.exports = {
+    getBotIdentityPath,
     getConfiguredBrowserExecutablePath,
+    getConfiguredBotName,
     getWhatsAppClientId,
     getWhatsAppLocalAuthOptions,
     getWhatsAppSessionDir,
