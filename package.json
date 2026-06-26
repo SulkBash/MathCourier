@@ -56,10 +56,10 @@
     "test:plot-anim": "node tests/test-plot-anim.js"
   },
   "dependencies": {
-    "katex": "0.16.47",
+    "katex": "0.17.0",
     "mathjs": "15.2.0",
-    "plotly.js-dist-min": "2.27.0",
-    "puppeteer": "24.38.0",
+    "plotly.js-dist-min": "3.6.0",
+    "puppeteer": "25.2.1",
     "qrcode-terminal": "0.12.0",
     "whatsapp-web.js": "1.34.7"
   }
