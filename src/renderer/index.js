@@ -3,76 +3,114 @@ const { renderPlot, renderOde } = require('./plot');
 const { renderPlot3d } = require('./plot3d');
 const { renderPde } = require('./pde');
 const { renderChem, renderTikz } = require('./quicklatex');
+const { createJobQueue } = require('./jobQueue');
 const { isRateLimited } = require('../middleware/rateLimit');
 const { validateInputLength } = require('../middleware/validate');
 const config = require('../../config');
 const { renderFallback } = require('./codecogs');
 
-// Simple sequential execution queue to prevent concurrent rendering requests
-// from interfering with the shared singleton Puppeteer page instance.
-let renderingMutex = Promise.resolve();
+const MAX_RENDER_CONCURRENCY = Math.max(1, Number(config.bot?.renderMaxConcurrency) || 8);
+const MAX_RENDER_QUEUE = Math.max(0, Number(config.bot?.renderMaxQueue) || 128);
 
-async function acquireLock() {
-    let release;
-    const nextLock = new Promise(resolve => {
-        release = resolve;
+const isolatedRenderQueue = createJobQueue({
+    concurrency: MAX_RENDER_CONCURRENCY,
+    maxQueue: MAX_RENDER_QUEUE,
+    name: 'Renderer queue'
+});
+
+async function runWithIsolatedPage(task, options = {}) {
+    const requiresLocalPage = options.requiresLocalPage !== false;
+
+    return isolatedRenderQueue.run(async () => {
+        let renderPage = null;
+
+        try {
+            if (katexModule.isInitialized()) {
+                renderPage = await katexModule.createRenderPage();
+            } else if (requiresLocalPage) {
+                throw new Error('Local renderer is not initialized.');
+            }
+
+            return await task(renderPage);
+        } finally {
+            if (renderPage) {
+                try {
+                    await renderPage.close();
+                } catch (_) {}
+            }
+        }
     });
-    const currentLock = renderingMutex;
-    renderingMutex = nextLock;
-    await currentLock;
-    return release;
 }
 
-async function renderWithLock(fn) {
-    const release = await acquireLock();
+async function normalizeRendererJob(task) {
     try {
-        return await fn();
-    } finally {
-        release();
+        return await task();
+    } catch (err) {
+        return {
+            success: false,
+            error: err && err.message ? err.message : 'Renderer job failed.'
+        };
     }
 }
 
 async function render(formula, isBlock = true) {
-    return renderWithLock(async () => {
-        if (katexModule.isInitialized()) {
-            try {
-                return await katexModule.renderLocal(formula, isBlock);
-            } catch (err) {
-                console.warn('Local render failed:', err.message, '- trying fallback...');
-            }
+    if (katexModule.isInitialized()) {
+        try {
+            return await runWithIsolatedPage((renderPage) => (
+                katexModule.renderLocal(formula, isBlock, renderPage)
+            ));
+        } catch (err) {
+            console.warn('Local render failed:', err.message, '- trying fallback...');
         }
+    }
 
-        if (config.bot.useFallback) return await renderFallback(formula);
+    if (config.bot.useFallback) {
+        return renderFallback(formula);
+    }
 
-        return { success: false, error: 'Local renderer not ready, and Web API Fallback is disabled.' };
-    });
+    return { success: false, error: 'Local renderer not ready, and Web API Fallback is disabled.' };
 }
 
 async function renderChemWrapped(formula) {
-    return renderWithLock(() => renderChem(formula));
+    if (!katexModule.isInitialized()) {
+        return renderChem(formula);
+    }
+
+    return normalizeRendererJob(() => runWithIsolatedPage(
+        (renderPage) => renderChem(formula, renderPage),
+        { requiresLocalPage: false }
+    ));
 }
 
 async function renderTikzWrapped(formula) {
-    return renderWithLock(() => renderTikz(formula));
+    if (!katexModule.isInitialized()) {
+        return renderTikz(formula);
+    }
+
+    return normalizeRendererJob(() => runWithIsolatedPage(
+        (renderPage) => renderTikz(formula, renderPage),
+        { requiresLocalPage: false }
+    ));
 }
 
 async function renderPlotWrapped(rawExpr, customOptions) {
-    return renderWithLock(() => renderPlot(rawExpr, customOptions));
+    return normalizeRendererJob(() => runWithIsolatedPage((renderPage) => renderPlot(rawExpr, customOptions, renderPage)));
 }
 
 async function renderPlot3dWrapped(rawExpr, customOptions) {
-    // 3D renders use isolated Puppeteer pages, so they can safely run
-    // outside the shared singleton-page lock used by the other renderers.
     return renderPlot3d(rawExpr, customOptions);
 }
 
 async function renderOdeWrapped(latexText, curves, customOptions) {
-    return renderWithLock(() => renderOde(latexText, curves, customOptions));
+    return normalizeRendererJob(() => runWithIsolatedPage((renderPage) => renderOde(latexText, curves, customOptions, renderPage)));
 }
 
-async function renderPdeWrapped(pdeRes, customOptions) {
-    // PDE renders use isolated pages, so they can run safely outside the shared lock.
-    return renderPde(pdeRes, customOptions);
+async function renderPdeWrapped(pdeRes, customOptions = {}) {
+    if (customOptions.is2d) {
+        return normalizeRendererJob(() => runWithIsolatedPage((renderPage) => renderPde(pdeRes, customOptions, renderPage)));
+    }
+
+    return normalizeRendererJob(() => renderPde(pdeRes, customOptions));
 }
 
 module.exports = {
@@ -87,5 +125,8 @@ module.exports = {
     close: katexModule.close,
     isLocalReady: () => katexModule.isInitialized(),
     isRateLimited,
-    validateInputLength
+    validateInputLength,
+    _internals: {
+        getQueueStats: () => isolatedRenderQueue.getStats()
+    }
 };

@@ -855,9 +855,9 @@ function parseSingleExpression(expr, opts) {
     return { type, data: plotData, latexText, label };
 }
 
-async function renderPlot(rawExpr, customOptions = {}) {
+async function renderPlot(rawExpr, customOptions = {}, renderPage = null) {
     const isInitialized = katexModule.isInitialized();
-    const page = katexModule.getPage();
+    const page = renderPage || katexModule.getPage();
     if (!isInitialized || !page) {
         return { success: false, error: 'Local renderer is not initialized.' };
     }
@@ -1040,9 +1040,13 @@ async function renderPlot(rawExpr, customOptions = {}) {
         }
 
         if (isAnimated) {
-            let animPage = null;
+            let animPage = renderPage;
+            let shouldCloseAnimPage = false;
             try {
-                animPage = await katexModule.createRenderPage();
+                if (!animPage) {
+                    animPage = await katexModule.createRenderPage();
+                    shouldCloseAnimPage = true;
+                }
                 const totalFrames = DEFAULT_PLOT2D_ANIMATION_FRAMES;
                 const frameBuffers = [];
 
@@ -1269,7 +1273,7 @@ async function renderPlot(rawExpr, customOptions = {}) {
                 console.error('Error during 2D plot animation rendering:', err.message);
                 return { success: false, error: err.message };
             } finally {
-                if (animPage) {
+                if (shouldCloseAnimPage && animPage) {
                     try { await animPage.close(); } catch (e) {}
                 }
             }
@@ -1351,9 +1355,9 @@ async function renderPlot(rawExpr, customOptions = {}) {
     }
 }
 
-async function renderOde(latexText, curves, customOptions = {}) {
+async function renderOde(latexText, curves, customOptions = {}, renderPage = null) {
     const isInitialized = katexModule.isInitialized();
-    const page = katexModule.getPage();
+    const page = renderPage || katexModule.getPage();
     if (!isInitialized || !page) {
         return { success: false, error: 'Local renderer is not initialized.' };
     }
