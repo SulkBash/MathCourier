@@ -81,14 +81,14 @@ MathCourier is a local-first WhatsApp bot built with `whatsapp-web.js`, `Puppete
 
 ### Prerequisites
 
-- Node.js 20.x
+- Node.js 20.x through 24.x
 - npm 10.x
 - Python 3 available as `python`, `python3`, or via `PYTHON_BIN` / `runtime.pythonBin`
 - Chromium or Chrome available to Puppeteer. If auto-detection is not enough on your host, set `PUPPETEER_EXECUTABLE_PATH` or `CHROME_BIN`, or edit `runtime.browserExecutablePath` in `config.js`.
 - Python packages: `sympy`, `numpy`, and `scipy`
 - Optional: `ffmpeg` on `PATH` or via `FFMPEG_BIN` / `runtime.ffmpegBin` for animated 2D and 3D MP4 output
 
-Tested during the current package-hardening pass with Node `20.19.5` and npm `10.8.2`. The Python bridge expects a working Python 3 interpreter plus the required packages, and `npm run doctor` is the source of truth for whether your local environment is ready.
+Tested during the current package-hardening pass with Node `20.19.5` and npm `10.8.2`. `npm run doctor` accepts Node `20.x` through `24.x`. The Python bridge expects a working Python 3 interpreter plus the required packages, and `npm run doctor` is the source of truth for whether your local environment is ready.
 
 ### Installation
 
@@ -133,7 +133,7 @@ npm start
 
 | Runtime | Current policy | Current verified example |
 | --- | --- | --- |
-| Node.js | Supported baseline: `20.x` | `20.19.5` |
+| Node.js | Supported runtime window: `20.x` through `24.x` | `20.19.5` (CI baseline) |
 | npm | Supported baseline: `10.x` | `10.8.2` |
 | Python | Required: Python `3.x` plus `sympy`, `numpy`, and `scipy`; readiness is gated by `npm run doctor` rather than a narrow hard pin | Local docs pass detected `3.14.0` |
 | `ffmpeg` | Optional; used for animated 2D and 3D MP4 output | If missing, animated requests degrade to a static preview |

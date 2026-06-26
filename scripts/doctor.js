@@ -12,7 +12,9 @@ const {
 } = require('../src/runtime');
 const { runStartupProbe } = require('../bot');
 
-const requiredNodeMajor = 20;
+const minimumNodeMajor = 20;
+const maximumNodeMajor = 24;
+const verifiedNodeVersion = '20.19.5';
 const runtimePaths = resolveRuntimePaths();
 
 function pass(label, detail) {
@@ -53,11 +55,22 @@ function checkNode() {
     const version = process.versions.node;
     const major = Number(version.split('.')[0]);
 
-    if (major !== requiredNodeMajor) {
-        return fail('Node.js', `Expected Node ${requiredNodeMajor}.x for this repo, found ${version}`);
+    if (!Number.isInteger(major)) {
+        return fail('Node.js', `Could not determine the Node.js major version from ${version}`);
     }
 
-    return pass('Node.js', `Detected ${version}`);
+    if (major < minimumNodeMajor || major > maximumNodeMajor) {
+        return fail('Node.js', `Expected Node ${minimumNodeMajor}.x through ${maximumNodeMajor}.x for this repo, found ${version}`);
+    }
+
+    if (version === verifiedNodeVersion) {
+        return pass('Node.js', `Detected ${version}`);
+    }
+
+    return pass(
+        'Node.js',
+        `Detected ${version}. Supported majors are ${minimumNodeMajor}.x through ${maximumNodeMajor}.x; CI baseline remains ${verifiedNodeVersion}.`
+    );
 }
 
 function checkPythonInterpreter() {
