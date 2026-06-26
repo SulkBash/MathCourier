@@ -52,7 +52,6 @@ Useful notes:
 - `npm run test:core` covers parser, help, router, solver, calculus, vector, matrix, and ODE checks.
 - `npm run test:renderers` covers the smoke test plus renderer-focused suites, including the release-gated 3D and PDE integration checks.
 - `npm run test:ci` is the canonical CI and pre-release verification command.
-- `npm run test:plot-anim` is intentionally separate because unsupported 2D animation syntax is not part of the public release gate.
 
 ## Pull request expectations
 
