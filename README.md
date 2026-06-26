@@ -332,6 +332,9 @@ WhatsApp message
 - If animated output falls back to a static image, install `ffmpeg` or point to it explicitly with `FFMPEG_BIN` or `runtime.ffmpegBin`.
 - If local rendering fails, run `npm run doctor` and verify that Puppeteer can find a usable Chrome/Chromium executable. Set `PUPPETEER_EXECUTABLE_PATH`, `CHROME_BIN`, or `runtime.browserExecutablePath` when the browser lives in a custom location.
 
+## Disclaimer
+This project is not affiliated with, endorsed by, sponsored by, or officially connected to WhatsApp, WhatsApp LLC, Meta Platforms, Inc., or any of their subsidiaries. The official WhatsApp website can be found at whatsapp.com. "WhatsApp" as well as related names, marks, emblems, and images are registered trademarks of their respective owners. Also, it is not guaranteed that you will not be blocked by using this method. WhatsApp does not allow bots or unofficial clients on their platform, so use this integration at your own risk.
+
 ## License
 
 Released under the [MIT License](LICENSE).
