@@ -17,6 +17,9 @@ jobs:
     name: ${{ matrix.os }} Release Gate
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
+    env:
+      # Keep the app's Python subprocess bridge aligned with actions/setup-python.
+      PYTHON_BIN: python
     strategy:
       fail-fast: false
       matrix:
