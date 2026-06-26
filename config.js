@@ -61,6 +61,8 @@ module.exports = {
         pythonBin: process.env.PYTHON_BIN || null,
         ffmpegBin: process.env.FFMPEG_BIN || null,
         browserExecutablePath: process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_BIN || null,
+        botName: process.env.BOT_NAME || null,
+        botIdentityPath: process.env.BOT_IDENTITY_PATH || null,
         whatsappAuthPath: process.env.WWEBJS_AUTH_PATH || '.wwebjs_auth',
         whatsappCachePath: process.env.WWEBJS_CACHE_PATH || '.wwebjs_cache',
         rendererCachePath: process.env.RENDERER_CACHE_PATH || path.join('runtime_cache', 'renderer'),

@@ -5,15 +5,17 @@ console.log('--- STARTING HELP TESTS ---');
 
 const generalHelp = getHelp();
 assert(generalHelp.includes('*MathCourier Help*'));
+assert(generalHelp.includes('@your-bot-name'));
 assert(generalHelp.includes('`!latex <content>`'));
 assert(generalHelp.includes('`!plot <expression> [options]`'));
 assert(generalHelp.includes('`!solve <expression> [options]`'));
+assert(generalHelp.includes('`!botname [set <name>|suggestions]`'));
 assert(generalHelp.includes('`!help [topic]`'));
 assert(!generalHelp.includes('!chem <'));
 assert(!generalHelp.includes('!tikz <'));
 assert(!generalHelp.includes('!desp <'));
 assert(!generalHelp.includes('!matrix <'));
-console.log('PASS: General help advertises only the unified public commands');
+console.log('PASS: General help advertises addressed commands and bot naming');
 
 const plotHelp = getHelp('plot');
 assert(plotHelp.includes('*2D And 3D Plotting*'));
@@ -35,6 +37,13 @@ assert(getHelp('tex').includes('Command not found: !tex'));
 assert(getHelp('chem').includes('Command not found: !chem'));
 assert(getHelp('tikz').includes('Command not found: !tikz'));
 console.log('PASS: Removed latex command aliases no longer resolve in help');
+
+const botnameHelp = getHelp('botname');
+assert(botnameHelp.includes('*botname - Bot Naming*'));
+assert(botnameHelp.includes('!botname set calc-kevin'));
+assert(botnameHelp.includes('@calc-kevin !plot y = sin(x)'));
+assert(getHelp('rename').includes('*botname - Bot Naming*'));
+console.log('PASS: Bot naming help documents addressing and rename flow');
 
 const solveHelp = getHelp('solve');
 assert(solveHelp.includes('*Unified Solve Command*'));
@@ -68,6 +77,10 @@ const varsHelp = getHelp('vars');
 assert(varsHelp.includes('*vars - Variable Specification*'));
 assert(varsHelp.includes('!solve PV = nRT vars:T'));
 assert(!varsHelp.includes('!desp'));
+
+const syntaxHelp = getHelp('syntax');
+assert(syntaxHelp.includes('@your-bot-name'));
+assert(syntaxHelp.includes('!botname set calc-kevin'));
 
 const modeHelp = getHelp('mode');
 assert(modeHelp.includes('mode:simplify'));
