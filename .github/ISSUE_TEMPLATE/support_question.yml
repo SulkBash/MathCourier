@@ -17,9 +17,9 @@ body:
       options:
         - install / doctor
         - WhatsApp auth / startup
-        - !latex usage
-        - !plot usage
-        - !solve usage
+        - "!latex usage"
+        - "!plot usage"
+        - "!solve usage"
         - rendering environment
         - CI / contributing workflow
         - other

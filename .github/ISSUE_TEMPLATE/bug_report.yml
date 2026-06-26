@@ -16,13 +16,13 @@ body:
       label: Affected area
       description: Which public surface or subsystem is closest to the issue?
       options:
-        - !latex
-        - !plot
-        - !solve
-        - !help
-        - setup / doctor
-        - renderer / puppeteer
-        - CI / GitHub automation
+        - "!latex"
+        - "!plot"
+        - "!solve"
+        - "!help"
+        - "setup / doctor"
+        - "renderer / puppeteer"
+        - "CI / GitHub automation"
         - docs
         - other
     validations:

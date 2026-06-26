@@ -9,12 +9,12 @@ body:
     attributes:
       label: Relevant area
       options:
-        - !latex
-        - !plot
-        - !solve
-        - !help
-        - setup / doctor
-        - docs
+        - "!latex"
+        - "!plot"
+        - "!solve"
+        - "!help"
+        - "setup / doctor"
+        - "docs"
         - CI / GitHub automation
         - other
     validations:
