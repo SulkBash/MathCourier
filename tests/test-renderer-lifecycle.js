@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { URL } = require('url');
 
 const renderer = require('../src/renderer');
 const handlePlotCommand = require('../src/commands/plot');
@@ -10,6 +11,26 @@ const { createHarness } = require('./test-harness');
 
 const harness = createHarness('RENDERER LIFECYCLE TESTS');
 const runtimePaths = resolveRuntimePaths();
+
+function extractRuntimeAssetUrls(templateHtml) {
+    const assetUrls = [];
+    const attributePattern = /\b(?:src|href)=["']([^"']+)["']/gi;
+    let match;
+
+    while ((match = attributePattern.exec(templateHtml)) !== null) {
+        assetUrls.push(new URL(match[1]));
+    }
+
+    const plotlyLiteralMatch = templateHtml.match(/const TRUSTED_PLOTLY_SCRIPT_SRC = ([^;]+);/);
+    if (plotlyLiteralMatch) {
+        const plotlyLiteral = JSON.parse(plotlyLiteralMatch[1]);
+        if (plotlyLiteral) {
+            assetUrls.push(new URL(plotlyLiteral));
+        }
+    }
+
+    return assetUrls;
+}
 
 function assertRuntimeTemplateState() {
     const templatePath = katexModule.getTemplatePath();
@@ -27,9 +48,17 @@ function assertRuntimeTemplateState() {
     assert.ok(fs.existsSync(templatePath), `expected runtime template file to exist: ${templatePath}`);
 
     const templateHtml = fs.readFileSync(templatePath, 'utf8');
-    assert.ok(!templateHtml.includes('https://cdn.plot.ly/'), 'renderer template should not depend on the Plotly CDN');
+    const assetUrls = extractRuntimeAssetUrls(templateHtml);
+    assert.ok(assetUrls.length > 0, 'expected runtime asset URLs in the renderer template');
+    assetUrls.forEach((assetUrl) => {
+        assert.strictEqual(assetUrl.protocol, 'file:', `renderer template should only load local assets: ${assetUrl.href}`);
+        assert.strictEqual(assetUrl.hostname, '', `renderer template should not load assets from a remote host: ${assetUrl.href}`);
+    });
     assert.ok(
-        templateHtml.includes('plotly.js-dist-min'),
+        assetUrls.some((assetUrl) => (
+            /plotly\.js-dist-min/i.test(assetUrl.pathname) &&
+            /\/plotly\.min\.js$/i.test(assetUrl.pathname)
+        )),
         'renderer template should reference the local Plotly runtime asset'
     );
 
