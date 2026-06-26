@@ -129,26 +129,6 @@ npm test
 
 This writes sample output to `test_output/` so you can verify that Puppeteer, KaTeX, and plotting are working before connecting the bot to WhatsApp.
 
-### Useful package commands
-
-```bash
-npm run doctor
-npm run test:startup
-npm run test:core
-npm run test:plot-anim
-npm run test:renderers
-npm run test:ci
-```
-
-- `npm test` / `npm run test:smoke`: local renderer smoke test
-- `npm run test:startup`: startup/bootstrap smoke for the bot wiring and renderer path without opening a live WhatsApp login flow
-- `npm run test:core`: parser, help, router, solver, calculus, vector, matrix, and ODE checks
-- `npm run test:plot-anim`: 2D animation regression suite for explicit, implicit, parametric, polar, and vector plots
-- `npm run test:renderers`: smoke plus renderer-focused checks, including release-gated 2D animation, 3D, and PDE integration suites
-- `npm run test:ci`: canonical release verification command for CI and pre-publish checks
-
-GitHub Actions runs `npm run doctor`, `npm run test:startup`, and `npm run test:ci` on `windows-latest`, `ubuntu-latest`, and `macos-latest` for every push and pull request. The badge at the top of this README reflects that workflow.
-
 ### Run the bot
 
 ```bash
@@ -166,47 +146,6 @@ npm start
 | npm | Supported baseline: `10.x` | `10.8.2` |
 | Python | Required: Python `3.x` plus `sympy`, `numpy`, and `scipy`; readiness is gated by `npm run doctor` rather than a narrow hard pin | Local docs pass detected `3.14.0` |
 | `ffmpeg` | Optional; used for animated 2D and 3D MP4 output | If missing, animated requests degrade to a static preview |
-
-## Host Support And Runtime Paths
-
-| Environment | Support level | Notes |
-| --- | --- | --- |
-| Windows local workstation | Validated | Current known-good public path: `npm run doctor`, `npm test`, `npm run test:ci`, `npm start` |
-| GitHub Actions matrix (`windows-latest`, `ubuntu-latest`, `macos-latest`) | Automated | CI runs `npm run doctor`, `npm run test:startup`, and `npm run test:ci` |
-| Linux bare-metal or VM | Supported (CI-verified) | Matches the Ubuntu release gate; preserve auth/cache dirs across restarts and install distro Chromium dependencies when needed |
-| macOS workstation/server | Supported (CI-verified) | Matches the macOS release gate; install Python 3 plus Chrome/Chromium and use browser-path overrides if needed |
-| Containerized hosting | Not part of the initial public support promise | Treat as unsupported for the first public release unless you are comfortable debugging host-specific issues |
-
-Known Linux host prerequisites to check before startup:
-
-- Python 3 with `sympy`, `numpy`, and `scipy`
-- Chrome or Chromium plus common Puppeteer libraries such as `libnss3`, `libatk-bridge2.0-0`, `libgtk-3-0`, and `libasound2` where your distro requires them
-- Optional `ffmpeg` for animated 2D and 3D MP4 output
-
-Persistent runtime data:
-
-- WhatsApp auth root: `runtime.whatsappAuthPath` or `WWEBJS_AUTH_PATH`, default `.wwebjs_auth/`
-- WhatsApp web cache: `runtime.whatsappCachePath` or `WWEBJS_CACHE_PATH`, default `.wwebjs_cache/`
-- Renderer cache: `runtime.rendererCachePath` or `RENDERER_CACHE_PATH`, default `runtime_cache/renderer/`
-- Optional multi-instance session suffix: `runtime.whatsappClientId` or `WWEBJS_CLIENT_ID`
-
-Preserve the auth root and web cache across restarts if you want to avoid scanning a new QR code after every restart.
-
-WhatsApp QR auth itself is still a manual step on every host because it requires a real account. The automated cross-platform gate validates runtime discovery, browser startup, renderer startup, and the documented release test suite.
-
-## Network Behavior
-
-| Path | Third-party network use | When it happens |
-| --- | --- | --- |
-| `npm install` | Yes | Pulls npm packages; Puppeteer may also provision browser assets depending on your install environment |
-| `pip install sympy numpy scipy` | Yes | Pulls Python packages from your configured package index |
-| `npm run doctor` | No intentional third-party render/API traffic | Local environment validation only |
-| `npm test` / `npm run test:smoke` | No intentional third-party render/API traffic | Local renderer smoke test only |
-| `npm start` | Yes | Starts the WhatsApp client flow and normal runtime messaging/session traffic |
-| `!latex` formula rendering | Usually local | Uses local KaTeX first; CodeCogs is only used if local formula rendering fails and fallback remains enabled |
-| `!latex` `\ce{...}` chemistry notation | Local | Rendered by KaTeX with the bundled `mhchem` helper |
-| `!latex` `chemfig`, TikZ, `circuitikz` | Yes | Uses QuickLaTeX |
-| `!plot` / `!solve` / local plot rendering | No intentional third-party render/API traffic | Uses local Puppeteer rendering and local Python subprocesses where needed |
 
 ## Privacy And Repo Safety
 
@@ -226,7 +165,6 @@ Public release history lives in GitHub Releases rather than a tracked `CHANGELOG
 
 ## Known Limitations
 
-- Containerized hosting is outside the initial public support promise.
 - Animated output depends on `ffmpeg`; without it, the bot falls back to a static preview image.
 - `chemfig`, TikZ, and `circuitikz` rendering depend on QuickLaTeX rather than staying fully local.
 - Formula fallback depends on CodeCogs when local formula rendering fails and `bot.useFallback` remains enabled.
@@ -236,7 +174,6 @@ Public release history lives in GitHub Releases rather than a tracked `CHANGELOG
 
 - Adding many top-level commands beyond `!latex`, `!plot`, `!solve`, and `!help`
 - Shipping a GUI setup/status surface instead of the current terminal-first workflow
-- Treating containerized hosting as a first-class supported environment in the first public release
 - Publishing this project as an npm package
 
 ## Example Commands
@@ -294,7 +231,6 @@ Another standalone formula example:
 - `whatsapp-web.js` is an unofficial WhatsApp Web client. It is the main maintenance-risk dependency in this project because upstream WhatsApp changes can break login or messaging behavior without warning.
 - `puppeteer` is part of the supported local render path and may require a working Chromium/Chrome environment depending on your host setup.
 - Some rendering paths may contact third-party services: QuickLaTeX for `chemfig`/TikZ/circuit diagrams and CodeCogs for formula fallback rendering when fallback mode is enabled.
-- Public-release audit policy: install-blocking issues and high-severity dependency problems are blockers; lower-severity findings still need triage and an explicit follow-up plan before release.
 
 ## Configuration
 
