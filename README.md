@@ -129,26 +129,6 @@ npm test
 
 This writes sample output to `test_output/` so you can verify that Puppeteer, KaTeX, and plotting are working before connecting the bot to WhatsApp.
 
-### Useful package commands
-
-```bash
-npm run doctor
-npm run test:startup
-npm run test:core
-npm run test:plot-anim
-npm run test:renderers
-npm run test:ci
-```
-
-- `npm test` / `npm run test:smoke`: local renderer smoke test
-- `npm run test:startup`: startup/bootstrap smoke for the bot wiring and renderer path without opening a live WhatsApp login flow
-- `npm run test:core`: parser, help, router, solver, calculus, vector, matrix, and ODE checks
-- `npm run test:plot-anim`: 2D animation regression suite for explicit, implicit, parametric, polar, and vector plots
-- `npm run test:renderers`: smoke plus renderer-focused checks, including release-gated 2D animation, 3D, and PDE integration suites
-- `npm run test:ci`: canonical release verification command for CI and pre-publish checks
-
-GitHub Actions runs `npm run doctor`, `npm run test:startup`, and `npm run test:ci` on `windows-latest`, `ubuntu-latest`, and `macos-latest` for every push and pull request. The badge at the top of this README reflects that workflow.
-
 ### Run the bot
 
 ```bash
