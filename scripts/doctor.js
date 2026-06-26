@@ -10,6 +10,7 @@ const {
     resolvePythonCommand,
     resolveRuntimePaths
 } = require('../src/runtime');
+const { runStartupProbe } = require('../bot');
 
 const requiredNodeMajor = 20;
 const runtimePaths = resolveRuntimePaths();
@@ -149,6 +150,23 @@ function checkFfmpeg() {
     return pass('ffmpeg', firstLine);
 }
 
+async function checkBotBootstrap() {
+    try {
+        const result = await runStartupProbe({
+            logSummary: false,
+            verifyRenderer: false
+        });
+
+        if (!result.clientConstructed) {
+            return fail('Bot bootstrap', 'Client construction did not complete.');
+        }
+
+        return pass('Bot bootstrap', 'Client options, runtime directories, and startup wiring resolved successfully.');
+    } catch (error) {
+        return fail('Bot bootstrap', error.message);
+    }
+}
+
 async function main() {
     const results = [];
 
@@ -167,10 +185,11 @@ async function main() {
     results.push(checkBrowserOverride());
     results.push(await checkPuppeteer());
     results.push(checkFfmpeg());
+    results.push(await checkBotBootstrap());
 
     console.log('LaTeX Render Bot setup check');
     console.log('This project is intentionally terminal-first. Use this command before QR auth or full startup.');
-    console.log('Linux and macOS hosting notes are currently best-effort until a real non-Windows startup validation is recorded.');
+    console.log('The release gate is designed to stay portable across Windows, Linux, and macOS; WhatsApp QR auth still requires a real account outside automation.');
     console.log('');
 
     for (const result of results) {

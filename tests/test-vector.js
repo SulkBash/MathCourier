@@ -109,7 +109,7 @@ const cases = [
         }
     },
     {
-        name: 'Legacy positional vector helper syntax is rejected',
+        name: 'Positional vector helper syntax is rejected',
         run: () => {
             assert.throws(
                 () => math.evaluate('grad("x^2 + y^2", x, y)', { x: 3, y: 4 }),

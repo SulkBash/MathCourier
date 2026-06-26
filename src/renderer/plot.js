@@ -4,6 +4,9 @@ const katexModule = require('./katex');
 const { formatVarToTex } = require('../utils');
 const { analyze2dPlot, extractExpressionVariables } = require('../plot-semantics');
 
+const DEFAULT_PLOT2D_ANIMATION_FRAMES = Math.max(8, Number(config.bot?.plot2dAnimationFrames) || 20);
+const DEFAULT_PLOT2D_ANIMATION_FPS = Math.max(4, Number(config.bot?.plot2dAnimationFps) || 10);
+
 // Coerce mathjs result to a plain number, returning NaN for complex/invalid values
 function toReal(val) {
     if (val && typeof val === 'object') {
@@ -1040,7 +1043,7 @@ async function renderPlot(rawExpr, customOptions = {}) {
             let animPage = null;
             try {
                 animPage = await katexModule.createRenderPage();
-                const totalFrames = 20;
+                const totalFrames = DEFAULT_PLOT2D_ANIMATION_FRAMES;
                 const frameBuffers = [];
 
                 let traceMin = null;
@@ -1240,15 +1243,27 @@ async function renderPlot(rawExpr, customOptions = {}) {
                 }
 
                 const { compileVideo } = require('./plot3d');
-                const videoBuf = await compileVideo(frameBuffers, 10);
-                return {
-                    success: true,
-                    data: videoBuf.toString('base64'),
-                    mimeType: 'video/mp4',
-                    filename: 'plot2d.mp4',
-                    source: 'local-plot-2d-anim',
-                    isAnimation: true
-                };
+                try {
+                    const videoBuf = await compileVideo(frameBuffers, DEFAULT_PLOT2D_ANIMATION_FPS);
+                    return {
+                        success: true,
+                        data: videoBuf.toString('base64'),
+                        mimeType: 'video/mp4',
+                        filename: 'plot2d.mp4',
+                        source: 'local-plot-2d-anim',
+                        isAnimation: true
+                    };
+                } catch (ffmpegErr) {
+                    console.warn('Failed to compile 2D animation with ffmpeg:', ffmpegErr.message);
+                    const fallbackBuf = frameBuffers[frameBuffers.length - 1];
+                    return {
+                        success: true,
+                        data: fallbackBuf.toString('base64'),
+                        mimeType: 'image/jpeg',
+                        filename: 'plot2d_fallback.jpg',
+                        source: 'local-plot-2d-fallback'
+                    };
+                }
 
             } catch (err) {
                 console.error('Error during 2D plot animation rendering:', err.message);

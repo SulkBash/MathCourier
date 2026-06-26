@@ -9,7 +9,7 @@ This project is still in an early public stage. The goal of this guide is to mak
 - The public command surface is intentionally small: `!latex`, `!plot`, `!solve`, and `!help`.
 - Most feature work should extend one of those routers rather than add a new top-level command.
 - The repository is terminal-first. `npm run doctor` is the supported setup/status check.
-- The currently validated runtime path is a local Windows workstation flow. Linux and macOS notes are still best-effort.
+- Windows, Linux, and macOS are all part of the release gate; the cross-platform startup/render checks live in CI and `npm run test:startup`.
 
 ## Local setup
 
@@ -39,6 +39,7 @@ Run the narrowest useful test locally while iterating, then finish with the rele
 
 ```bash
 npm test
+npm run test:startup
 npm run test:core
 npm run test:renderers
 npm run test:ci
@@ -47,6 +48,7 @@ npm run test:ci
 Useful notes:
 
 - `npm test` is the local renderer smoke test.
+- `npm run test:startup` checks bot bootstrap and renderer startup without requiring a live WhatsApp login.
 - `npm run test:core` covers parser, help, router, solver, calculus, vector, matrix, and ODE checks.
 - `npm run test:renderers` covers the smoke test plus renderer-focused suites, including the release-gated 3D and PDE integration checks.
 - `npm run test:ci` is the canonical CI and pre-release verification command.

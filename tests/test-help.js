@@ -19,7 +19,8 @@ const plotHelp = getHelp('plot');
 assert(plotHelp.includes('*2D And 3D Plotting*'));
 assert(plotHelp.includes('kind:parametric'));
 assert(plotHelp.includes('animate:t'));
-assert(plotHelp.includes('legacy 2D `-e[...]` forms are not supported'));
+assert(plotHelp.includes('draws the graph progressively'));
+assert(plotHelp.includes('!plot y = sin(x) animate:x'));
 assert(getHelp('!plot3d').includes('Command not found: !plot3d'));
 console.log('PASS: Plot help documents only the unified !plot surface');
 
@@ -30,11 +31,10 @@ assert(latexHelp.includes('mode:tikz'));
 assert(latexHelp.includes('\\ce{CO2 + H2O <=> H2CO3}'));
 assert(latexHelp.includes('KaTeX/mhchem'));
 assert(latexHelp.includes('$$ ... $$'));
-assert(!latexHelp.includes('Legacy'));
 assert(getHelp('tex').includes('Command not found: !tex'));
 assert(getHelp('chem').includes('Command not found: !chem'));
 assert(getHelp('tikz').includes('Command not found: !tikz'));
-console.log('PASS: Legacy latex command aliases no longer resolve in help');
+console.log('PASS: Removed latex command aliases no longer resolve in help');
 
 const solveHelp = getHelp('solve');
 assert(solveHelp.includes('*Unified Solve Command*'));
@@ -42,14 +42,13 @@ assert(solveHelp.includes('grad[x^2*y*z, vars:{x, y, z}]'));
 assert(solveHelp.includes('det([1, 2; 3, 4])'));
 assert(getHelp('matrix').includes('Command not found: !matrix'));
 assert(getHelp('ode').includes('Command not found: !ode'));
-console.log('PASS: Solve help documents helper-based syntax and no legacy command aliases');
+console.log('PASS: Solve help documents helper-based syntax and no removed command aliases');
 
 const helperHelp = getHelp('deriv');
 assert(helperHelp.includes('*deriv Helper*'));
 assert(helperHelp.includes('deriv[expr, x]'));
 assert(helperHelp.includes('dep:y'));
 assert(helperHelp.includes('at:{x:1, y:2}'));
-assert(!helperHelp.includes('Legacy'));
 
 const integHelp = getHelp('integ');
 assert(integHelp.includes('*integ Helper*'));
@@ -63,7 +62,6 @@ assert(helpersOverview.includes('*Inline Helpers*'));
 assert(helpersOverview.includes('!help deriv'));
 assert(helpersOverview.includes('!help integ'));
 assert(helpersOverview.includes('!help curl'));
-assert(!helpersOverview.includes('Legacy'));
 console.log('PASS: Helper docs now include dedicated deriv/integ pages and a richer overview');
 
 const varsHelp = getHelp('vars');
@@ -94,7 +92,8 @@ console.log('PASS: Vector helper pages describe their argument shapes');
 
 const animateHelp = getHelp('animate');
 assert(animateHelp.includes('0` through `2*pi'));
-assert(animateHelp.includes('Legacy 2D `-e[...]` animation syntax is not supported'));
+assert(animateHelp.includes('graph is drawn progressively across that range'));
+assert(animateHelp.includes('!plot y = sin(x - t) animate:t'));
 assert(!animateHelp.includes('must also be provided'));
 console.log('PASS: Animate help documents the default sweep range');
 

@@ -24,18 +24,6 @@ const READY_WATCHDOG_MS = 45000;
 const runtimePaths = resolveRuntimePaths();
 const sessionDirPath = getWhatsAppSessionDir();
 
-const client = new Client({
-    authStrategy: new LocalAuth(getWhatsAppLocalAuthOptions()),
-    webVersionCache: getWhatsAppWebCacheOptions(),
-    ffmpegPath: getFfmpegCommand(),
-    puppeteer: {
-        ...resolvePuppeteerLaunchOptions(config.puppeteer.launchArgs)
-    }
-});
-
-let readyWatchdog = null;
-let isShuttingDown = false;
-
 function ensureRuntimeDirectories() {
     for (const dirPath of [
         runtimePaths.whatsappAuthDir,
@@ -77,79 +65,128 @@ function logStartupHealthSummary() {
     console.log('');
 }
 
-function clearReadyWatchdog() {
-    if (readyWatchdog) {
-        clearTimeout(readyWatchdog);
-        readyWatchdog = null;
-    }
+function buildClientOptions() {
+    return {
+        authStrategy: new LocalAuth(getWhatsAppLocalAuthOptions()),
+        webVersionCache: getWhatsAppWebCacheOptions(),
+        ffmpegPath: getFfmpegCommand(),
+        puppeteer: {
+            ...resolvePuppeteerLaunchOptions(config.puppeteer.launchArgs)
+        }
+    };
 }
 
-function armReadyWatchdog() {
-    clearReadyWatchdog();
-    readyWatchdog = setTimeout(() => {
-        console.warn(`Still waiting for WhatsApp to become ready after ${READY_WATCHDOG_MS / 1000}s.`);
-        console.warn(`If this keeps happening, close any stale bot or Chromium process using the session data at ${sessionDirPath} and restart the bot.`);
-    }, READY_WATCHDOG_MS);
-
-    if (typeof readyWatchdog.unref === 'function') {
-        readyWatchdog.unref();
-    }
+function createClient() {
+    return new Client(buildClientOptions());
 }
 
-async function shutdown(signal, exitCode = 0) {
-    if (isShuttingDown) {
+async function destroyClientQuietly(client) {
+    if (!client || typeof client.destroy !== 'function') {
         return;
     }
 
-    isShuttingDown = true;
-    clearReadyWatchdog();
-    console.log(`Shutting down bot (${signal})...`);
-
-    await Promise.allSettled([
-        client.destroy(),
-        renderer.close()
-    ]);
-
-    process.exit(exitCode);
+    try {
+        await client.destroy();
+    } catch (_) {
+        // Ignore teardown errors during shutdown probes.
+    }
 }
 
-client.on('qr', (qr) => {
-    console.log('\n--- SCAN THIS QR CODE WITH WHATSAPP LINKED DEVICES ---');
-    qrcode.generate(qr, { small: true });
-    console.log('-------------------------------------------------------\n');
-});
+function createBotRuntime(client = createClient()) {
+    let readyWatchdog = null;
+    let isShuttingDown = false;
 
-client.on('authenticated', () => {
-    console.log('Authenticated.');
-    armReadyWatchdog();
-});
-client.on('auth_failure', (msg) => {
-    clearReadyWatchdog();
-    console.error('Auth failure:', msg);
-});
-client.on('change_state', (state) => console.log(`Connection state: ${state}`));
-client.on('loading_screen', (percent, message) => {
-    console.log(`Loading screen: ${percent}% ${message}`);
-});
-client.on('disconnected', (reason) => {
-    clearReadyWatchdog();
-    console.error('Disconnected:', reason);
-});
-client.on('remote_session_saved', () => {
-    console.log('Remote session saved.');
-});
-
-client.on('ready', async () => {
-    clearReadyWatchdog();
-    console.log(`\n==================================================`);
-    console.log(`Bot "${config.bot.name}" is now connected and ready!`);
-    console.log(`==================================================\n`);
-    try {
-        await renderer.initialize();
-    } catch (err) {
-        console.error('Renderer initialization failed:', err);
+    function clearReadyWatchdog() {
+        if (readyWatchdog) {
+            clearTimeout(readyWatchdog);
+            readyWatchdog = null;
+        }
     }
-});
+
+    function armReadyWatchdog() {
+        clearReadyWatchdog();
+        readyWatchdog = setTimeout(() => {
+            console.warn(`Still waiting for WhatsApp to become ready after ${READY_WATCHDOG_MS / 1000}s.`);
+            console.warn(`If this keeps happening, close any stale bot or Chromium process using the session data at ${sessionDirPath} and restart the bot.`);
+        }, READY_WATCHDOG_MS);
+
+        if (typeof readyWatchdog.unref === 'function') {
+            readyWatchdog.unref();
+        }
+    }
+
+    async function shutdown(signal, exitCode = 0) {
+        if (isShuttingDown) {
+            return;
+        }
+
+        isShuttingDown = true;
+        clearReadyWatchdog();
+        console.log(`Shutting down bot (${signal})...`);
+
+        await Promise.allSettled([
+            destroyClientQuietly(client),
+            renderer.close()
+        ]);
+
+        process.exit(exitCode);
+    }
+
+    client.on('qr', (qr) => {
+        console.log('\n--- SCAN THIS QR CODE WITH WHATSAPP LINKED DEVICES ---');
+        qrcode.generate(qr, { small: true });
+        console.log('-------------------------------------------------------\n');
+    });
+
+    client.on('authenticated', () => {
+        console.log('Authenticated.');
+        armReadyWatchdog();
+    });
+    client.on('auth_failure', (msg) => {
+        clearReadyWatchdog();
+        console.error('Auth failure:', msg);
+    });
+    client.on('change_state', (state) => console.log(`Connection state: ${state}`));
+    client.on('loading_screen', (percent, message) => {
+        console.log(`Loading screen: ${percent}% ${message}`);
+    });
+    client.on('disconnected', (reason) => {
+        clearReadyWatchdog();
+        console.error('Disconnected:', reason);
+    });
+    client.on('remote_session_saved', () => {
+        console.log('Remote session saved.');
+    });
+
+    client.on('ready', async () => {
+        clearReadyWatchdog();
+        console.log(`\n==================================================`);
+        console.log(`Bot "${config.bot.name}" is now connected and ready!`);
+        console.log(`==================================================\n`);
+        try {
+            await renderer.initialize();
+        } catch (err) {
+            console.error('Renderer initialization failed:', err);
+        }
+    });
+
+    client.on('message', handleCommandMessage);
+
+    client.on('message_create', async (msg) => {
+        if (!msg.fromMe) {
+            return;
+        }
+
+        await handleCommandMessage(msg);
+    });
+
+    return {
+        client,
+        shutdown,
+        clearReadyWatchdog,
+        start: () => client.initialize()
+    };
+}
 
 const COMMAND_REGISTRY = {
     latex: { handler: handleLatexCommand },
@@ -316,19 +353,6 @@ async function handleCommandMessage(msg) {
     }
 }
 
-// `message` is the canonical incoming-message event.
-client.on('message', handleCommandMessage);
-
-// Keep `message_create` only for commands sent by the current account
-// (for example, tests from your phone or another linked device).
-client.on('message_create', async (msg) => {
-    if (!msg.fromMe) {
-        return;
-    }
-
-    await handleCommandMessage(msg);
-});
-
 /**
  * Renders mixed text+equations ($$...$$) locally, falling back to extracting
  * the first equation for the API if Puppeteer is down.
@@ -360,16 +384,10 @@ async function renderMixed(text) {
     };
 }
 
-console.log('Starting LaTeX Render Bot...');
-try {
-    ensureRuntimeDirectories();
-} catch (err) {
-    console.error('Failed to prepare runtime directories:', err);
-    process.exit(1);
-}
-logStartupHealthSummary();
-client.initialize().catch(err => {
-    clearReadyWatchdog();
+function handleClientInitializeError(err, clearReadyWatchdog) {
+    if (typeof clearReadyWatchdog === 'function') {
+        clearReadyWatchdog();
+    }
 
     if (/browser is already running/i.test(err.message)) {
         console.error('Failed to initialize WhatsApp client: the WhatsApp session is already in use by another bot or stale Chromium process.');
@@ -379,34 +397,117 @@ client.initialize().catch(err => {
     }
 
     process.exitCode = 1;
-});
+}
 
-process.on('SIGINT', () => {
-    shutdown('SIGINT').catch((err) => {
-        console.error('Shutdown failed:', err);
+function registerProcessHandlers(shutdown) {
+    process.on('SIGINT', () => {
+        shutdown('SIGINT').catch((err) => {
+            console.error('Shutdown failed:', err);
+            process.exit(1);
+        });
+    });
+
+    process.on('SIGTERM', () => {
+        shutdown('SIGTERM').catch((err) => {
+            console.error('Shutdown failed:', err);
+            process.exit(1);
+        });
+    });
+
+    process.on('unhandledRejection', (reason) => {
+        console.error('Unhandled promise rejection:', reason);
+        shutdown('unhandledRejection', 1).catch((err) => {
+            console.error('Shutdown failed:', err);
+            process.exit(1);
+        });
+    });
+
+    process.on('uncaughtException', (err) => {
+        console.error('Uncaught exception:', err);
+        shutdown('uncaughtException', 1).catch((shutdownErr) => {
+            console.error('Shutdown failed:', shutdownErr);
+            process.exit(1);
+        });
+    });
+}
+
+async function runStartupProbe(options = {}) {
+    const {
+        logSummary = false,
+        verifyRenderer = true
+    } = options;
+
+    ensureRuntimeDirectories();
+
+    if (logSummary) {
+        logStartupHealthSummary();
+    }
+
+    const client = createClient();
+    let rendererVerified = false;
+
+    try {
+        if (verifyRenderer) {
+            await renderer.initialize();
+            if (!renderer.isLocalReady()) {
+                throw new Error('Renderer failed to initialize with the current Chromium/Chrome configuration.');
+            }
+            rendererVerified = true;
+        }
+
+        return {
+            success: true,
+            clientConstructed: true,
+            rendererVerified,
+            runtimePaths: { ...runtimePaths },
+            sessionDirPath,
+            browserExecutablePath: getConfiguredBrowserExecutablePath() || null,
+            python: resolvePythonCommand({ refresh: true }),
+            ffmpeg: probeFfmpegCommand()
+        };
+    } finally {
+        await renderer.close().catch(() => {});
+        await destroyClientQuietly(client);
+    }
+}
+
+async function startBot(options = {}) {
+    const {
+        logSummary = true,
+        attachProcessHandlers = true
+    } = options;
+
+    console.log('Starting LaTeX Render Bot...');
+    ensureRuntimeDirectories();
+
+    if (logSummary) {
+        logStartupHealthSummary();
+    }
+
+    const runtime = createBotRuntime();
+    if (attachProcessHandlers) {
+        registerProcessHandlers(runtime.shutdown);
+    }
+
+    runtime.start().catch((err) => {
+        handleClientInitializeError(err, runtime.clearReadyWatchdog);
+    });
+
+    return runtime;
+}
+
+module.exports = {
+    buildClientOptions,
+    createClient,
+    ensureRuntimeDirectories,
+    logStartupHealthSummary,
+    runStartupProbe,
+    startBot
+};
+
+if (require.main === module) {
+    startBot().catch((err) => {
+        console.error('Failed to prepare bot startup:', err);
         process.exit(1);
     });
-});
-
-process.on('SIGTERM', () => {
-    shutdown('SIGTERM').catch((err) => {
-        console.error('Shutdown failed:', err);
-        process.exit(1);
-    });
-});
-
-process.on('unhandledRejection', (reason) => {
-    console.error('Unhandled promise rejection:', reason);
-    shutdown('unhandledRejection', 1).catch((err) => {
-        console.error('Shutdown failed:', err);
-        process.exit(1);
-    });
-});
-
-process.on('uncaughtException', (err) => {
-    console.error('Uncaught exception:', err);
-    shutdown('uncaughtException', 1).catch((shutdownErr) => {
-        console.error('Shutdown failed:', shutdownErr);
-        process.exit(1);
-    });
-});
+}

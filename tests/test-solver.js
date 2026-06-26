@@ -88,7 +88,7 @@ const cases = [
         latexIncludes: ['\\int\\limits_{0}^{x} t^{2}\\, dt - 9 = 0', 'x = 3']
     },
     {
-        name: 'Legacy definite integ helper syntax is rejected',
+        name: 'Positional definite integ helper syntax is rejected',
         input: 'integ("t^2", "t", 0, x) - 9 = 0',
         expectSuccess: false,
         errorIncludes: ['Definite integ syntax no longer accepts positional bounds']

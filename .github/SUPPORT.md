@@ -37,8 +37,8 @@ Current priority order:
 
 ## Platform expectations
 
-- Windows local workstation flow is the currently validated path
-- Linux and macOS are documented as best-effort
+- Windows local workstation flow is the primary manual validation path
+- Linux and macOS are part of the automated CI release gate
 - Containerized hosting is not part of the initial public support promise
 
 ## Upstream and external-service realities

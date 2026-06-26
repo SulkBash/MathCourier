@@ -25,8 +25,8 @@ const HELPER_BRACKET_NAMES = new Set([
 const MATRIX_FUNCTION_RE = /\b(?:det|inv|inverse|eigen|eig|eigs|rref)\s*\(/i;
 const ODE_PATTERN_RE = /(?:\bdy\/dx\b|\bd2y\/dx2\b|\b[a-zA-Z_][a-zA-Z0-9_]*'{1,2}\b|\bd\d*[a-zA-Z_][a-zA-Z0-9_]*\/d[a-zA-Z_][a-zA-Z0-9_]*(?:\d+)?\b)/i;
 const PDE_PATTERN_RE = /(?:\bdu\/dt\b|\bd2u\/dx2\b|\bu_t\b|\bu_xx\b)/i;
-const LEGACY_SOLVE_MODE_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)$/i;
-const LEGACY_SOLVE_PREFIX_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)\s+([\s\S]+)$/i;
+const REMOVED_SOLVE_MODE_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)$/i;
+const REMOVED_SOLVE_PREFIX_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)\s+([\s\S]+)$/i;
 const TOP_LEVEL_VECTOR_HELPERS = new Set(['grad', 'lap', 'div', 'curl']);
 const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
 
@@ -490,26 +490,26 @@ async function renderSolverResult(solverFn, input) {
     return renderer.render(result.latex, true);
 }
 
-function buildLegacySolveGuidance(mode) {
+function buildRemovedSolveRouteGuidance(mode) {
     const normalized = String(mode || '').toLowerCase().trim();
 
     if (normalized === 'diff') {
-        return 'Legacy route "diff" has been removed. Use !solve deriv[expr, x] instead.';
+        return 'Route "diff" has been removed. Use !solve deriv[expr, x] instead.';
     }
     if (normalized === 'int') {
-        return 'Legacy route "int" has been removed. Use !solve integ[expr, x] for antiderivatives or integ[expr, x:[a, b]] for definite integrals.';
+        return 'Route "int" has been removed. Use !solve integ[expr, x] for antiderivatives or integ[expr, x:[a, b]] for definite integrals.';
     }
     if (normalized === 'grad' || normalized === 'lap' || normalized === 'div' || normalized === 'curl') {
-        return `Legacy route "${normalized}" has been removed. Use !solve ${normalized}[...] instead.`;
+        return `Route "${normalized}" has been removed. Use !solve ${normalized}[...] instead.`;
     }
     if (normalized === 'matrix') {
-        return 'Legacy route "matrix" has been removed. Send the matrix expression directly to !solve.';
+        return 'Route "matrix" has been removed. Send the matrix expression directly to !solve.';
     }
     if (normalized === 'ode' || normalized === 'pde') {
-        return `Legacy route "${normalized}" has been removed. Send the equation directly to !solve and let the router detect it.`;
+        return `Route "${normalized}" has been removed. Send the equation directly to !solve and let the router detect it.`;
     }
 
-    return 'Legacy solve route has been removed. Use the unified !solve syntax instead.';
+    return 'That solve route has been removed. Use the unified !solve syntax instead.';
 }
 
 async function handleSolveCommand(input) {
@@ -519,18 +519,18 @@ async function handleSolveCommand(input) {
         ? String(rawParsed.options.mode).toLowerCase().trim()
         : null;
 
-    if (rawMode && LEGACY_SOLVE_MODE_RE.test(rawMode)) {
+    if (rawMode && REMOVED_SOLVE_MODE_RE.test(rawMode)) {
         return {
             success: false,
-            error: buildLegacySolveGuidance(rawMode)
+            error: buildRemovedSolveRouteGuidance(rawMode)
         };
     }
 
-    const prefixedLegacyRoute = rawBody.match(LEGACY_SOLVE_PREFIX_RE);
-    if (prefixedLegacyRoute) {
+    const prefixedRemovedRoute = rawBody.match(REMOVED_SOLVE_PREFIX_RE);
+    if (prefixedRemovedRoute) {
         return {
             success: false,
-            error: buildLegacySolveGuidance(prefixedLegacyRoute[1])
+            error: buildRemovedSolveRouteGuidance(prefixedRemovedRoute[1])
         };
     }
 

@@ -475,7 +475,7 @@ function parseDerivativeCall(descriptors, extractVars) {
     let dep = null;
     let atAssignments = [];
     let positionalEvalSources = [];
-    let usesLegacySyntax = false;
+    let usesPositionalSyntax = false;
 
     if (
         rest.length > 0 &&
@@ -484,7 +484,7 @@ function parseDerivativeCall(descriptors, extractVars) {
     ) {
         recipe = [{ name: rest[0].source.trim(), order: 1 }];
         positionalEvalSources = rest.slice(1).map((descriptor) => descriptor.source);
-        usesLegacySyntax = true;
+        usesPositionalSyntax = true;
     } else {
         for (const descriptor of rest) {
             if (descriptor.kind !== 'string') {
@@ -564,7 +564,7 @@ function parseDerivativeCall(descriptors, extractVars) {
         uniqueVariables,
         atAssignments,
         positionalEvalSources,
-        usesLegacySyntax,
+        usesPositionalSyntax,
         dep
     };
 }
@@ -583,13 +583,13 @@ function parseIntegralCall(descriptors, extractVars) {
     let paramSource = null;
     let ranges = [];
     let variableRecipe = null;
-    let usesLegacySyntax = false;
+    let usesPositionalSyntax = false;
 
     if (rest.length > 0 && isBareVariableDescriptor(rest[0]) && !hasOptionLikeArgs) {
         const varName = rest[0].source.trim();
         if (rest.length === 1) {
             variableRecipe = [{ name: varName, order: 1 }];
-            usesLegacySyntax = true;
+            usesPositionalSyntax = true;
         } else {
             return {
                 success: false,
@@ -688,7 +688,7 @@ function parseIntegralCall(descriptors, extractVars) {
         ranges,
         variableRecipe,
         antiderivativeRanges,
-        usesLegacySyntax
+        usesPositionalSyntax
     };
 }
 

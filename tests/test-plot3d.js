@@ -71,7 +71,7 @@ async function runTests() {
         const gridSteps = Math.max(coarseSteps + 4, Number(config.bot?.plot3dImplicitGridSteps) || 56);
         assert.ok(
             gridSteps > 35,
-            `expected implicit surface sampling to stay above the legacy 35-step dense grid, got ${gridSteps}`
+            `expected implicit surface sampling to stay above the previous 35-step dense grid, got ${gridSteps}`
         );
 
         const scene = plot3dModule._internals.buildPlot3dScene({

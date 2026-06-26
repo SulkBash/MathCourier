@@ -141,7 +141,7 @@ async function run() {
         assert.strictEqual(result.success, false);
         assert(result.error.includes('no longer accepts positional coordinate arguments'));
         assert.deepStrictEqual(calls, []);
-        console.log('PASS: legacy positional grad[...] syntax is rejected');
+        console.log('PASS: positional grad[...] syntax is rejected');
     }
 
     {
@@ -150,7 +150,7 @@ async function run() {
         assert.strictEqual(result.route, 'render');
         assert.deepStrictEqual(calls.map((entry) => entry.fn), ['solveMatrixExpression', 'render']);
         assert.strictEqual(calls[0].input, 'det([1,2;3,4])');
-        console.log('PASS: Matrix expressions auto-route without legacy mode overrides');
+        console.log('PASS: Matrix expressions auto-route without removed mode overrides');
     }
 
     {
@@ -159,14 +159,14 @@ async function run() {
         assert.strictEqual(result.route, 'ode');
         assert.deepStrictEqual(calls.map((entry) => entry.fn), ['handleOdeCommand']);
         assert.strictEqual(calls[0].input, 'dy/dx = -y ic:{y(0)=1}');
-        console.log('PASS: ODEs auto-route without legacy mode overrides');
+        console.log('PASS: ODEs auto-route without removed mode overrides');
     }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
         const result = await handleSolveCommand('x^3 mode:diff');
         assert.strictEqual(result.success, false);
-        assert(result.error.includes('Legacy route "diff" has been removed'));
+        assert(result.error.includes('Route "diff" has been removed'));
         assert.deepStrictEqual(calls, []);
         console.log('PASS: Removed mode:diff surface now returns a guidance error');
     }
@@ -175,7 +175,7 @@ async function run() {
         const { handleSolveCommand, calls } = loadSolveRouter();
         const result = await handleSolveCommand('diff x^3');
         assert.strictEqual(result.success, false);
-        assert(result.error.includes('Legacy route "diff" has been removed'));
+        assert(result.error.includes('Route "diff" has been removed'));
         assert.deepStrictEqual(calls, []);
         console.log('PASS: Removed prefixed diff syntax now returns a guidance error');
     }

@@ -95,7 +95,7 @@ async function run() {
         () => math.evaluate('integ[sin(x), x, 0, pi]'),
         /Definite integ syntax no longer accepts positional bounds/
     );
-    console.log('PASS: Legacy positional definite integ[...] syntax is rejected');
+    console.log('PASS: Positional definite integ[...] syntax is rejected');
 
     console.log('--- INLINE CALCULUS TESTS PASSED ---');
 }

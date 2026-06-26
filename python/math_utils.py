@@ -569,7 +569,7 @@ def _choose_parameter_symbols(expressions, expected_count, call_dict, preference
     raise ValueError("Could not determine the parameter variables for the inline integral.")
 
 
-def _legacy_inline_vector_args_error(label):
+def _unsupported_inline_vector_args_error(label):
     return ValueError(
         f"{label} no longer accepts positional coordinate arguments. "
         "Omit them and let the helper infer variables, or use vars:{...}."
@@ -635,12 +635,12 @@ def _parse_inline_vector_helper_args(label, expr, args, field=False):
 
     for arg in remaining:
         if not isinstance(arg, str):
-            raise _legacy_inline_vector_args_error(label)
+            raise _unsupported_inline_vector_args_error(label)
 
         option = _parse_inline_option(arg)
         if not option:
             if re.match(VALID_INLINE_VAR_RE, arg.strip()):
-                raise _legacy_inline_vector_args_error(label)
+                raise _unsupported_inline_vector_args_error(label)
             raise ValueError(f'Unsupported {label} helper argument "{arg}".')
 
         if option["key"] != "vars":

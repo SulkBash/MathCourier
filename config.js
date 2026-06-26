@@ -41,6 +41,8 @@ module.exports = {
         useFallback: true,
         fallbackEngine: 'codecogs',
         plot3dMaxConcurrency: 3,
+        plot2dAnimationFrames: 20,
+        plot2dAnimationFps: 10,
         plot3dAnimationFrames: 24,
         plot3dAnimationFps: 8,
         plot3dAnimationBaseAngleDegrees: 45,
@@ -70,6 +72,7 @@ module.exports = {
             args: [
                 '--enable-webgl',
                 '--use-gl=angle',
+                '--disable-dev-shm-usage',
                 '--disable-background-timer-throttling',
                 '--disable-backgrounding-occluded-windows',
                 '--disable-renderer-backgrounding'
