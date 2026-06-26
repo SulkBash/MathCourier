@@ -8,7 +8,7 @@ const { validateInputLength } = require('../middleware/validate');
 const config = require('../../config');
 const { renderFallback } = require('./codecogs');
 
-// Simple sequential execution queue to prevent concurrent rendering requests 
+// Simple sequential execution queue to prevent concurrent rendering requests
 // from interfering with the shared singleton Puppeteer page instance.
 let renderingMutex = Promise.resolve();
 
@@ -38,7 +38,7 @@ async function render(formula, isBlock = true) {
             try {
                 return await katexModule.renderLocal(formula, isBlock);
             } catch (err) {
-                console.warn('Local render failed:', err.message, '— trying fallback...');
+                console.warn('Local render failed:', err.message, '- trying fallback...');
             }
         }
 

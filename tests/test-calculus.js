@@ -1,4 +1,5 @@
 const solver = require('../src/solver');
+const { createHarness } = require('./test-harness');
 
 const testCases = [
     // 1. Differentiation tests (Pure JS and Fallback)
@@ -39,14 +40,15 @@ const testCases = [
     { type: 'int', input: 'x*y*z kind:volume x:[0, 1] y:[0, 2] z:[0, 3]' }
 ];
 
+const harness = createHarness('CALCULUS SOLVER TESTS');
+
 async function runTests() {
     console.log('=== RUNNING CALCULUS SOLVER TESTS ===\n');
 
     for (let i = 0; i < testCases.length; i++) {
         const test = testCases[i];
-        console.log(`Test ${i + 1} (${test.type.toUpperCase()}): "${test.input}"`);
-        
-        try {
+        await harness.runTest(`Test ${i + 1} (${test.type.toUpperCase()})`, async () => {
+            console.log(`Input: "${test.input}"`);
             let result;
             if (test.type === 'diff') {
                 result = await solver.solveDerivative(test.input);
@@ -54,17 +56,17 @@ async function runTests() {
                 result = await solver.solveIntegral(test.input);
             }
 
-            if (result.success) {
-                console.log('Success!');
-                console.log('LaTeX:\n' + result.latex);
-            } else {
-                console.log('Failed:', result.error);
-            }
-        } catch (err) {
-            console.error('Unhandled test exception:', err);
-        }
+            harness.expectSuccess(result, `Calculation failed: ${result && result.error ? result.error : 'unknown error'}`);
+            console.log('  ok');
+            console.log('LaTeX:\n' + result.latex);
+        });
         console.log('\n---------------------------------------\n');
     }
+
+    harness.finish();
 }
 
-runTests();
+runTests().catch((err) => {
+    console.error('Fatal calculus test error:', err);
+    process.exit(1);
+});

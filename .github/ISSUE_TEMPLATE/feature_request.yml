@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest a change to the documented bot behavior, tooling, or docs.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Relevant area
+      options:
+        - !latex
+        - !plot
+        - !solve
+        - !help
+        - setup / doctor
+        - docs
+        - CI / GitHub automation
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What is hard, missing, or confusing today?
+      placeholder: I want to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the behavior you want, preferably in user-facing terms.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, competing ideas, or reasons this should stay out of scope.
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Things to keep in mind
+      options:
+        - label: This should preserve the small public command surface (`!latex`, `!plot`, `!solve`, `!help`)
+        - label: This may affect README/help/docs
+        - label: This may affect QuickLaTeX or CodeCogs behavior
+        - label: This may depend on upstream `whatsapp-web.js` behavior
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Examples, screenshots, math expressions, or implementation notes.

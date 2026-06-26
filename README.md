@@ -1,5 +1,7 @@
 # WhatsApp LaTeX Render Bot
 
+[![CI](https://github.com/SulkBash/LaTeXRender/actions/workflows/ci.yml/badge.svg)](https://github.com/SulkBash/LaTeXRender/actions/workflows/ci.yml)
+
 Render equations, plots, solver output, chemistry, and 3D math visuals directly inside WhatsApp.
 
 <p align="center">
@@ -62,7 +64,7 @@ A local-first WhatsApp bot built with `whatsapp-web.js`, `Puppeteer`, `KaTeX`, `
 | Command | Use it for | Example |
 | --- | --- | --- |
 | `!latex <content>` | Formulas, mixed text, chemistry, `chemfig`, TikZ, and `circuitikz` | `!latex \sum_{i=1}^{n} i = \frac{n(n+1)}{2}` |
-| `!plot <expression> [options]` | 2D plots, 3D plots, vector fields, parametric curves, and animation | `!plot z = sin(x)*cos(y) view:3d x:[-3, 3] y:[-3, 3]` |
+| `!plot <expression> [options]` | 2D plots, 3D plots, vector fields, parametric curves, and 3D animation | `!plot z = sin(x)*cos(y) view:3d x:[-3, 3] y:[-3, 3]` |
 | `!solve <expression> [options]` | Equations, calculus, matrices, ODEs, PDEs, and variable isolation | `!solve integ[sin(x), x:[0, pi]]` |
 | `!help [topic]` | Syntax help, command help, helper docs, and option docs | `!help plot` |
 
@@ -73,6 +75,7 @@ A local-first WhatsApp bot built with `whatsapp-web.js`, `Puppeteer`, `KaTeX`, `
 - Grouped options use braces: `vars:{x, y, z}`, `ic:{y(0)=1; y'(0)=0}`
 - Semicolons separate systems of equations and matrix rows: `x + y = 5; x - y = 1`, `[1, 2; 3, 4]`
 - Use `kind:parametric`, `kind:polar`, or `kind:vector` when a tuple would otherwise be ambiguous
+- Animated output is only supported for `view:3d` via `animate:<param>` or `camera:<axis>`; legacy 2D `-e[...]` forms are not supported
 
 ## Quick Start
 
@@ -80,9 +83,10 @@ A local-first WhatsApp bot built with `whatsapp-web.js`, `Puppeteer`, `KaTeX`, `
 
 - Node.js 20.x
 - npm 10.x
-- Python 3 available as `python`, `python3`, or via `PYTHON_BIN`
+- Python 3 available as `python`, `python3`, or via `PYTHON_BIN` / `runtime.pythonBin`
+- Chromium or Chrome available to Puppeteer. If auto-detection is not enough on your host, set `PUPPETEER_EXECUTABLE_PATH` or `CHROME_BIN`, or edit `runtime.browserExecutablePath` in `config.js`.
 - Python packages: `sympy`, `numpy`, and `scipy`
-- Optional: `ffmpeg` on `PATH` or via `FFMPEG_BIN` for animated 3D MP4 output
+- Optional: `ffmpeg` on `PATH` or via `FFMPEG_BIN` / `runtime.ffmpegBin` for animated 3D MP4 output
 
 Tested during the current package-hardening pass with Node `20.19.5` and npm `10.8.2`. The Python bridge expects a working Python 3 interpreter plus the required packages, and `npm run doctor` is the source of truth for whether your local environment is ready.
 
@@ -95,6 +99,27 @@ npm run doctor
 ```
 
 The repo intentionally remains terminal-first. There is no separate setup UI; `npm run doctor` is the local setup/status entry point before QR auth or full startup.
+
+If your browser binary, auth directory, or cache directory lives somewhere non-default, set the matching environment variable first or edit the `runtime.*` keys in `config.js` before you run `npm run doctor`.
+
+### Installation trust
+
+Use this order if you want the lowest-friction way to inspect the repo before logging into WhatsApp:
+
+1. `npm install` and `pip install sympy numpy scipy`
+2. `npm run doctor`
+3. `npm test`
+4. `npm start`
+
+What each step does:
+
+- `npm install` pulls Node dependencies from the npm registry; depending on your Puppeteer environment, it may also provision browser assets needed for local rendering.
+- `pip install ...` pulls the Python packages needed for symbolic solve, calculus, ODE, and PDE routes.
+- `npm run doctor` validates Node, Python, Chromium/Chrome, `ffmpeg`, and writable runtime directories. It launches a local headless-browser smoke check, but it does not start WhatsApp login and does not intentionally call QuickLaTeX or CodeCogs.
+- `npm test` stays local and writes smoke-test output to `test_output/`.
+- `npm start` is the first step that opens the actual WhatsApp client flow and uses or creates session data under the configured auth/cache directories.
+
+If you want to inspect the setup check before running it, the entry point is [`scripts/doctor.js`](scripts/doctor.js).
 
 ### Smoke-test the renderer
 
@@ -113,6 +138,14 @@ npm run test:renderers
 npm run test:ci
 ```
 
+- `npm test` / `npm run test:smoke`: local renderer smoke test
+- `npm run test:core`: parser, help, router, solver, calculus, vector, matrix, and ODE checks
+- `npm run test:renderers`: smoke plus renderer-focused checks, including the release-gated 3D and PDE integration suites
+- `npm run test:ci`: canonical release verification command for CI and pre-publish checks
+- `npm run test:plot-anim`: strict rejection check for unsupported 2D animation syntax, including legacy `-e[...]` forms; this is intentionally not part of the public release gate because 2D animation is not part of the documented command surface
+
+GitHub Actions runs `npm run doctor` and `npm run test:ci` on `windows-latest` for every push and pull request. The badge at the top of this README reflects that workflow.
+
 ### Run the bot
 
 ```bash
@@ -120,14 +153,91 @@ npm start
 ```
 
 1. Scan the QR code from WhatsApp -> Linked Devices.
-2. The login session is stored in `.wwebjs_auth/`, so you normally only scan once.
+2. The login session is stored under `runtime.whatsappAuthPath` (default: `.wwebjs_auth/`), so you normally only scan once.
+
+## Runtime Versions
+
+| Runtime | Current policy | Current verified example |
+| --- | --- | --- |
+| Node.js | Supported baseline: `20.x` | `20.19.5` |
+| npm | Supported baseline: `10.x` | `10.8.2` |
+| Python | Required: Python `3.x` plus `sympy`, `numpy`, and `scipy`; readiness is gated by `npm run doctor` rather than a narrow hard pin | Local docs pass detected `3.14.0` |
+| `ffmpeg` | Optional; only needed for animated 3D MP4 output | If missing, animated 3D requests degrade to a static preview |
+
+## Host Support And Runtime Paths
+
+| Environment | Support level | Notes |
+| --- | --- | --- |
+| Windows local workstation | Validated | Current known-good public path: `npm run doctor`, `npm test`, `npm start` |
+| GitHub Actions `windows-latest` | Automated | CI runs `npm run doctor` and `npm run test:ci` |
+| Linux bare-metal or VM | Best effort | Prerequisites are documented, but startup is not yet validated as a public support promise |
+| macOS workstation/server | Best effort | Install Python 3 plus Chrome/Chromium and use browser-path overrides if needed |
+| Containerized hosting | Not part of the initial public support promise | Treat as unsupported for the first public release unless you are comfortable debugging host-specific issues |
+
+Known Linux host prerequisites to check before startup:
+
+- Python 3 with `sympy`, `numpy`, and `scipy`
+- Chrome or Chromium plus common Puppeteer libraries such as `libnss3`, `libatk-bridge2.0-0`, `libgtk-3-0`, and `libasound2` where your distro requires them
+- Optional `ffmpeg` for animated 3D MP4 output
+
+Persistent runtime data:
+
+- WhatsApp auth root: `runtime.whatsappAuthPath` or `WWEBJS_AUTH_PATH`, default `.wwebjs_auth/`
+- WhatsApp web cache: `runtime.whatsappCachePath` or `WWEBJS_CACHE_PATH`, default `.wwebjs_cache/`
+- Renderer cache: `runtime.rendererCachePath` or `RENDERER_CACHE_PATH`, default `runtime_cache/renderer/`
+- Optional multi-instance session suffix: `runtime.whatsappClientId` or `WWEBJS_CLIENT_ID`
+
+If you host the bot on Linux or macOS, preserve the auth root and web cache across restarts if you want to avoid scanning a new QR code after every restart.
+
+## Network Behavior
+
+| Path | Third-party network use | When it happens |
+| --- | --- | --- |
+| `npm install` | Yes | Pulls npm packages; Puppeteer may also provision browser assets depending on your install environment |
+| `pip install sympy numpy scipy` | Yes | Pulls Python packages from your configured package index |
+| `npm run doctor` | No intentional third-party render/API traffic | Local environment validation only |
+| `npm test` / `npm run test:smoke` | No intentional third-party render/API traffic | Local renderer smoke test only |
+| `npm start` | Yes | Starts the WhatsApp client flow and normal runtime messaging/session traffic |
+| `!latex` formula rendering | Usually local | Uses local KaTeX first; CodeCogs is only used if local formula rendering fails and fallback remains enabled |
+| `!latex` `\ce{...}` chemistry notation | Local | Rendered by KaTeX with the bundled `mhchem` helper |
+| `!latex` `chemfig`, TikZ, `circuitikz` | Yes | Uses QuickLaTeX |
+| `!plot` / `!solve` / local 3D rendering | No intentional third-party render/API traffic | Uses local Puppeteer rendering and local Python subprocesses where needed |
 
 ## Privacy And Repo Safety
 
-- WhatsApp session state stays local in `.wwebjs_auth/` and `.wwebjs_cache/`; those directories are gitignored.
+- WhatsApp session state stays local in the configured auth/cache roots (`.wwebjs_auth/` and `.wwebjs_cache/` by default); those directories are gitignored.
 - Generated output and scratch/runtime cache directories such as `test_output/`, `scratch/`, `.cache/`, `.tmp/`, `tmp/`, and `runtime_cache/` are local-only and not part of the published repo surface.
+- The ignored `Docs/` folder is reserved for local/internal working notes; tracked public guidance lives in `README.md`, `.github/*`, and `RELEASE_CHECKLIST.md`.
 - The preview images under `assets/readme/` are generated sample outputs from this project, not screenshots of live chats, QR codes, or personal account data.
 - The current pre-publish audit and asset provenance notes live in [`PUBLIC_REPO_AUDIT.md`](PUBLIC_REPO_AUDIT.md).
+
+## Community And Support
+
+- Contribution workflow: [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md)
+- Support posture: [`.github/SUPPORT.md`](.github/SUPPORT.md)
+- Security reporting: [`.github/SECURITY.md`](.github/SECURITY.md)
+- Code of conduct: [`.github/CODE_OF_CONDUCT.md`](.github/CODE_OF_CONDUCT.md)
+- Release/publish gate: [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
+
+Bug reports, feature ideas, and setup/use questions should go through the GitHub issue templates. Security-sensitive reports should follow the private reporting guidance in `SECURITY.md` instead of opening a public issue.
+Public release history lives in GitHub Releases rather than a tracked `CHANGELOG.md` at this stage.
+
+## Known Limitations
+
+- The currently validated public startup path is Windows local workstation usage. Linux and macOS docs are best-effort guidance, not a stronger support guarantee yet.
+- Containerized hosting is outside the initial public support promise.
+- 2D animation is not part of the public command surface. Animated output is 3D-only and uses `animate:<param>` or `camera:<axis>`.
+- Animated 3D MP4 output depends on `ffmpeg`; without it, the bot falls back to a static preview image.
+- `chemfig`, TikZ, and `circuitikz` rendering depend on QuickLaTeX rather than staying fully local.
+- Formula fallback depends on CodeCogs when local formula rendering fails and `bot.useFallback` remains enabled.
+- `whatsapp-web.js` is unofficial, so upstream WhatsApp changes can break login or messaging behavior without warning.
+
+## Non-Goals
+
+- Adding many top-level commands beyond `!latex`, `!plot`, `!solve`, and `!help`
+- Shipping a GUI setup/status surface instead of the current terminal-first workflow
+- Treating containerized hosting as a first-class supported environment in the first public release
+- Publishing this project as an npm package
 
 ## Example Commands
 
@@ -161,6 +271,8 @@ Another standalone formula example:
 !plot z = sin(x - t)*cos(y) view:3d animate:t x:[-3, 3] y:[-3, 3] t:[0, 2*pi]
 ```
 
+Animated `!plot` output is intentionally limited to `view:3d` through `animate:<param>` or `camera:<axis>`. Legacy 2D `-e[...]` animation forms are rejected explicitly.
+
 ### `!solve`
 
 ```text
@@ -178,6 +290,7 @@ Another standalone formula example:
 - Direct npm dependencies are pinned to exact registry releases and locked in `package-lock.json` for reproducible installs.
 - `whatsapp-web.js` is an unofficial WhatsApp Web client. It is the main maintenance-risk dependency in this project because upstream WhatsApp changes can break login or messaging behavior without warning.
 - `puppeteer` is part of the supported local render path and may require a working Chromium/Chrome environment depending on your host setup.
+- Some rendering paths may contact third-party services: QuickLaTeX for `chemfig`/TikZ/circuit diagrams and CodeCogs for formula fallback rendering when fallback mode is enabled.
 - Public-release audit policy: install-blocking issues and high-severity dependency problems are blockers; lower-severity findings still need triage and an explicit follow-up plan before release.
 
 ## Configuration
@@ -187,6 +300,11 @@ Most runtime and visual tuning lives in [`config.js`](config.js):
 - `style.*` controls card colors, typography, padding, graph sizing, and watermark styling
 - `bot.*` controls command behavior, auto-rendering, fallbacks, 3D concurrency, and animation defaults
 - `puppeteer.launchArgs.*` controls Chromium launch flags
+- `runtime.pythonBin` overrides the Python interpreter used by solver subprocesses
+- `runtime.browserExecutablePath` overrides the Chrome/Chromium executable used by Puppeteer
+- `runtime.ffmpegBin` overrides the ffmpeg executable used for animated 3D MP4 assembly
+- `runtime.whatsappAuthPath`, `runtime.whatsappCachePath`, and `runtime.rendererCachePath` control persisted auth/cache/runtime directories
+- `runtime.whatsappClientId` adds a stable `session-<id>` suffix when you need multiple bot instances
 
 If you want a clean output without branding, set `style.watermark.text` to `''`.
 
@@ -206,10 +324,10 @@ WhatsApp message
 
 ## Troubleshooting
 
-- If QR login gets stuck, delete `.wwebjs_auth/` and start the bot again
-- If symbolic solving fails, run `npm run doctor`. If needed, point the solver bridge at a specific interpreter with `PYTHON_BIN`.
-- If animated 3D output falls back to a static image, install `ffmpeg` or point to it explicitly with `FFMPEG_BIN`.
-- If local rendering fails, check your Chromium/Puppeteer install first by running `npm test`
+- If QR login gets stuck, stop the bot, remove the configured WhatsApp auth directory (default `.wwebjs_auth/`), and start again
+- If symbolic solving fails, run `npm run doctor`. If needed, point the solver bridge at a specific interpreter with `PYTHON_BIN` or `runtime.pythonBin`.
+- If animated 3D output falls back to a static image, install `ffmpeg` or point to it explicitly with `FFMPEG_BIN` or `runtime.ffmpegBin`.
+- If local rendering fails, run `npm run doctor` and verify that Puppeteer can find a usable Chrome/Chromium executable. Set `PUPPETEER_EXECUTABLE_PATH`, `CHROME_BIN`, or `runtime.browserExecutablePath` when the browser lives in a custom location.
 
 ## License
 

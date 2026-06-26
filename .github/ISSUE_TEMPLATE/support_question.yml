@@ -1,0 +1,45 @@
+name: Support question
+description: Ask for help with setup, runtime environment, or expected usage.
+title: "[Support]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reaching out.
+
+        For vulnerabilities or sensitive issues, please stop here and use the private reporting guidance in `.github/SECURITY.md` instead of posting publicly.
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      options:
+        - install / doctor
+        - WhatsApp auth / startup
+        - !latex usage
+        - !plot usage
+        - !solve usage
+        - rendering environment
+        - CI / contributing workflow
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and where are you getting stuck?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What you already tried
+      description: Include docs or commands you already checked so maintainers do not repeat the same basics.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Environment and diagnostics
+      description: Include OS, Node, Python, browser, `ffmpeg`, and `npm run doctor` output when relevant. Remove secrets, QR codes, and private chat data.
+      render: shell

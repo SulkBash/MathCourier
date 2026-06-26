@@ -19,6 +19,7 @@ const plotHelp = getHelp('plot');
 assert(plotHelp.includes('*2D And 3D Plotting*'));
 assert(plotHelp.includes('kind:parametric'));
 assert(plotHelp.includes('animate:t'));
+assert(plotHelp.includes('legacy 2D `-e[...]` forms are not supported'));
 assert(getHelp('!plot3d').includes('Command not found: !plot3d'));
 console.log('PASS: Plot help documents only the unified !plot surface');
 
@@ -26,6 +27,8 @@ const latexHelp = getHelp('latex');
 assert(latexHelp.includes('*Unified Latex Rendering*'));
 assert(latexHelp.includes('mode:chem'));
 assert(latexHelp.includes('mode:tikz'));
+assert(latexHelp.includes('\\ce{CO2 + H2O <=> H2CO3}'));
+assert(latexHelp.includes('KaTeX/mhchem'));
 assert(latexHelp.includes('$$ ... $$'));
 assert(!latexHelp.includes('Legacy'));
 assert(getHelp('tex').includes('Command not found: !tex'));
@@ -91,6 +94,7 @@ console.log('PASS: Vector helper pages describe their argument shapes');
 
 const animateHelp = getHelp('animate');
 assert(animateHelp.includes('0` through `2*pi'));
+assert(animateHelp.includes('Legacy 2D `-e[...]` animation syntax is not supported'));
 assert(!animateHelp.includes('must also be provided'));
 console.log('PASS: Animate help documents the default sweep range');
 

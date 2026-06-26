@@ -21,7 +21,7 @@ test_output/
 !assets/readme/*.jpg
 !assets/readme/*.jpeg
 
-# Local scratch and runtime caches
+# Local scratch and runtime caches (kept out of the public repo)
 scratch/
 .cache/
 .tmp/
@@ -36,5 +36,5 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Docs (not shipped)
+# Internal/local working notes stay untracked; public-facing docs live elsewhere
 Docs/

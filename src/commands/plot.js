@@ -1,7 +1,27 @@
 const renderer = require('../renderer');
 const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 
+const LEGACY_2D_ANIMATION_PREFIX_RE = /^\s*-e(?:\[[A-Za-z][A-Za-z0-9_]*\]|[A-Za-z]+)(?=\s|$)/;
+
+function legacy2dAnimationError() {
+    return {
+        success: false,
+        error: 'Legacy 2D -e[...] animation syntax is no longer supported. Use a static 2D !plot command, or switch to view:3d with animate:<param> or camera:<axis> for animated output.'
+    };
+}
+
+function unsupported2dAnimationError() {
+    return {
+        success: false,
+        error: '2D animation is not supported in !plot. Use a static 2D plot, or switch to view:3d with animate:<param> or camera:<axis> for animated output.'
+    };
+}
+
 async function handlePlotCommand(input) {
+    if (LEGACY_2D_ANIMATION_PREFIX_RE.test(String(input || ''))) {
+        return legacy2dAnimationError();
+    }
+
     const rawParsed = parseCommandSyntax(input);
     const parsed = normalizeAndValidate(rawParsed, 'plot');
     if (!parsed.success) {
@@ -57,6 +77,10 @@ async function handlePlotCommand(input) {
     }
 
     // view: 2d
+    if (parsed.options.animate) {
+        return unsupported2dAnimationError();
+    }
+
     const isAnimated = !!parsed.options.animate;
     const animationVar = parsed.options.animate || null;
     const labeledDomains = {};

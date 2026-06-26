@@ -39,8 +39,19 @@ function runSubprocess(scriptPath, payload) {
         }
 
         const pyProcess = spawn(python.command, [...(python.args || []), scriptPath]);
+        let timer = null;
 
-        const timer = setTimeout(() => {
+        pyProcess.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve({
+                success: false,
+                error: `Failed to start Python via ${python.label}. ${err.message}`
+            });
+        });
+
+        timer = setTimeout(() => {
             if (settled) return;
             settled = true;
             try {

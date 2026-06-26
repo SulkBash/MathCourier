@@ -1,3 +1,5 @@
+const path = require('path');
+
 module.exports = {
     style: {
         backgroundColor: '#0f172a',
@@ -8,14 +10,14 @@ module.exports = {
         borderRadius: '16px',
         border: '1px solid rgba(255, 255, 255, 0.08)',
         boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3)',
-        
+
         watermark: {
             text: 'LaTeX Render Bot',
             color: 'rgba(248, 250, 252, 0.4)',
             fontSize: '11px',
-            fontFamily: "monospace"
+            fontFamily: 'monospace'
         },
-        
+
         graph: {
             width: 600,
             height: 600,
@@ -35,7 +37,7 @@ module.exports = {
     bot: {
         name: 'LaTeX Bot',
         autoRenderBlock: true,
-        errorPrefix: '⚠️ *LaTeX Error:* ',
+        errorPrefix: '*LaTeX Error:* ',
         useFallback: true,
         fallbackEngine: 'codecogs',
         plot3dMaxConcurrency: 3,
@@ -49,6 +51,17 @@ module.exports = {
         plot3dImplicitCoarseSteps: 40,
         plot3dImplicitGridSteps: 64,
         plot3dImplicitPaddingRatio: 0.15
+    },
+
+    runtime: {
+        pythonBin: process.env.PYTHON_BIN || null,
+        ffmpegBin: process.env.FFMPEG_BIN || null,
+        browserExecutablePath: process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_BIN || null,
+        whatsappAuthPath: process.env.WWEBJS_AUTH_PATH || '.wwebjs_auth',
+        whatsappCachePath: process.env.WWEBJS_CACHE_PATH || '.wwebjs_cache',
+        rendererCachePath: process.env.RENDERER_CACHE_PATH || path.join('runtime_cache', 'renderer'),
+        whatsappClientId: process.env.WWEBJS_CLIENT_ID || null,
+        startupHealthSummary: true
     },
 
     puppeteer: {

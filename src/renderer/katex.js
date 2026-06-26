@@ -1,9 +1,13 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
 const config = require('../../config');
 const { pathToFileURL } = require('url');
+const { resolvePuppeteerLaunchOptions, resolveRuntimePaths } = require('../runtime');
+
+const PROJECT_ROOT = path.join(__dirname, '..', '..');
+const KATEX_DIST_DIR = path.join(PROJECT_ROOT, 'node_modules', 'katex', 'dist');
+const PLOTLY_DIST_PATH = path.join(PROJECT_ROOT, 'node_modules', 'plotly.js-dist-min', 'plotly.min.js');
 
 let browser = null;
 let page = null;
@@ -13,6 +17,75 @@ let isInitialized = false;
 
 function buildTemplateUrl(filePath) {
     return pathToFileURL(filePath).toString();
+}
+
+function ensureFileExists(filePath, message) {
+    if (!fs.existsSync(filePath)) {
+        throw new Error(message);
+    }
+
+    return filePath;
+}
+
+function ensureRuntimeRenderDir() {
+    const runtimeRenderDir = resolveRuntimePaths().rendererCacheDir;
+    fs.mkdirSync(runtimeRenderDir, { recursive: true });
+    return runtimeRenderDir;
+}
+
+function getRuntimeTemplatePath() {
+    return path.join(ensureRuntimeRenderDir(), 'render.html');
+}
+
+function replaceTemplateToken(templateHtml, token, value) {
+    return templateHtml.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), value);
+}
+
+function buildTemplateHtml() {
+    const katexCssPath = ensureFileExists(
+        path.join(KATEX_DIST_DIR, 'katex.min.css'),
+        'KaTeX CSS file not found. Run npm install first.'
+    );
+    const katexJsPath = ensureFileExists(
+        path.join(KATEX_DIST_DIR, 'katex.min.js'),
+        'KaTeX JS file not found. Run npm install first.'
+    );
+    const mhchemJsPath = ensureFileExists(
+        path.join(KATEX_DIST_DIR, 'contrib', 'mhchem.min.js'),
+        'KaTeX mhchem helper not found. Run npm install first.'
+    );
+    const autoRenderJsPath = ensureFileExists(
+        path.join(KATEX_DIST_DIR, 'contrib', 'auto-render.min.js'),
+        'KaTeX auto-render helper not found. Run npm install first.'
+    );
+
+    let plotlyScriptSrc = null;
+    if (fs.existsSync(PLOTLY_DIST_PATH)) {
+        plotlyScriptSrc = buildTemplateUrl(PLOTLY_DIST_PATH);
+    } else {
+        console.warn('Plotly.js local asset not found. 3D rendering will remain unavailable until dependencies are installed.');
+    }
+
+    const staticTemplatePath = path.join(__dirname, 'template.html');
+    let templateHtml = fs.readFileSync(staticTemplatePath, 'utf8');
+
+    templateHtml = replaceTemplateToken(templateHtml, '{{katexCssHref}}', buildTemplateUrl(katexCssPath));
+    templateHtml = replaceTemplateToken(templateHtml, '{{katexJsSrc}}', buildTemplateUrl(katexJsPath));
+    templateHtml = replaceTemplateToken(templateHtml, '{{mhchemJsSrc}}', buildTemplateUrl(mhchemJsPath));
+    templateHtml = replaceTemplateToken(templateHtml, '{{autoRenderJsSrc}}', buildTemplateUrl(autoRenderJsPath));
+
+    const renderConfig = JSON.stringify({
+        plotlyScriptSrc,
+        style: config.style
+    }).replace(/</g, '\\u003c');
+
+    return templateHtml.replace('{{renderConfig}}', renderConfig);
+}
+
+function writeRuntimeTemplate() {
+    templatePath = getRuntimeTemplatePath();
+    fs.writeFileSync(templatePath, buildTemplateHtml(), 'utf8');
+    templateUrl = buildTemplateUrl(templatePath);
 }
 
 async function openRenderPage(browserInstance) {
@@ -30,82 +103,15 @@ async function openRenderPage(browserInstance) {
     }
 }
 
-function downloadPlotly(destPath) {
-    return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(destPath);
-        https.get('https://cdn.plot.ly/plotly-2.27.0.min.js', (response) => {
-            if (response.statusCode !== 200) {
-                file.close();
-                fs.unlink(destPath, () => {});
-                reject(new Error(`Failed to download Plotly.js: status code ${response.statusCode}`));
-                return;
-            }
-            response.pipe(file);
-            file.on('finish', () => {
-                file.close();
-                resolve();
-            });
-        }).on('error', (err) => {
-            file.close();
-            fs.unlink(destPath, () => {});
-            reject(err);
-        });
-    });
-}
-
 async function initialize() {
     if (isInitialized) return;
 
     try {
         console.log('Initializing LaTeX Renderer...');
-        
-        const katexDir = path.join(__dirname, '..', '..', 'node_modules', 'katex', 'dist');
-        const katexCssPath = path.join(katexDir, 'katex.min.css');
-        const katexJsPath = path.join(katexDir, 'katex.min.js');
-        
-        if (!fs.existsSync(katexCssPath) || !fs.existsSync(katexJsPath)) {
-            throw new Error('KaTeX node_modules files not found. Run npm install first.');
-        }
 
-        // Check and download Plotly.js if missing
-        const plotlyJsPath = path.join(katexDir, 'plotly.min.js');
-        let useLocalPlotly = false;
-        if (fs.existsSync(plotlyJsPath)) {
-            useLocalPlotly = true;
-        } else {
-            console.log('Plotly.js not found locally. Attempting to download...');
-            try {
-                await downloadPlotly(plotlyJsPath);
-                useLocalPlotly = true;
-                console.log('Plotly.js downloaded successfully.');
-            } catch (err) {
-                console.warn('Failed to download Plotly.js locally:', err.message);
-                console.log('Plotly.js will be loaded via CDN fallback.');
-            }
-        }
+        writeRuntimeTemplate();
 
-        const plotlyScriptSrc = useLocalPlotly
-            ? 'plotly.min.js'
-            : 'https://cdn.plot.ly/plotly-2.27.0.min.js';
-
-        // Read template.html
-        const staticTemplatePath = path.join(__dirname, 'template.html');
-        let templateHtml = fs.readFileSync(staticTemplatePath, 'utf8');
-
-        // Replace placeholders with a single JSON config blob so the template remains valid HTML/CSS.
-        const renderConfig = JSON.stringify({
-            plotlyScriptSrc,
-            style: config.style
-        }).replace(/</g, '\\u003c');
-
-        templateHtml = templateHtml.replace('{{renderConfig}}', renderConfig);
-
-        // Write the temp template inside katex/dist so relative font paths resolve naturally
-        templatePath = path.join(katexDir, 'render_temp.html');
-        fs.writeFileSync(templatePath, templateHtml, 'utf8');
-        templateUrl = buildTemplateUrl(templatePath);
-
-        browser = await puppeteer.launch(config.puppeteer.launchArgs);
+        browser = await puppeteer.launch(resolvePuppeteerLaunchOptions(config.puppeteer.launchArgs));
         page = await openRenderPage(browser);
         
         isInitialized = true;
@@ -160,16 +166,15 @@ async function renderLocal(formula, isBlock = true) {
 }
 
 async function close() {
+    isInitialized = false;
+    templateUrl = null;
+    page = null;
+
     if (browser) {
-        await browser.close();
+        const browserToClose = browser;
         browser = null;
-        page = null;
-        isInitialized = false;
-        templateUrl = null;
-        
-        if (templatePath && fs.existsSync(templatePath)) {
-            try { fs.unlinkSync(templatePath); } catch (e) {}
-        }
+        await browserToClose.close();
+
         console.log('LaTeX Renderer shut down.');
     }
 }
@@ -181,5 +186,6 @@ module.exports = {
     isInitialized: () => isInitialized,
     getPage: () => page,
     getBrowser: () => browser,
+    getTemplatePath: () => templatePath,
     createRenderPage
 };

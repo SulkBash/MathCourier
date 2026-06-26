@@ -1,9 +1,96 @@
+const path = require('path');
 const { spawnSync } = require('child_process');
+
+const config = require('../config');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
 
 let cachedPythonCommand;
 
 function trimCommandOutput(result) {
     return `${result.stdout || ''}${result.stderr || ''}`.trim();
+}
+
+function getRuntimeConfig() {
+    return config.runtime || {};
+}
+
+function resolveRepoPath(rawPath, fallbackRelativePath) {
+    const targetPath = rawPath || fallbackRelativePath;
+    if (!targetPath) {
+        return null;
+    }
+
+    if (path.isAbsolute(targetPath)) {
+        return targetPath;
+    }
+
+    return path.resolve(REPO_ROOT, targetPath);
+}
+
+function resolveRuntimePaths() {
+    const runtimeConfig = getRuntimeConfig();
+
+    return {
+        repoRoot: REPO_ROOT,
+        whatsappAuthDir: resolveRepoPath(runtimeConfig.whatsappAuthPath, '.wwebjs_auth'),
+        whatsappCacheDir: resolveRepoPath(runtimeConfig.whatsappCachePath, '.wwebjs_cache'),
+        rendererCacheDir: resolveRepoPath(runtimeConfig.rendererCachePath, path.join('runtime_cache', 'renderer'))
+    };
+}
+
+function getWhatsAppClientId() {
+    return getRuntimeConfig().whatsappClientId || null;
+}
+
+function getWhatsAppSessionDir() {
+    const { whatsappAuthDir } = resolveRuntimePaths();
+    const clientId = getWhatsAppClientId();
+    const sessionDirName = clientId ? `session-${clientId}` : 'session';
+    return path.join(whatsappAuthDir, sessionDirName);
+}
+
+function getWhatsAppLocalAuthOptions() {
+    return {
+        dataPath: resolveRuntimePaths().whatsappAuthDir,
+        clientId: getWhatsAppClientId() || undefined
+    };
+}
+
+function getWhatsAppWebCacheOptions() {
+    return {
+        type: 'local',
+        path: resolveRuntimePaths().whatsappCacheDir
+    };
+}
+
+function getConfiguredBrowserExecutablePath() {
+    return resolveRepoPath(getRuntimeConfig().browserExecutablePath, null);
+}
+
+function resolvePuppeteerLaunchOptions(baseLaunchArgs = {}) {
+    const launchArgs = {
+        ...baseLaunchArgs
+    };
+
+    if (Array.isArray(baseLaunchArgs.args)) {
+        launchArgs.args = [...baseLaunchArgs.args];
+    }
+
+    const executablePath = getConfiguredBrowserExecutablePath();
+    if (executablePath) {
+        launchArgs.executablePath = executablePath;
+    }
+
+    return launchArgs;
+}
+
+function getConfiguredPythonCommand() {
+    return getRuntimeConfig().pythonBin || null;
+}
+
+function getConfiguredFfmpegCommand() {
+    return getRuntimeConfig().ffmpegBin || null;
 }
 
 function dedupeSpecs(specs) {
@@ -20,11 +107,12 @@ function dedupeSpecs(specs) {
 
 function getPythonCandidateSpecs() {
     const specs = [];
+    const configuredPythonCommand = getConfiguredPythonCommand();
 
-    if (process.env.PYTHON_BIN) {
+    if (configuredPythonCommand) {
         specs.push({
-            label: 'PYTHON_BIN',
-            command: process.env.PYTHON_BIN,
+            label: process.env.PYTHON_BIN ? 'PYTHON_BIN' : 'runtime.pythonBin',
+            command: configuredPythonCommand,
             args: []
         });
     }
@@ -79,21 +167,30 @@ function resolvePythonCommand(options = {}) {
 }
 
 function getFfmpegCommand() {
-    return process.env.FFMPEG_BIN || 'ffmpeg';
+    return getConfiguredFfmpegCommand() || 'ffmpeg';
 }
 
 function probeFfmpegCommand() {
     return probeCommand({
-        label: process.env.FFMPEG_BIN ? 'FFMPEG_BIN' : 'ffmpeg',
+        label: getConfiguredFfmpegCommand()
+            ? (process.env.FFMPEG_BIN ? 'FFMPEG_BIN' : 'runtime.ffmpegBin')
+            : 'ffmpeg',
         command: getFfmpegCommand(),
         args: []
     }, ['-version']);
 }
 
 module.exports = {
+    getConfiguredBrowserExecutablePath,
+    getWhatsAppClientId,
+    getWhatsAppLocalAuthOptions,
+    getWhatsAppSessionDir,
+    getWhatsAppWebCacheOptions,
     getFfmpegCommand,
     getPythonCandidateSpecs,
     probeCommand,
     probeFfmpegCommand,
-    resolvePythonCommand
+    resolvePuppeteerLaunchOptions,
+    resolvePythonCommand,
+    resolveRuntimePaths
 };

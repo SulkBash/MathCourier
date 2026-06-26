@@ -2,10 +2,17 @@ const fs = require('fs');
 const path = require('path');
 
 const config = require('../config');
-const { probeFfmpegCommand, resolvePythonCommand } = require('../src/runtime');
+const {
+    getConfiguredBrowserExecutablePath,
+    getWhatsAppSessionDir,
+    probeFfmpegCommand,
+    resolvePuppeteerLaunchOptions,
+    resolvePythonCommand,
+    resolveRuntimePaths
+} = require('../src/runtime');
 
-const repoRoot = path.resolve(__dirname, '..');
 const requiredNodeMajor = 20;
+const runtimePaths = resolveRuntimePaths();
 
 function pass(label, detail) {
     return { level: 'PASS', label, detail, required: true };
@@ -23,13 +30,11 @@ function formatResult(result) {
     return `[${result.level}] ${result.label}: ${result.detail}`;
 }
 
-function testWritableDirectory(relativeDir, options = {}) {
-    const fullPath = path.join(repoRoot, relativeDir);
-
+function testWritableDirectory(label, fullPath, options = {}) {
     try {
         if (!fs.existsSync(fullPath)) {
             if (!options.createIfMissing) {
-                return fail(relativeDir, `Missing path: ${fullPath}`);
+                return fail(label, `Missing path: ${fullPath}`);
             }
             fs.mkdirSync(fullPath, { recursive: true });
         }
@@ -37,9 +42,9 @@ function testWritableDirectory(relativeDir, options = {}) {
         const probePath = path.join(fullPath, '.doctor-write-test');
         fs.writeFileSync(probePath, 'ok', 'utf8');
         fs.unlinkSync(probePath);
-        return pass(relativeDir, `Writable at ${fullPath}`);
+        return pass(label, `Writable at ${fullPath}`);
     } catch (error) {
-        return fail(relativeDir, `Not writable: ${fullPath} (${error.message})`);
+        return fail(label, `Not writable: ${fullPath} (${error.message})`);
     }
 }
 
@@ -59,7 +64,7 @@ function checkPythonInterpreter() {
     if (!python) {
         return {
             interpreter: null,
-            result: fail('Python 3', 'No working Python 3 interpreter found. Install Python 3 or set PYTHON_BIN.')
+            result: fail('Python 3', 'No working Python 3 interpreter found. Install Python 3 or set PYTHON_BIN/runtime.pythonBin.')
         };
     }
 
@@ -115,7 +120,7 @@ function checkPythonPackages(python) {
 async function checkPuppeteer() {
     try {
         const puppeteer = require('puppeteer');
-        const browser = await puppeteer.launch(config.puppeteer.launchArgs);
+        const browser = await puppeteer.launch(resolvePuppeteerLaunchOptions(config.puppeteer.launchArgs));
         const page = await browser.newPage();
         await page.close();
         await browser.close();
@@ -125,10 +130,19 @@ async function checkPuppeteer() {
     }
 }
 
+function checkBrowserOverride() {
+    const browserExecutablePath = getConfiguredBrowserExecutablePath();
+    if (!browserExecutablePath) {
+        return warn('Chromium/Chrome executable override', 'Using Puppeteer default browser resolution. Set PUPPETEER_EXECUTABLE_PATH or runtime.browserExecutablePath when the host browser lives in a custom location.');
+    }
+
+    return pass('Chromium/Chrome executable override', browserExecutablePath);
+}
+
 function checkFfmpeg() {
     const ffmpeg = probeFfmpegCommand();
     if (!ffmpeg) {
-        return warn('ffmpeg', 'Not found on PATH. Animated 3D renders will fall back to a static image.');
+        return warn('ffmpeg', 'Not found. Animated 3D renders will fall back to a static image. Install ffmpeg or set FFMPEG_BIN/runtime.ffmpegBin.');
     }
 
     const firstLine = ffmpeg.version.split(/\r?\n/)[0];
@@ -144,16 +158,19 @@ async function main() {
     results.push(pythonCheck.result);
     results.push(checkPythonPackages(pythonCheck.interpreter));
 
-    results.push(testWritableDirectory('.wwebjs_auth', { createIfMissing: true }));
-    results.push(testWritableDirectory('.wwebjs_cache', { createIfMissing: true }));
-    results.push(testWritableDirectory('test_output', { createIfMissing: true }));
-    results.push(testWritableDirectory(path.join('node_modules', 'katex', 'dist')));
+    results.push(pass('WhatsApp session dir', getWhatsAppSessionDir()));
+    results.push(testWritableDirectory('WhatsApp auth root', runtimePaths.whatsappAuthDir, { createIfMissing: true }));
+    results.push(testWritableDirectory('WhatsApp web cache', runtimePaths.whatsappCacheDir, { createIfMissing: true }));
+    results.push(testWritableDirectory('Renderer cache', runtimePaths.rendererCacheDir, { createIfMissing: true }));
+    results.push(testWritableDirectory('test_output', path.join(runtimePaths.repoRoot, 'test_output'), { createIfMissing: true }));
 
+    results.push(checkBrowserOverride());
     results.push(await checkPuppeteer());
     results.push(checkFfmpeg());
 
     console.log('LaTeX Render Bot setup check');
     console.log('This project is intentionally terminal-first. Use this command before QR auth or full startup.');
+    console.log('Linux and macOS hosting notes are currently best-effort until a real non-Windows startup validation is recorded.');
     console.log('');
 
     for (const result of results) {

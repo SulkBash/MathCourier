@@ -1,7 +1,19 @@
+const fs = require('fs');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const renderer = require('./src/renderer');
 const config = require('./config');
+const {
+    getConfiguredBrowserExecutablePath,
+    getFfmpegCommand,
+    getWhatsAppLocalAuthOptions,
+    getWhatsAppSessionDir,
+    getWhatsAppWebCacheOptions,
+    probeFfmpegCommand,
+    resolvePuppeteerLaunchOptions,
+    resolvePythonCommand,
+    resolveRuntimePaths
+} = require('./src/runtime');
 
 const handleLatexCommand = require('./src/commands/latex');
 const handlePlotCommand = require('./src/commands/plot');
@@ -9,17 +21,61 @@ const handleSolveCommand = require('./src/commands/solve');
 const helpText = require('./src/commands/help');
 
 const READY_WATCHDOG_MS = 45000;
+const runtimePaths = resolveRuntimePaths();
+const sessionDirPath = getWhatsAppSessionDir();
 
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth(getWhatsAppLocalAuthOptions()),
+    webVersionCache: getWhatsAppWebCacheOptions(),
+    ffmpegPath: getFfmpegCommand(),
     puppeteer: {
-        args: config.puppeteer.launchArgs.args,
-        headless: config.puppeteer.launchArgs.headless
+        ...resolvePuppeteerLaunchOptions(config.puppeteer.launchArgs)
     }
 });
 
 let readyWatchdog = null;
 let isShuttingDown = false;
+
+function ensureRuntimeDirectories() {
+    for (const dirPath of [
+        runtimePaths.whatsappAuthDir,
+        runtimePaths.whatsappCacheDir,
+        runtimePaths.rendererCacheDir
+    ]) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+}
+
+function logStartupHealthSummary() {
+    if (config.runtime?.startupHealthSummary === false) {
+        return;
+    }
+
+    const python = resolvePythonCommand({ refresh: true });
+    const ffmpeg = probeFfmpegCommand();
+    const browserExecutablePath = getConfiguredBrowserExecutablePath();
+
+    console.log('Runtime health summary:');
+    console.log(`- WhatsApp auth root: ${runtimePaths.whatsappAuthDir}`);
+    console.log(`- WhatsApp session dir: ${sessionDirPath}`);
+    console.log(`- WhatsApp web cache: ${runtimePaths.whatsappCacheDir}`);
+    console.log(`- Renderer cache: ${runtimePaths.rendererCacheDir}`);
+    console.log(`- Chromium/Chrome executable: ${browserExecutablePath || 'Puppeteer default browser resolution'}`);
+
+    if (python) {
+        console.log(`- Python 3: ${python.label} (${python.version})`);
+    } else {
+        console.warn('- Python 3: not detected. Symbolic solve, calculus fallback, ODE, and PDE routes will fail until Python 3 is installed or PYTHON_BIN/runtime.pythonBin is set.');
+    }
+
+    if (ffmpeg) {
+        console.log(`- ffmpeg: ${ffmpeg.label} (${ffmpeg.version.split(/\r?\n/)[0]})`);
+    } else {
+        console.warn('- ffmpeg: not detected. Animated 3D replies will fall back to a static preview until ffmpeg is installed or FFMPEG_BIN/runtime.ffmpegBin is set.');
+    }
+
+    console.log('');
+}
 
 function clearReadyWatchdog() {
     if (readyWatchdog) {
@@ -32,7 +88,7 @@ function armReadyWatchdog() {
     clearReadyWatchdog();
     readyWatchdog = setTimeout(() => {
         console.warn(`Still waiting for WhatsApp to become ready after ${READY_WATCHDOG_MS / 1000}s.`);
-        console.warn('If this keeps happening, close any stale bot/Chromium process using .wwebjs_auth\\session and restart the bot.');
+        console.warn(`If this keeps happening, close any stale bot or Chromium process using the session data at ${sessionDirPath} and restart the bot.`);
     }, READY_WATCHDOG_MS);
 
     if (typeof readyWatchdog.unref === 'function') {
@@ -305,12 +361,19 @@ async function renderMixed(text) {
 }
 
 console.log('Starting LaTeX Render Bot...');
+try {
+    ensureRuntimeDirectories();
+} catch (err) {
+    console.error('Failed to prepare runtime directories:', err);
+    process.exit(1);
+}
+logStartupHealthSummary();
 client.initialize().catch(err => {
     clearReadyWatchdog();
 
     if (/browser is already running/i.test(err.message)) {
         console.error('Failed to initialize WhatsApp client: the WhatsApp session is already in use by another bot or stale Chromium process.');
-        console.error('Close the other instance, or end the leftover Chrome process that is holding ".wwebjs_auth\\session", then restart.');
+        console.error(`Close the other instance, or end the leftover Chrome/Chromium process that is holding the session data at "${sessionDirPath}", then restart.`);
     } else {
         console.error('Failed to initialize WhatsApp client:', err);
     }

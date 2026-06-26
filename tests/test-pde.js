@@ -1,7 +1,8 @@
 const handlePdeCommand = require('../src/commands/pde');
 const renderer = require('../src/renderer');
-const fs = require('fs');
-const path = require('path');
+const { createHarness } = require('./test-harness');
+
+const harness = createHarness('PDE SOLVER & VISUALIZER INTEGRATION TESTS');
 
 const testCases = [
     {
@@ -36,51 +37,32 @@ const testCases = [
 
 async function runTests() {
     console.log('=== STARTING PDE SOLVER & VISUALIZER INTEGRATION TESTS ===\n');
-
-    const outputDir = path.join(__dirname, '../test_output');
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
+    harness.ensureOutputDir();
 
     try {
         console.log('Bootstrapping LaTeX Renderer (Puppeteer)...');
         await renderer.initialize();
         console.log('Renderer ready.\n');
 
-        for (let i = 0; i < testCases.length; i++) {
-            const tc = testCases[i];
-            console.log(`--- Test ${i + 1}: ${tc.name} ---`);
-            console.log(`Command input: "${tc.input}"`);
-
-            try {
+        for (const tc of testCases) {
+            await harness.runTest(tc.name, async () => {
+                console.log(`Command input: "${tc.input}"`);
                 const renderRes = await handlePdeCommand(tc.input);
-                if (!renderRes.success) {
-                    console.log(`Execution Failed: ${renderRes.error}`);
-                    console.log('--------------------------------------------\n');
-                    continue;
-                }
-
-                console.log(`Execution Success!`);
-                const isAnim = renderRes.isAnimation;
-                const ext = isAnim ? 'mp4' : 'png';
-                const imgBuf = Buffer.from(renderRes.data, 'base64');
-                const outPath = path.join(outputDir, `pde_test_${i + 1}.${ext}`);
-                
-                fs.writeFileSync(outPath, imgBuf);
-                console.log(`Saved output to: ${outPath}`);
-
-            } catch (err) {
-                console.error(`Unexpected Error during test:`, err);
-            }
-            console.log('--------------------------------------------\n');
+                harness.writeResult(tc.name, harness.expectMediaSuccess(renderRes));
+                console.log('--------------------------------------------');
+            });
         }
     } catch (err) {
         console.error('Failure in test runner setup:', err);
+        process.exitCode = 1;
     } finally {
         console.log('Shutting down Renderer...');
         await renderer.close();
-        console.log('Integration tests complete.');
+        harness.finish();
     }
 }
 
-runTests();
+runTests().catch((err) => {
+    console.error('Fatal PDE integration test error:', err);
+    process.exit(1);
+});
