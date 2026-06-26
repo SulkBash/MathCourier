@@ -145,22 +145,23 @@ async function createRenderPage() {
     return openRenderPage(browser);
 }
 
-async function renderLocal(formula, isBlock = true) {
-    if (!isInitialized || !page) {
+async function renderLocal(formula, isBlock = true, renderPage = null) {
+    const activePage = renderPage || page;
+    if (!isInitialized || !activePage) {
         throw new Error('Local renderer is not initialized.');
     }
 
     try {
         let result;
         if (isBlock === false) {
-            result = await page.evaluate((txt) => window.renderMixedText(txt), formula);
+            result = await activePage.evaluate((txt) => window.renderMixedText(txt), formula);
         } else {
-            result = await page.evaluate((f, block) => window.renderFormula(f, block), formula, isBlock);
+            result = await activePage.evaluate((f, block) => window.renderFormula(f, block), formula, isBlock);
         }
 
         if (!result.success) return { success: false, error: result.error };
 
-        const card = await page.$('#card');
+        const card = await activePage.$('#card');
         if (!card) return { success: false, error: 'Card element not found in DOM.' };
 
         const buf = await card.screenshot({ type: 'png', omitBackground: true });

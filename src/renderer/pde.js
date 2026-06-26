@@ -2,7 +2,7 @@ const katexModule = require('./katex');
 const { renderPlot3d, compileVideo } = require('./plot3d');
 const config = require('../../config');
 
-async function renderPde(pdeRes, customOptions = {}) {
+async function renderPde(pdeRes, customOptions = {}, renderPage = null) {
     if (!pdeRes.success) {
         return { success: false, error: pdeRes.error };
     }
@@ -25,9 +25,13 @@ async function renderPde(pdeRes, customOptions = {}) {
                 return { success: false, error: 'Local renderer is not initialized.' };
             }
 
-            let page = null;
+            let page = renderPage;
+            let shouldClosePage = false;
             try {
-                page = await katexModule.createRenderPage();
+                if (!page) {
+                    page = await katexModule.createRenderPage();
+                    shouldClosePage = true;
+                }
                 const totalFrames = 25; // 25 frames is standard and fast
                 const frameBuffers = [];
                 
@@ -90,7 +94,7 @@ async function renderPde(pdeRes, customOptions = {}) {
                 console.error('Error rendering 2D PDE animation:', err);
                 return { success: false, error: err.message };
             } finally {
-                if (page) {
+                if (shouldClosePage && page) {
                     try { await page.close(); } catch (_) {}
                 }
             }
@@ -121,9 +125,13 @@ async function renderPde(pdeRes, customOptions = {}) {
                 return { success: false, error: 'Local renderer is not initialized.' };
             }
 
-            let page = null;
+            let page = renderPage;
+            let shouldClosePage = false;
             try {
-                page = await katexModule.createRenderPage();
+                if (!page) {
+                    page = await katexModule.createRenderPage();
+                    shouldClosePage = true;
+                }
                 
                 const renderResult = await page.evaluate((lat, data, opts) => {
                     return window.renderGraph(lat, 'multi', data, opts);
@@ -163,7 +171,7 @@ async function renderPde(pdeRes, customOptions = {}) {
                 console.error('Error rendering static 2D PDE:', err);
                 return { success: false, error: err.message };
             } finally {
-                if (page) {
+                if (shouldClosePage && page) {
                     try { await page.close(); } catch (_) {}
                 }
             }

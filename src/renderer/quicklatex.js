@@ -68,7 +68,7 @@ function parseQuickLaTeXResponse(body) {
     };
 }
 
-async function renderQuickLaTeX(formula, preamble) {
+async function renderQuickLaTeX(formula, preamble, renderPage = null) {
     return new Promise(async (resolve) => {
         try {
             const textHex = config.style.textColor.replace('#', '').toUpperCase();
@@ -134,7 +134,7 @@ async function renderQuickLaTeX(formula, preamble) {
 
                                     const katexModule = require('./katex');
                                     const isInitialized = katexModule.isInitialized();
-                                    const page = katexModule.getPage();
+                                    const page = renderPage || katexModule.getPage();
 
                                     if (!isInitialized || !page) {
                                         resolve({ success: true, data: b64, source: 'quicklatex-raw' });
@@ -183,7 +183,7 @@ async function renderQuickLaTeX(formula, preamble) {
     });
 }
 
-function renderChem(formula) {
+function renderChem(formula, renderPage = null) {
     const textHex = config.style.textColor.replace('#', '').toUpperCase();
     const preamble = [
         '\\usepackage{xcolor}',
@@ -192,10 +192,10 @@ function renderChem(formula) {
         '\\setchemfig{bond style={color=fgcolor}}',
         '\\renewcommand*\\printatom[1]{\\color{fgcolor}\\ensuremath{\\mathrm{#1}}}'
     ].join('\n');
-    return renderQuickLaTeX(formula, preamble);
+    return renderQuickLaTeX(formula, preamble, renderPage);
 }
 
-function renderTikz(formula) {
+function renderTikz(formula, renderPage = null) {
     const textHex = config.style.textColor.replace('#', '').toUpperCase();
     const preamble = [
         '\\usepackage{xcolor}',
@@ -212,7 +212,7 @@ function renderTikz(formula) {
         full = `\\begin{tikzpicture}\n${full}\n\\end{tikzpicture}`;
     }
 
-    return renderQuickLaTeX(full, preamble);
+    return renderQuickLaTeX(full, preamble, renderPage);
 }
 
 module.exports = {

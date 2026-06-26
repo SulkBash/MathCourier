@@ -40,6 +40,8 @@ module.exports = {
         errorPrefix: '*MathCourier Error:* ',
         useFallback: true,
         fallbackEngine: 'codecogs',
+        renderMaxConcurrency: 8,
+        renderMaxQueue: 128,
         plot3dMaxConcurrency: 3,
         plot2dAnimationFrames: 20,
         plot2dAnimationFps: 10,

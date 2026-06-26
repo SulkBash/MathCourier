@@ -99,6 +99,21 @@ async function runTests() {
             harness.writeResult('Renderer lifecycle 3D reinit', harness.expectMediaSuccess(result));
         });
 
+        await harness.runTest('Concurrent local LaTeX renders use isolated pages', async () => {
+            const formulas = Array.from({ length: 10 }, (_, index) => `x_{${index + 1}} = ${index + 1}^2`);
+            const results = await Promise.all(formulas.map((formula) => renderer.render(formula, true)));
+
+            results.forEach((result, index) => {
+                harness.expectMediaSuccess(result);
+                assert.equal(result.source, 'local', `expected local render source for formula ${index + 1}`);
+            });
+
+            harness.writeResult(
+                'Renderer lifecycle parallel latex sample',
+                harness.expectMediaSuccess(results[0])
+            );
+        });
+
         await harness.runTest('Concurrent isolated 3D pages survive repeated reuse', async () => {
             const commands = [
                 'z = sin(x) * cos(y) view:3d x:[-3, 3] y:[-3, 3]',

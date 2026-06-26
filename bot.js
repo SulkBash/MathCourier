@@ -49,6 +49,8 @@ function logStartupHealthSummary() {
     console.log(`- WhatsApp web cache: ${runtimePaths.whatsappCacheDir}`);
     console.log(`- Renderer cache: ${runtimePaths.rendererCacheDir}`);
     console.log(`- Chromium/Chrome executable: ${browserExecutablePath || 'Puppeteer default browser resolution'}`);
+    console.log(`- Render worker pool: ${config.bot.renderMaxConcurrency} active jobs, ${config.bot.renderMaxQueue} queued`);
+    console.log(`- 3D render pool: ${config.bot.plot3dMaxConcurrency} active jobs`);
 
     if (python) {
         console.log(`- Python 3: ${python.label} (${python.version})`);
