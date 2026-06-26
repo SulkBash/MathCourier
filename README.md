@@ -90,21 +90,18 @@ MathCourier is a local-first WhatsApp bot built with `whatsapp-web.js`, `Puppete
 
 Tested during the current package-hardening pass with Node `20.19.5` and npm `10.8.2`. The Python bridge expects a working Python 3 interpreter plus the required packages, and `npm run doctor` is the source of truth for whether your local environment is ready.
 
-### Install
-
-```bash
-npm install
-pip install sympy numpy scipy
-npm run doctor
-```
-
-The repo intentionally remains terminal-first. There is no separate setup UI; `npm run doctor` is the local setup/status entry point before QR auth or full startup.
-
-If your browser binary, auth directory, or cache directory lives somewhere non-default, set the matching environment variable first or edit the `runtime.*` keys in `config.js` before you run `npm run doctor`.
-
-### Installation trust
+### Installation
 
 Use this order if you want the lowest-friction way to inspect the repo before logging into WhatsApp:
+
+Clone the repository and open a terminal in the project root (the folder that contains `package.json` and `README.md`).
+
+```bash
+git clone https://github.com/SulkBash/MathCourier.git
+cd MathCourier
+```
+
+Run these commands from the project root:
 
 1. `npm install` and `pip install sympy numpy scipy`
 2. `npm run doctor`
@@ -119,15 +116,9 @@ What each step does:
 - `npm test` stays local and writes smoke-test output to `test_output/`.
 - `npm start` is the first step that opens the actual WhatsApp client flow and uses or creates session data under the configured auth/cache directories.
 
+If your browser binary, auth directory, or cache directory lives somewhere non-default, set the matching environment variable first or edit the `runtime.*` keys in `config.js` before you run `npm run doctor`.
+
 If you want to inspect the setup check before running it, the entry point is [`scripts/doctor.js`](scripts/doctor.js).
-
-### Smoke-test the renderer
-
-```bash
-npm test
-```
-
-This writes sample output to `test_output/` so you can verify that Puppeteer, KaTeX, and plotting are working before connecting the bot to WhatsApp.
 
 ### Run the bot
 
