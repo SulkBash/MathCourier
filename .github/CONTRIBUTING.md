@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for taking a look at LaTeXRender.
+Thanks for taking a look at MathCourier.
 
 This project is still in an early public stage. The goal of this guide is to make contributions predictable, reviewable, and aligned with the repo's current support boundaries.
 

@@ -477,7 +477,7 @@ async function startBot(options = {}) {
         attachProcessHandlers = true
     } = options;
 
-    console.log('Starting LaTeX Render Bot...');
+    console.log('Starting MathCourier...');
     ensureRuntimeDirectories();
 
     if (logSummary) {

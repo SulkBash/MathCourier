@@ -187,7 +187,7 @@ async function main() {
     results.push(checkFfmpeg());
     results.push(await checkBotBootstrap());
 
-    console.log('LaTeX Render Bot setup check');
+    console.log('MathCourier setup check');
     console.log('This project is intentionally terminal-first. Use this command before QR auth or full startup.');
     console.log('The release gate is designed to stay portable across Windows, Linux, and macOS; WhatsApp QR auth still requires a real account outside automation.');
     console.log('');

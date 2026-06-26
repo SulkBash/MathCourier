@@ -4,7 +4,7 @@ const getHelp = require('../src/commands/help');
 console.log('--- STARTING HELP TESTS ---');
 
 const generalHelp = getHelp();
-assert(generalHelp.includes('*LaTeX Render Bot Help*'));
+assert(generalHelp.includes('*MathCourier Help*'));
 assert(generalHelp.includes('`!latex <content>`'));
 assert(generalHelp.includes('`!plot <expression> [options]`'));
 assert(generalHelp.includes('`!solve <expression> [options]`'));

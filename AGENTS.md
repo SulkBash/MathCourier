@@ -1,4 +1,4 @@
-# AGENTS.md - LaTeXRender WhatsApp Bot
+# AGENTS.md - MathCourier WhatsApp Bot
 
 This file explains the project layout, how the pieces connect, and the rules to follow when working on this codebase.
 

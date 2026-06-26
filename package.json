@@ -1,18 +1,18 @@
 {
-  "name": "latex-render-bot",
+  "name": "mathcourier-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first WhatsApp bot that renders LaTeX, plots math, and solves equations into PNG and MP4 replies.",
+  "description": "MathCourier is a local-first WhatsApp bot that renders LaTeX, plots math, and solves equations into PNG and MP4 replies.",
   "main": "bot.js",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SulkBash/LaTeXRender.git"
+    "url": "git+https://github.com/SulkBash/MathCourier.git"
   },
   "bugs": {
-    "url": "https://github.com/SulkBash/LaTeXRender/issues"
+    "url": "https://github.com/SulkBash/MathCourier/issues"
   },
-  "homepage": "https://github.com/SulkBash/LaTeXRender#readme",
+  "homepage": "https://github.com/SulkBash/MathCourier#readme",
   "keywords": [
     "whatsapp",
     "bot",
