@@ -6,6 +6,8 @@ console.log('--- STARTING HELP TESTS ---');
 const generalHelp = getHelp();
 assert(generalHelp.includes('*MathCourier Help*'));
 assert(generalHelp.includes('@your-bot-name'));
+assert(generalHelp.includes('In every chat'));
+assert.strictEqual(getHelp('help'), generalHelp);
 assert(generalHelp.includes('`!latex <content>`'));
 assert(generalHelp.includes('`!plot <expression> [options]`'));
 assert(generalHelp.includes('`!solve <expression> [options]`'));
@@ -60,6 +62,9 @@ assert(scientificHelp.includes('limit[expr,x,0,dir:left]'));
 assert(scientificHelp.includes('Plots show the truncated polynomial'));
 assert(scientificHelp.includes('range entirely within its convergence region'));
 assert(scientificHelp.includes('ODE/PDE routes do not yet support'));
+assert.strictEqual(getHelp('convert'), getHelp('units'));
+assert.strictEqual(getHelp('dimension'), getHelp('units'));
+assert(getHelp('phase').includes('symbolic first with numerical fallback'));
 console.log('PASS: Solve help documents helper-based syntax and no removed command aliases');
 
 const helperHelp = getHelp('deriv');

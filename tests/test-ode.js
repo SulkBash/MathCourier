@@ -25,7 +25,10 @@ const testCases = [
     { name: '7. Error Case (Missing IC)', input: 'dy/dx = -y', expectFailure: true },
     
     // 8. Error case: Var mismatch
-    { name: '8. Error Case (Variable Mismatch)', input: 'dy/dx = -y ic:{z(0)=1}', expectFailure: true }
+    { name: '8. Error Case (Variable Mismatch)', input: 'dy/dx = -y ic:{z(0)=1}', expectFailure: true },
+
+    // Phase portraits can also use symbolic solutions.
+    { name: '9. Symbolic Phase Portrait', input: 'dx/dt=-y;dy/dt=x ic:{x(0)=1;y(0)=0} phase:{x,y} mode:sym t:[0,2]', expectFailure: false, expectSymbolic: true }
 ];
 
 const harness = createHarness('ODE SOLVER INTEGRATION TESTS');
@@ -50,6 +53,9 @@ async function runTests() {
                 }
                 
                 harness.expectSuccess(solveRes, 'ODE solver failed unexpectedly.');
+                if (tc.expectSymbolic && !solveRes.has_symbolic) {
+                    throw new Error('Expected a symbolic solution for the phase portrait.');
+                }
                 console.log(`Solver Success!`);
                 console.log(`Has Symbolic: ${solveRes.has_symbolic}`);
                 console.log(`LaTeX Title: ${solveRes.has_symbolic ? solveRes.symbolic_latex : solveRes.ode_latex}`);

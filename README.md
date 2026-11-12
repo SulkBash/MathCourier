@@ -15,7 +15,7 @@ MathCourier is a local-first WhatsApp bot built with `whatsapp-web.js`, `Puppete
 ## Highlights
 
 - Tiny public command surface: `!latex`, `!plot`, `!solve`, and `!help`
-- Auto-render inline `$$ ... $$` blocks inside ordinary chat messages
+- Auto-render inline `$$ ... $$` blocks in messages addressed to your bot
 - 2D plotting for explicit, implicit, parametric, polar, and vector-field expressions, including `animate:` videos
 - 3D plotting for surfaces, implicit volumes, curves, vector fields, and camera animations
 - Symbolic and numeric solving for algebra, calculus, matrices, ODEs, PDEs, and variable isolation
@@ -78,6 +78,8 @@ Regenerate the gallery with `npm run previews:readme` using the local Chromium r
 To regenerate just one preview, add its filename, for example `npm run previews:readme -- chemical-benzoic-acid.png`.
 
 ## Command Overview
+
+Start every math or help message with the bot name you chose during setup, in both group chats and DMs. For example, send `@calc-kevin !help` or `@calc-kevin Please render $$x^2$$`. The bot owner can send `!botname` without an address to view or change the name. The examples below omit the address for brevity.
 
 | Command | Use it for | Example |
 | --- | --- | --- |
@@ -219,7 +221,7 @@ Public release history lives in GitHub Releases rather than a tracked `CHANGELOG
 \draw (0,0) to[R, l=$R$] (2,0)
       to[C, l=$C$] (2,2)
       to[L, l=$L$] (0,2)
-      to[V, l=$V$] (0,0);
+      to[V, l=$V$] (0,0); mode:tikz
 ```
 
 Another standalone formula example:

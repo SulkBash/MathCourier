@@ -1,6 +1,6 @@
 {
   "name": "mathcourier-bot",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "MathCourier is a local-first WhatsApp bot that renders LaTeX, plots math, and solves equations into PNG and MP4 replies.",
   "main": "bot.js",
