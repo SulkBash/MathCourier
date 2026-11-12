@@ -4,7 +4,8 @@ import re
 import numpy as np
 import scipy.integrate
 import sympy
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+from sympy.parsing.sympy_parser import standard_transformations, implicit_multiplication_application
+from safe_parser import parse_expr
 
 def split_clauses(text):
     # Split by comma or semicolon when not inside brackets or parens
@@ -160,6 +161,18 @@ def solve_ode():
         return
 
     dep_list = sorted(list(dep_vars))
+
+    named_ranges = input_data.get("named_ranges") or {}
+    allowed_ranges = {ind_var_name} | set(plot_axes or dep_list)
+    unused_ranges = [name for name in named_ranges if name not in allowed_ranges]
+    if unused_ranges:
+        print(json.dumps({"success": False, "error": "Range " + ", ".join(unused_ranges) + " does not match an ODE or displayed variable."}))
+        return
+    if not plot_axes and len([name for name in named_ranges if name != ind_var_name]) > 1:
+        print(json.dumps({"success": False, "error": "An ODE time plot supports only one dependent-variable display range."}))
+        return
+    if ind_var_name in named_ranges:
+        x_min, x_max = map(float, named_ranges[ind_var_name])
 
     # Validate independent and dependent variable names
     ident_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
@@ -369,6 +382,7 @@ def solve_ode():
                             "success": True,
                             "has_symbolic": True,
                             "symbolic_latex": combined_latex,
+                            "independent_variable": ind_var_name,
                             "curves": curves
                         }))
                         return
@@ -547,6 +561,7 @@ def solve_ode():
             "success": True,
             "has_symbolic": False,
             "ode_latex": ode_latex,
+            "independent_variable": ind_var_name,
             "curves": curves
         }))
 

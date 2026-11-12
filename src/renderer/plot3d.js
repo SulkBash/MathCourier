@@ -6,8 +6,8 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { formatVarToTex } = require('../utils');
-const { analyze3dPlot, expressionUsesAnySymbol } = require('../plot-semantics');
+const { formatVarToTex, MATHJS_VARIABLE_NAMES } = require('../utils');
+const { analyze3dPlot, expressionUsesAnySymbol, extractExpressionVariables } = require('../plot-semantics');
 const { getFfmpegCommand } = require('../runtime');
 const ZERO_TOLERANCE = 1e-9;
 const MAX_CONCURRENT_PLOT3D = Math.max(1, Number(config.bot?.plot3dMaxConcurrency) || 3);
@@ -169,7 +169,7 @@ function normalizeAnimationIdentifier(identifier) {
     if (!identifier) {
         return null;
     }
-    return String(identifier).trim().toLowerCase() || null;
+    return String(identifier).trim() || null;
 }
 
 function mergeEvalScope(opts, localScope = {}) {
@@ -345,14 +345,18 @@ function createDeterministicStreamlineSeeds(xDomain, yDomain, zDomain, count = 1
     return seeds;
 }
 
-function buildVectorDomainMask(semantics, labeledDomains = {}) {
+function buildVectorDomainMask(semantics, labeledDomains = {}, usedRanges = null) {
     if (!semantics || semantics.family !== 'vector') {
         return null;
     }
 
     const coordSystem = semantics.coordSystem || 'cartesian';
     const coordVars = Array.isArray(semantics.coordVars) ? semantics.coordVars : [];
-    const hasOwnRange = (name) => Array.isArray(labeledDomains[name]);
+    const hasOwnRange = (name) => {
+        const exists = Array.isArray(labeledDomains[name]);
+        if (exists && usedRanges) usedRanges.add(name);
+        return exists;
+    };
     const isCartesianField = coordVars.length === 3 && coordVars.every((name, index) => ['x', 'y', 'z'][index] === name);
     const useCartesianX = hasOwnRange('x') ? labeledDomains.x : null;
     const useCartesianY = hasOwnRange('y') ? labeledDomains.y : null;
@@ -373,15 +377,15 @@ function buildVectorDomainMask(semantics, labeledDomains = {}) {
         cylindrical: (cylindricalRho || (coordSystem === 'cylindrical' && (hasOwnRange('theta') || hasOwnRange('z'))))
             ? {
                 rho: cylindricalRho,
-                theta: coordSystem === 'cylindrical' ? labeledDomains.theta || null : null,
-                z: coordSystem === 'cylindrical' ? labeledDomains.z || null : null
+                theta: coordSystem === 'cylindrical' && hasOwnRange('theta') ? labeledDomains.theta : null,
+                z: coordSystem === 'cylindrical' && hasOwnRange('z') ? labeledDomains.z : null
             }
             : null,
         spherical: (sphericalRadius || (coordSystem === 'spherical' && (hasOwnRange('theta') || hasOwnRange('phi'))))
             ? {
                 radius: sphericalRadius,
-                theta: coordSystem === 'spherical' ? labeledDomains.theta || null : null,
-                phi: coordSystem === 'spherical' ? labeledDomains.phi || null : null
+                theta: coordSystem === 'spherical' && hasOwnRange('theta') ? labeledDomains.theta : null,
+                phi: coordSystem === 'spherical' && hasOwnRange('phi') ? labeledDomains.phi : null
             }
             : null
     };
@@ -555,6 +559,7 @@ function resolvePlot3dDomains({
     }
 
     const labeled = customOptions.labeledDomains || {};
+    const usedRanges = new Set();
     let positionalConsumed = 0;
     const providedDomains = { x: false, y: false, z: false };
 
@@ -562,6 +567,7 @@ function resolvePlot3dDomains({
         const names = Array.isArray(varNames) ? varNames : [varNames];
         for (const name of names) {
             if (labeled[name]) {
+                usedRanges.add(name);
                 if (['x', 'y', 'z'].includes(name)) {
                     providedDomains[name] = true;
                 }
@@ -680,7 +686,8 @@ function resolvePlot3dDomains({
         parameterDomain2,
         evolutionDomain,
         providedDomains,
-        traceDomainMap
+        traceDomainMap,
+        usedRanges
     };
 }
 
@@ -696,80 +703,6 @@ function toReal(val) {
         return val.toNumber ? val.toNumber() : NaN;
     }
     return typeof val === 'number' ? val : NaN;
-}
-
-// Preprocess expression to insert implicit multiplications for variables
-function preprocessExpr(expr) {
-    if (!expr) return '';
-
-    const symbols = new Set(['x', 'y', 'z', 'u', 'v', 't']);
-    const isIdentifierChar = (char) => /[A-Za-z0-9_]/.test(char);
-    let result = '';
-    let inQuotes = false;
-    let quoteChar = null;
-
-    for (let i = 0; i < expr.length; i++) {
-        const char = expr[i];
-
-        if (inQuotes) {
-            result += char;
-            if (char === '\\' && i + 1 < expr.length) {
-                result += expr[i + 1];
-                i++;
-            } else if (char === quoteChar) {
-                inQuotes = false;
-                quoteChar = null;
-            }
-            continue;
-        }
-
-        if (char === '"' || char === '\'') {
-            inQuotes = true;
-            quoteChar = char;
-            result += char;
-            continue;
-        }
-
-        result += char;
-
-        if (!symbols.has(char.toLowerCase())) {
-            continue;
-        }
-
-        const prevChar = i > 0 ? expr[i - 1] : '';
-        if (prevChar && isIdentifierChar(prevChar)) {
-            let skip = true;
-            let nextIndex = i + 1;
-            while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
-                nextIndex++;
-            }
-            if (nextIndex < expr.length && symbols.has(expr[nextIndex].toLowerCase())) {
-                skip = false;
-            }
-            if (/\d/.test(prevChar)) {
-                skip = false;
-            }
-            if (skip) {
-                continue;
-            }
-        }
-
-        let nextIndex = i + 1;
-        while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
-            nextIndex++;
-        }
-
-        if (nextIndex >= expr.length) {
-            continue;
-        }
-
-        const nextChar = expr[nextIndex];
-        if (symbols.has(nextChar.toLowerCase()) || nextChar === '(') {
-            result += '*';
-        }
-    }
-
-    return result;
 }
 
 function parseVectorTuple(expr, expectedDimension = null) {
@@ -808,7 +741,7 @@ function parseNamedVectorField(expr) {
 
     return {
         name: match[1],
-        vars: match[2].split(',').map(v => v.trim().toLowerCase()),
+        vars: match[2].split(',').map(v => v.trim()),
         components
     };
 }
@@ -862,9 +795,9 @@ function getCoordinateSystem(expr, components = null) {
 function sampleVectorField3d(components, opts, coordSystem = 'cartesian', coordVars = ['x', 'y', 'z']) {
     const [xExpr, yExpr, zExpr] = components;
     const [xVar, yVar, zVar] = coordVars;
-    const xCompiled = math.compile(preprocessExpr(xExpr));
-    const yCompiled = math.compile(preprocessExpr(yExpr));
-    const zCompiled = math.compile(preprocessExpr(zExpr));
+    const xCompiled = math.compile(xExpr);
+    const yCompiled = math.compile(yExpr);
+    const zCompiled = math.compile(zExpr);
     const vectorDomainMask = opts.vectorDomainMask || null;
 
     const [d1Min, d1Max] = opts.xDomain;
@@ -982,9 +915,9 @@ function sampleVectorField3d(components, opts, coordSystem = 'cartesian', coordV
 function sampleFluxLines3d(components, opts, coordSystem = 'cartesian', coordVars = ['x', 'y', 'z']) {
     const [xExpr, yExpr, zExpr] = components;
     const [xVar, yVar, zVar] = coordVars;
-    const xCompiled = math.compile(preprocessExpr(xExpr));
-    const yCompiled = math.compile(preprocessExpr(yExpr));
-    const zCompiled = math.compile(preprocessExpr(zExpr));
+    const xCompiled = math.compile(xExpr);
+    const yCompiled = math.compile(yExpr);
+    const zCompiled = math.compile(zExpr);
     const vectorDomainMask = opts.vectorDomainMask || null;
 
     const evalVectorField = (x, y, z) => {
@@ -1431,7 +1364,7 @@ function buildExplicitSurfaceFromLinearAxis(combinedExpr, opts, providedDomains 
 }
 
 function sampleExplicitPlaneCurve3d(rhsExpr, independentVar, dependentVar, opts) {
-    const compiled = math.compile(preprocessExpr(rhsExpr));
+    const compiled = math.compile(rhsExpr);
     const [xMin, xMax] = opts.xDomain;
     const [yMin, yMax] = opts.yDomain;
     const steps = 400;
@@ -1504,7 +1437,7 @@ function sampleExplicitPlaneCurve3d(rhsExpr, independentVar, dependentVar, opts)
 }
 
 function samplePolarPlaneCurve3d(rhsExpr, angleVar, opts) {
-    const compiled = math.compile(preprocessExpr(rhsExpr));
+    const compiled = math.compile(rhsExpr);
     const [thetaMin, thetaMax] = opts.parameterDomain1 || [0, 2 * Math.PI];
     const steps = 500;
     const step = (thetaMax - thetaMin) / steps;
@@ -1540,7 +1473,7 @@ function samplePolarPlaneCurve3d(rhsExpr, angleVar, opts) {
 }
 
 function sampleImplicitPlaneCurve3d(lhsExpr, rhsExpr, coordVars, opts, extraScope = () => ({})) {
-    const combined = `(${preprocessExpr(lhsExpr)}) - (${preprocessExpr(rhsExpr)})`;
+    const combined = `(${lhsExpr}) - (${rhsExpr})`;
     const compiled = math.compile(combined);
     const [xVar, yVar] = coordVars;
     const [xMin, xMax] = opts.xDomain;
@@ -1801,9 +1734,9 @@ function buildPlot3dScene(context, opts) {
         type = 'surface';
         const [xExpr, yExpr, zExpr] = semantics.components.map((value) => value.trim());
         const [uVar, vVar] = semantics.paramVars;
-        const xCompiled = math.compile(preprocessExpr(xExpr));
-        const yCompiled = math.compile(preprocessExpr(yExpr));
-        const zCompiled = math.compile(preprocessExpr(zExpr));
+        const xCompiled = math.compile(xExpr);
+        const yCompiled = math.compile(yExpr);
+        const zCompiled = math.compile(zExpr);
 
         const [uMin, uMax] = parameterDomain1;
         const [vMin, vMax] = parameterDomain2;
@@ -1885,7 +1818,7 @@ function buildPlot3dScene(context, opts) {
 
     if (semantics.family === 'surface-polar') {
         type = 'surface';
-        const rCompiled = math.compile(preprocessExpr(semantics.rhs));
+        const rCompiled = math.compile(semantics.rhs);
         const [uVar, vVar] = semantics.paramVars;
         const [uMin, uMax] = parameterDomain1;
         const [vMin, vMax] = parameterDomain2;
@@ -1985,9 +1918,9 @@ function buildPlot3dScene(context, opts) {
         type = 'curve';
         const [xExpr, yExpr, zExpr] = semantics.components.map((value) => value.trim());
         const paramVar = semantics.paramVar;
-        const xCompiled = math.compile(preprocessExpr(xExpr));
-        const yCompiled = math.compile(preprocessExpr(yExpr));
-        const zCompiled = math.compile(preprocessExpr(zExpr));
+        const xCompiled = math.compile(xExpr);
+        const yCompiled = math.compile(yExpr);
+        const zCompiled = math.compile(zExpr);
 
         const [tMin, tMax] = parameterDomain1 || [0, 2 * Math.PI];
         const steps = 250;
@@ -2139,7 +2072,7 @@ function buildPlot3dScene(context, opts) {
     if (semantics.family === 'surface-implicit') {
         const lhs = semantics.lhs;
         const rhs = semantics.rhs;
-        const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+        const combined = `(${lhs}) - (${rhs})`;
         const projectedSurface = buildExplicitSurfaceFromLinearAxis(combined, opts, providedDomains);
 
         if (projectedSurface) {
@@ -2406,7 +2339,7 @@ function buildPlot3dScene(context, opts) {
     const lhs = semantics.lhs || 'z';
     const rhs = semantics.rhs;
     const [surfaceVarX, surfaceVarY] = semantics.surfaceVars || ['x', 'y'];
-    const compiled = math.compile(preprocessExpr(rhs));
+    const compiled = math.compile(rhs);
     const xMin = opts.xDomain[0];
     const xMax = opts.xDomain[1];
     const yMin = opts.yDomain[0];
@@ -2521,6 +2454,21 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
         const isTracingMode = evolutionRequested && traceVars.includes(evolutionVar);
         const hasEvolutionSweep = evolutionRequested && !isTracingMode;
+        const semanticVariables = [
+            ...(semantics.coordVars || []), ...(semantics.surfaceVars || []), ...(semantics.paramVars || []),
+            semantics.paramVar, semantics.angleVar, semantics.independentVar, semantics.dependentVar
+        ].filter(Boolean);
+        const expressionSources = [expr, semantics.lhs, semantics.rhs, ...(semantics.components || [])].filter(Boolean);
+        const boundVariables = new Set([...semanticVariables, evolutionVar, 'x', 'y', 'z'].filter(Boolean));
+        const unboundBuiltin = expressionSources.flatMap((source) => extractExpressionVariables(source))
+            .find((name) => MATHJS_VARIABLE_NAMES.has(name) && !boundVariables.has(name));
+        if (unboundBuiltin) {
+            return { success: false, error: `Variable "${unboundBuiltin}" has no value or plot axis.` };
+        }
+        if (hasEvolutionSweep && !semanticVariables.includes(evolutionVar) &&
+            !expressionSources.some((source) => extractExpressionVariables(source).includes(evolutionVar))) {
+            return { success: false, error: `Animation variable "${evolutionVar}" is not used by this plot.` };
+        }
         const domainInfo = resolvePlot3dDomains({
             customOptions,
             domains,
@@ -2553,8 +2501,13 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
         }
 
         const vectorDomainMask = semantics.family === 'vector'
-            ? buildVectorDomainMask(semantics, customOptions.labeledDomains || {})
+            ? buildVectorDomainMask(semantics, customOptions.labeledDomains || {}, domainInfo.usedRanges)
             : null;
+        const unusedRanges = Object.keys(customOptions.labeledDomains || {})
+            .filter((name) => !domainInfo.usedRanges || !domainInfo.usedRanges.has(name));
+        if (unusedRanges.length) {
+            return { success: false, error: `Range ${unusedRanges.join(', ')} is not used by this plot.` };
+        }
         const vectorSeedBox = semantics.family === 'vector'
             ? resolveVectorSeedBox(domainInfo, customOptions, semantics, vectorDomainMask)
             : null;
@@ -2573,6 +2526,7 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             xLim: customOptions.xlim || undefined,
             yLim: customOptions.ylim || undefined,
             zLim: customOptions.zlim || undefined,
+            axisTitles: customOptions.axisTitles,
             isAnimated: cameraAnimationRequested || evolutionRequested,
             isCameraAnimated: cameraAnimationRequested,
             isEvolutionAnimated: evolutionRequested,
@@ -2616,8 +2570,8 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
 
         if (isSeparableImplicit) {
             try {
-                plotContext.lhsCompiled = math.compile(preprocessExpr(semantics.lhs));
-                plotContext.rhsCompiled = math.compile(preprocessExpr(semantics.rhs));
+                plotContext.lhsCompiled = math.compile(semantics.lhs);
+                plotContext.rhsCompiled = math.compile(semantics.rhs);
                 
                 const coarseSteps = baseOpts.isEvolutionAnimated
                     ? Math.max(12, Math.floor(DEFAULT_IMPLICIT_SURFACE_COARSE_STEPS / 2))
@@ -2721,9 +2675,10 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                         return { success: false, error: scene.error };
                     }
 
-                    const frameLatex = hasEvolutionSweep
+                    let frameLatex = hasEvolutionSweep
                         ? appendEvolutionLatex(scene.latexText, evolutionVar, evolutionValue)
                         : scene.latexText;
+                    if (customOptions.seriesTruncated) frameLatex += '\\quad\\text{(truncated series)}';
 
                     const renderResult = await page.evaluate((lat, t, pData, opt, shouldReusePlot) => {
                         return window.renderGraph3d(lat, t, pData, opt, shouldReusePlot);
@@ -2837,9 +2792,10 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
                 if (finalZDomain) item.frameOpts.zDomain = finalZDomain;
                 if (finalAspectRatio) item.frameOpts.aspectratio = finalAspectRatio;
 
-                const frameLatex = hasEvolutionSweep
+                let frameLatex = hasEvolutionSweep
                     ? appendEvolutionLatex(item.scene.latexText, evolutionVar, item.evolutionValue)
                     : item.scene.latexText;
+                if (customOptions.seriesTruncated) frameLatex += '\\quad\\text{(truncated series)}';
 
                 const renderResult = await page.evaluate((lat, t, pData, opt, shouldReusePlot) => {
                     return window.renderGraph3d(lat, t, pData, opt, shouldReusePlot);
@@ -2897,9 +2853,10 @@ async function renderPlot3d(rawExpr, customOptions = {}) {
             opts.aspectratio = buildAspectRatioFromDomains(opts.xDomain, opts.yDomain, opts.zDomain);
         }
 
+        const displayLatex = scene.latexText + (customOptions.seriesTruncated ? '\\quad\\text{(truncated series)}' : '');
         const renderResult = await page.evaluate((lat, t, pData, opt) => {
             return window.renderGraph3d(lat, t, pData, opt);
-        }, scene.latexText, scene.type, scene.plotData, opts);
+        }, displayLatex, scene.type, scene.plotData, opts);
 
         if (!renderResult.success) {
             return { success: false, error: renderResult.error };
@@ -2986,6 +2943,7 @@ module.exports = {
         buildVectorDomainMask,
         createDeterministicStreamlineSeeds,
         getPlot3dTraceVariables,
+        normalizeAnimationIdentifier,
         pointPassesVectorDomainMask,
         resolveVectorSeedBox
     }

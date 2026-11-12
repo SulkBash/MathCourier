@@ -17,16 +17,9 @@ async function solvePde(inputStr) {
     // Join body, ic, and bc with semicolons for python pde_solver
     const combinedText = `${body}; ${ic}; ${bc}`;
 
-    // Find ranges for space x and time t
-    const xRange = parsed.ranges.find(r => r.name === 'x') || parsed.ranges.find(r => r.name !== 't') || parsed.ranges[0];
-    const tRange = parsed.ranges.find(r => r.name === 't') || parsed.ranges.find(r => r !== xRange) || parsed.ranges[1];
-
     const payload = {
         text: combinedText,
-        x_min: xRange ? xRange.min : null,
-        x_max: xRange ? xRange.max : null,
-        t_min: tRange ? tRange.min : null,
-        t_max: tRange ? tRange.max : null
+        named_ranges: Object.fromEntries(parsed.ranges.map((range) => [range.name, [range.min, range.max]]))
     };
 
     const pyScriptPath = path.join(__dirname, '../../python/', 'pde_solver.py');
@@ -35,6 +28,9 @@ async function solvePde(inputStr) {
     if (!response.success) {
         return response;
     }
+
+    const xRange = parsed.ranges.find((range) => range.name === response.spatial_variable);
+    const tRange = parsed.ranges.find((range) => range.name === response.temporal_variable);
 
     // Attach domains
     if (xRange) {

@@ -3,6 +3,42 @@ const solver = require('../src/solver');
 
 const cases = [
     {
+        name: 'A multi-letter variable stays whole in the local solver',
+        input: 'xy=4',
+        expectSuccess: true,
+        latexIncludes: ['xy = 4']
+    },
+    {
+        name: 'A multi-letter variable stays whole in the symbolic solver',
+        input: 'xy=4 domain:real',
+        expectSuccess: true,
+        latexIncludes: ['xy = 4']
+    },
+    {
+        name: 'Explicit multiplication remains distinct from a multi-letter name',
+        input: 'x*y=4 vars:x assume:{y>0}',
+        expectSuccess: true,
+        latexIncludes: ['\\frac{4}{y}', 'y>0']
+    },
+    {
+        name: 'Uppercase E remains a variable in the local solver',
+        input: 'E=4',
+        expectSuccess: true,
+        latexIncludes: ['E = 4']
+    },
+    {
+        name: 'Uppercase E remains a variable in the symbolic solver',
+        input: 'E=4 domain:real',
+        expectSuccess: true,
+        latexIncludes: ['E = 4']
+    },
+    {
+        name: 'A second symbol cannot become a hidden built-in constant',
+        input: 'E+x=4',
+        expectSuccess: false,
+        errorIncludes: ['Multiple variables detected: E, x']
+    },
+    {
         name: 'Linear system',
         input: 'x + y = 5; x - y = 1',
         expectSuccess: true,
@@ -20,6 +56,13 @@ const cases = [
         input: 'x^2 - 5*x + 6 = 0',
         expectSuccess: true,
         latexIncludes: ['x_1 = 3', 'x_2 = 2']
+    },
+    {
+        name: 'Absolute-value equation returns both roots',
+        input: 'abs(x) = 1',
+        expectSuccess: true,
+        latexIncludes: ['\\left\\{-1, 1\\right\\}', 'Only real solutions shown'],
+        latexExcludes: ['\\approx']
     },
     {
         name: 'Complex roots',
@@ -64,6 +107,98 @@ const cases = [
         latexIncludes: ['Contradiction (no solution)']
     },
     {
+        name: 'Constant systems check every statement',
+        input: '1 = 1; 1 = 0',
+        expectSuccess: true,
+        latexIncludes: ['Contradiction (no solution)'],
+        latexExcludes: ['Tautology']
+    },
+    {
+        name: 'Small nonzero constants are not treated as zero',
+        input: '1e-12 = 0',
+        expectSuccess: true,
+        latexIncludes: ['Contradiction (no solution)']
+    },
+    {
+        name: 'Decimal equality uses exact arithmetic',
+        input: '0.1 + 0.2 = 0.3',
+        expectSuccess: true,
+        latexIncludes: ['Tautology (always true)']
+    },
+    {
+        name: 'Undefined constant expression is rejected',
+        input: '0/0 = 0',
+        expectSuccess: false,
+        errorIncludes: ['undefined or non-finite']
+    },
+    {
+        name: 'Undefined values are rejected alongside small constants',
+        input: '0/0 = 1e-12',
+        expectSuccess: false,
+        errorIncludes: ['undefined or non-finite']
+    },
+    {
+        name: 'Small linear solutions remain nonzero',
+        input: '1e-12*x = 1e-24',
+        expectSuccess: true,
+        latexIncludes: ['x = \\frac{1}{1000000000000}']
+    },
+    {
+        name: 'Small quadratic roots remain distinct',
+        input: 'x^2 = 1e-24',
+        expectSuccess: true,
+        latexIncludes: ['- \\frac{1}{1000000000000}', '\\frac{1}{1000000000000}']
+    },
+    {
+        name: 'Small imaginary roots remain complex',
+        input: 'x^2 + 1e-24 = 0',
+        expectSuccess: true,
+        latexIncludes: ['- \\frac{i}{1000000000000}', '\\frac{i}{1000000000000}']
+    },
+    {
+        name: 'Cancelled denominators cannot introduce roots',
+        input: '(x-1)^2 / (x-1) = 0',
+        expectSuccess: true,
+        latexIncludes: ['\\frac{\\left(x - 1\\right)^{2}}{x - 1}', 'No solution']
+    },
+    {
+        name: 'Explicit variable still excludes a cancelled denominator',
+        input: '(x-1)^2 / (x-1) = 0 vars:x',
+        expectSuccess: true,
+        latexIncludes: ['No solution']
+    },
+    {
+        name: 'Rational identity excludes its undefined point',
+        input: 'x/x = 1',
+        expectSuccess: true,
+        latexIncludes: ['\\frac{x}{x}', '\\mathbb{C}', '\\setminus \\left\\{0\\right\\}'],
+        latexExcludes: ['Tautology']
+    },
+    {
+        name: 'Rational inequalities exclude undefined points',
+        input: 'x/x > 0',
+        expectSuccess: true,
+        latexIncludes: ['\\left(-\\infty, 0\\right)', '\\left(0, \\infty\\right)']
+    },
+    {
+        name: 'Negative powers retain their excluded point',
+        input: 'x * x^(-1) = 1',
+        expectSuccess: true,
+        latexIncludes: ['\\mathbb{C}', '\\setminus \\left\\{0\\right\\}']
+    },
+    {
+        name: 'Systems reject candidates at an excluded point',
+        input: 'x/x + y = 1; x = 0',
+        expectSuccess: true,
+        latexIncludes: ['No solution']
+    },
+    {
+        name: 'Systems retain valid candidates with a rational term',
+        input: 'x/x + y = 1; x = 2',
+        expectSuccess: true,
+        latexIncludes: ['x = 2', 'y = 0']
+    },
+    {
         name: 'Logarithmic exact solve',
         input: 'ln(x) - 1 = 0',
         expectSuccess: true,
@@ -73,7 +208,7 @@ const cases = [
         name: 'Exponential exact solve',
         input: 'exp(x) - 2 = 0',
         expectSuccess: true,
-        latexIncludes: ['x = \\log{\\left(2 \\right)}']
+        latexIncludes: ['\\log{\\left(2 \\right)}', 'n \\in \\mathbb{Z}']
     },
     {
         name: 'Derivative helper inside equation',
@@ -85,7 +220,7 @@ const cases = [
         name: 'Integral helper inside equation',
         input: 'integ("t^2", "t:[0, x]") - 9 = 0',
         expectSuccess: true,
-        latexIncludes: ['\\int\\limits_{0}^{x} t^{2}\\, dt - 9 = 0', 'x = 3']
+        latexIncludes: ['\\int\\limits_{0}^{x} t^{2}\\, dt - 9 = 0', '\\left\\{3,', '\\sqrt{3} i']
     },
     {
         name: 'Positional definite integ helper syntax is rejected',
@@ -102,7 +237,7 @@ const cases = [
     },
     {
         name: 'Variable isolation for temperature',
-        input: 'PV = nRT vars:T',
+        input: 'P*V = n*R*T vars:T',
         expectSuccess: true,
         latexIncludes: ['T = \\frac{P V}{R n}']
     },
@@ -182,6 +317,24 @@ const cases = [
         latexIncludes: ['\\cos{\\left(2 x \\right)}']
     },
     {
+        name: 'Symbolic transformation function',
+        input: 'factor(x^2 - 1) mode:simplify',
+        expectSuccess: true,
+        latexIncludes: ['\\left(x - 1\\right)', '\\left(x + 1\\right)']
+    },
+    {
+        name: 'Symbolic special function',
+        input: 'LambertW(x) mode:simplify',
+        expectSuccess: true,
+        latexIncludes: ['W\\left(x\\right)']
+    },
+    {
+        name: 'Unicode symbols survive the Python bridge',
+        input: '\u03b8 + 1 mode:simplify',
+        expectSuccess: true,
+        latexIncludes: ['\u03b8 + 1']
+    },
+    {
         name: 'Calculus simplification mode',
         input: 'deriv[x^3, x] - integ[2*x, x] mode:simplify',
         expectSuccess: true,
@@ -198,7 +351,7 @@ const cases = [
         name: 'Helpful error for unspecified target variable',
         input: 'PV = nRT',
         expectSuccess: false,
-        errorIncludes: ['Multiple variables detected: P, R, T, V, n. Please specify vars:<variable>.']
+        errorIncludes: ['Multiple variables detected: PV, nRT. Please specify vars:<variable>.']
     }
 ];
 

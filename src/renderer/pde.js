@@ -192,6 +192,11 @@ async function renderPde(pdeRes, customOptions = {}, renderPage = null) {
             xDomain: pdeRes.xDomain,
             yDomain: pdeRes.tDomain,
             zDomain,
+            axisTitles: {
+                x: pdeRes.spatial_variable || 'x',
+                y: pdeRes.temporal_variable || 't',
+                z: pdeRes.dependent_variable || 'u'
+            },
             latexText: pdeRes.pde_latex,
             isAnimated: customOptions.isAnimated,
             animationMode: customOptions.animationMode,

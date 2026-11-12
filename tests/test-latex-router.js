@@ -74,6 +74,14 @@ async function run() {
         assert.deepStrictEqual(calls, [{ fn: 'renderTikz', body: 'x^2 + y^2 = 1' }]);
         console.log('PASS: mode:tikz overrides default formula routing');
     }
+    {
+        const { handleLatexCommand, calls } = loadLatexRouter();
+        const result = await handleLatexCommand('x^2 view:3d');
+        assert.strictEqual(result.success, false);
+        assert.match(result.error, /view.*not supported/i);
+        assert.deepStrictEqual(calls, []);
+        console.log('PASS: Irrelevant options are rejected instead of discarded');
+    }
 
     console.log('=== LATEX ROUTER TESTS PASSED ===');
 }

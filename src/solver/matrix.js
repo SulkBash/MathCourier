@@ -2,9 +2,6 @@ const math = require('../math');
 const { splitTopLevel, buildLatex } = require('../utils');
 const { formatExactScalarTex, simplifyRealVectorDirection } = require('./exact-format');
 
-const ZERO_EPSILON = 1e-10;
-
-
 function placeholderLabel(index) {
     let label = '';
     let value = index;
@@ -26,12 +23,13 @@ function normalizeNumber(value) {
         return value;
     }
 
-    if (Math.abs(value) < ZERO_EPSILON) {
+    if (value === 0) {
         return 0;
     }
 
     const rounded = Math.round(value);
-    if (Math.abs(value - rounded) < ZERO_EPSILON) {
+    const roundingNoise = Number.EPSILON * Math.max(1, Math.abs(value)) * 4;
+    if (rounded !== 0 && Math.abs(value - rounded) <= roundingNoise) {
         return rounded;
     }
 
@@ -72,19 +70,6 @@ function scalarMagnitude(value) {
     } catch (_) {
         return Number.NaN;
     }
-}
-
-function isNearZero(value) {
-    if (typeof value === 'number') {
-        return Math.abs(value) < ZERO_EPSILON;
-    }
-
-    if (value && value.isComplex) {
-        return Math.abs(value.re) < ZERO_EPSILON && Math.abs(value.im) < ZERO_EPSILON;
-    }
-
-    const magnitude = scalarMagnitude(value);
-    return Number.isFinite(magnitude) ? magnitude < ZERO_EPSILON : false;
 }
 
 function toMatrixRows(matrixLike, options = {}) {
@@ -207,7 +192,7 @@ function parseMatrixLiteral(literal) {
                 throw new Error('Matrix entries must evaluate to scalar values.');
             }
 
-            valueRow.push(normalizeScalar(value));
+            valueRow.push(value);
             texRow.push(node.toTex());
         });
 
@@ -272,13 +257,18 @@ function extractMatrixLiterals(input) {
 }
 
 function computeRref(matrixLike) {
-    const rows = toMatrixRows(matrixLike).map((row) => row.map(normalizeScalar));
+    const rows = toMatrixRows(matrixLike).map((row) => [...row]);
     if (rows.length === 0 || rows[0].length === 0) {
         throw new Error('RREF requires a non-empty matrix.');
     }
 
     const rowCount = rows.length;
     const columnCount = rows[0].length;
+    // Initial entries are meaningful even when tiny. Track error introduced by
+    // row operations so cancellation noise can be distinguished from input.
+    const errors = rows.map((row) => row.map(() => 0));
+    const roundoff = Number.EPSILON * 4;
+    const isEffectivelyZero = (value, error) => scalarMagnitude(value) <= error;
     let lead = 0;
 
     for (let rowIndex = 0; rowIndex < rowCount && lead < columnCount; rowIndex++) {
@@ -287,13 +277,14 @@ function computeRref(matrixLike) {
 
         for (let candidate = rowIndex; candidate < rowCount; candidate++) {
             const magnitude = scalarMagnitude(rows[candidate][lead]);
-            if (Number.isFinite(magnitude) && magnitude > bestMagnitude + ZERO_EPSILON) {
+            if (Number.isFinite(magnitude) && magnitude > bestMagnitude &&
+                !isEffectivelyZero(rows[candidate][lead], errors[candidate][lead])) {
                 bestMagnitude = magnitude;
                 pivotRow = candidate;
             }
         }
 
-        if (bestMagnitude < ZERO_EPSILON) {
+        if (bestMagnitude === 0) {
             lead++;
             rowIndex--;
             continue;
@@ -303,10 +294,22 @@ function computeRref(matrixLike) {
             const tmp = rows[rowIndex];
             rows[rowIndex] = rows[pivotRow];
             rows[pivotRow] = tmp;
+            [errors[rowIndex], errors[pivotRow]] = [errors[pivotRow], errors[rowIndex]];
         }
 
         const pivotValue = rows[rowIndex][lead];
-        rows[rowIndex] = rows[rowIndex].map((entry) => normalizeScalar(math.divide(entry, pivotValue)));
+        const pivotMagnitude = scalarMagnitude(pivotValue);
+        const pivotError = errors[rowIndex][lead];
+        rows[rowIndex] = rows[rowIndex].map((entry, columnIndex) => {
+            const quotient = math.divide(entry, pivotValue);
+            const quotientMagnitude = scalarMagnitude(quotient);
+            errors[rowIndex][columnIndex] =
+                (errors[rowIndex][columnIndex] + quotientMagnitude * pivotError) / pivotMagnitude +
+                roundoff * quotientMagnitude;
+            return quotient;
+        });
+        rows[rowIndex][lead] = 1;
+        errors[rowIndex][lead] = 0;
 
         for (let otherRow = 0; otherRow < rowCount; otherRow++) {
             if (otherRow === rowIndex) {
@@ -314,20 +317,33 @@ function computeRref(matrixLike) {
             }
 
             const factor = rows[otherRow][lead];
-            if (isNearZero(factor)) {
+            const factorError = errors[otherRow][lead];
+            if (isEffectivelyZero(factor, factorError)) {
+                rows[otherRow][lead] = 0;
+                errors[otherRow][lead] = 0;
                 continue;
             }
 
             rows[otherRow] = rows[otherRow].map((entry, columnIndex) => {
-                const adjusted = math.subtract(entry, math.multiply(factor, rows[rowIndex][columnIndex]));
-                return normalizeScalar(adjusted);
+                const pivotEntry = rows[rowIndex][columnIndex];
+                const product = math.multiply(factor, pivotEntry);
+                const adjusted = math.subtract(entry, product);
+                errors[otherRow][columnIndex] +=
+                    scalarMagnitude(factor) * errors[rowIndex][columnIndex] +
+                    scalarMagnitude(pivotEntry) * factorError +
+                    roundoff * (scalarMagnitude(entry) + scalarMagnitude(product));
+                return adjusted;
             });
+            rows[otherRow][lead] = 0;
+            errors[otherRow][lead] = 0;
         }
 
         lead++;
     }
 
-    return math.matrix(rows.map((row) => row.map(normalizeScalar)));
+    return math.matrix(rows.map((row, index) => row.map((entry, columnIndex) =>
+        isEffectivelyZero(entry, errors[index][columnIndex]) ? 0 : normalizeScalar(entry)
+    )));
 }
 
 function computeEigenDecomposition(matrixLike) {

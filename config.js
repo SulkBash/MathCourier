@@ -67,6 +67,9 @@ module.exports = {
         whatsappCachePath: process.env.WWEBJS_CACHE_PATH || '.wwebjs_cache',
         rendererCachePath: process.env.RENDERER_CACHE_PATH || path.join('runtime_cache', 'renderer'),
         whatsappClientId: process.env.WWEBJS_CLIENT_ID || null,
+        externalRendererTimeoutMs: 20000,
+        externalRendererMaxResponseBytes: 64 * 1024,
+        externalRendererMaxImageBytes: 10 * 1024 * 1024,
         startupHealthSummary: true
     },
 

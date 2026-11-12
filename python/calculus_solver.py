@@ -3,7 +3,7 @@ import re
 import sys
 
 import sympy
-from sympy.parsing.sympy_parser import parse_expr
+from safe_parser import parse_expr
 
 from math_utils import get_base_local_dict, transformations
 

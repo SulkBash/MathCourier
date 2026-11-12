@@ -5,6 +5,7 @@ import numpy as np
 import scipy.integrate
 import sympy
 from math_utils import get_base_local_dict
+from safe_parser import parse_expr
 
 def split_clauses(text):
     clauses = []
@@ -102,13 +103,13 @@ def detect_variables(clauses):
 def is_constant_expr(expr_str):
     try:
         # Try to parse and evaluate as a constant
-        expr = sympy.sympify(expr_str, locals={'pi': sympy.pi, 'e': sympy.E})
+        expr = parse_expr(expr_str, local_dict={'pi': sympy.pi, 'e': sympy.E})
         return expr.is_number or expr.is_constant()
     except Exception:
         return False
 
 def evaluate_constant(expr_str):
-    expr = sympy.sympify(expr_str, locals={'pi': sympy.pi, 'e': sympy.E})
+    expr = parse_expr(expr_str, local_dict={'pi': sympy.pi, 'e': sympy.E})
     return float(expr.evalf())
 
 def normalize_pde_derivatives(expr_str, dep_var, spatial_var, temporal_var):
@@ -150,6 +151,11 @@ def solve_pde():
 
     # Detect variables
     dep_var, spatial_var, temporal_var, spatial_pos, temporal_pos = detect_variables(clauses)
+    named_ranges = input_data.get("named_ranges") or {}
+    unused_ranges = [name for name in named_ranges if name not in {spatial_var, temporal_var}]
+    if unused_ranges:
+        print(json.dumps({"success": False, "error": "Range " + ", ".join(unused_ranges) + " does not match a PDE spatial or time variable."}))
+        return
     
     # Separate PDE equation from conditions
     pde_eqs = []
@@ -213,11 +219,11 @@ def solve_pde():
         # Parse expression to LHS = RHS (LHS - RHS = 0)
         if '=' in norm_pde:
             parts = norm_pde.split('=')
-            lhs_expr = sympy.parse_expr(parts[0].strip(), local_dict=local_dict)
-            rhs_expr = sympy.parse_expr(parts[1].strip(), local_dict=local_dict)
+            lhs_expr = parse_expr(parts[0].strip(), local_dict=local_dict)
+            rhs_expr = parse_expr(parts[1].strip(), local_dict=local_dict)
             pde_eq = sympy.Eq(lhs_expr, rhs_expr)
         else:
-            parsed = sympy.parse_expr(norm_pde, local_dict=local_dict)
+            parsed = parse_expr(norm_pde, local_dict=local_dict)
             pde_eq = sympy.Eq(parsed, 0)
     except Exception as e:
         print(json.dumps({"success": False, "error": f"Failed to parse PDE: {str(e)}"}))
@@ -246,8 +252,9 @@ def solve_pde():
         return
 
     # 2. Parse Boundaries (BCs) and extract spatial domain [x_min, x_max]
-    x_min_val = input_data.get("x_min")
-    x_max_val = input_data.get("x_max")
+    spatial_range = named_ranges.get(spatial_var)
+    x_min_val = spatial_range[0] if spatial_range else input_data.get("x_min")
+    x_max_val = spatial_range[1] if spatial_range else input_data.get("x_max")
     
     bc_parsed_list = []
     for bc in bcs:
@@ -256,8 +263,8 @@ def solve_pde():
             if '=' not in norm_bc:
                 continue
             lhs, rhs = norm_bc.split('=')
-            lhs_parsed = sympy.parse_expr(lhs.strip(), local_dict=local_dict)
-            rhs_parsed = sympy.parse_expr(rhs.strip(), local_dict=local_dict)
+            lhs_parsed = parse_expr(lhs.strip(), local_dict=local_dict)
+            rhs_parsed = parse_expr(rhs.strip(), local_dict=local_dict)
             
             # Find the constant spatial value in lhs_parsed
             # E.g., u(0, t) -> spatial_val = 0
@@ -321,8 +328,8 @@ def solve_pde():
             if '=' not in norm_ic:
                 continue
             lhs, rhs = norm_ic.split('=')
-            lhs_parsed = sympy.parse_expr(lhs.strip(), local_dict=local_dict)
-            rhs_parsed = sympy.parse_expr(rhs.strip(), local_dict=local_dict)
+            lhs_parsed = parse_expr(lhs.strip(), local_dict=local_dict)
+            rhs_parsed = parse_expr(rhs.strip(), local_dict=local_dict)
             
             # Check if it is u(x, 0) or diff(u, t)(x, 0)
             if isinstance(lhs_parsed, sympy.Function) and lhs_parsed.name == dep_var:
@@ -470,8 +477,9 @@ def solve_pde():
         return
 
     # Solve using solve_ivp
-    t_min_val = input_data.get("t_min")
-    t_max_val = input_data.get("t_max")
+    temporal_range = named_ranges.get(temporal_var)
+    t_min_val = temporal_range[0] if temporal_range else input_data.get("t_min")
+    t_max_val = temporal_range[1] if temporal_range else input_data.get("t_max")
     t_min = float(t_min_val) if t_min_val is not None else 0.0
     t_max = float(t_max_val) if t_max_val is not None else 1.0
 
@@ -526,6 +534,9 @@ def solve_pde():
 
         print(json.dumps({
             "success": True,
+            "dependent_variable": dep_var,
+            "spatial_variable": spatial_var,
+            "temporal_variable": temporal_var,
             "x": x_out,
             "t": t_out,
             "u": u_solution,

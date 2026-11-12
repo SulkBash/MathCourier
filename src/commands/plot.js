@@ -1,5 +1,7 @@
 const renderer = require('../renderer');
-const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
+const { parseCommandSyntax, normalizeAndValidate, validateRouteOptions } = require('../parser');
+const { splitTopLevel } = require('../utils');
+const { expandScientificPlot } = require('../solver/scientific');
 
 const UNSUPPORTED_INLINE_FLAG_RE = /^\s*-[A-Za-z](?:\[[A-Za-z][A-Za-z0-9_]*\]|[A-Za-z0-9_]*)\s+\S/;
 
@@ -20,13 +22,27 @@ async function handlePlotCommand(input) {
     if (!parsed.success) {
         return { success: false, error: parsed.errors.join('\n') };
     }
+    const optionError = validateRouteOptions(parsed,
+        ['view', 'kind', 'animate', 'camera', 'vars', 'xlim', 'ylim', 'zlim'],
+        '!plot', { allowRanges: true });
+    if (optionError) return { success: false, error: optionError };
 
-    const expr = parsed.body;
+    let expr = parsed.body;
     if (!expr) {
         return { success: false, error: 'No expression provided for plotting.' };
     }
 
     const view = parsed.options.view || '2d';
+    if (view === '2d' && parsed.rawOptions.zlim) {
+        return { success: false, error: 'Option "zlim" requires view:3d.' };
+    }
+    if (view === '2d' && splitTopLevel(expr, ',').length > 1 && (parsed.rawOptions.kind || parsed.rawOptions.vars)) {
+        return { success: false, error: 'Options "kind" and "vars" are not supported for overlaid 2D plots; plot each expression separately.' };
+    }
+
+    const expanded = await expandScientificPlot(expr, parsed.ranges);
+    if (!expanded.success) return expanded;
+    expr = expanded.expression;
 
     if (view === '3d') {
         const isAnimated = !!parsed.options.camera || !!parsed.options.animate;
@@ -60,6 +76,7 @@ async function handlePlotCommand(input) {
             labeledDomains,
             kind: parsed.options.kind || undefined,
             variables: parsed.variables.map((entry) => entry.name),
+            seriesTruncated: expanded.seriesTruncated,
             isFlux: true,
             xlim: parsed.options.xlim,
             ylim: parsed.options.ylim,
@@ -82,6 +99,7 @@ async function handlePlotCommand(input) {
         labeledDomains,
         kind: parsed.options.kind || undefined,
         variables: parsed.variables.map((entry) => entry.name),
+        seriesTruncated: expanded.seriesTruncated,
         xlim: parsed.options.xlim,
         ylim: parsed.options.ylim
     };

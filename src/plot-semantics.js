@@ -1,8 +1,7 @@
 const math = require('./math');
-const { splitTopLevel } = require('./utils');
+const { splitTopLevel, isReservedMathSymbol } = require('./utils');
 const { extractInlineDependencies, VECTOR_INLINE_HELPERS } = require('./inline-calculus');
 
-const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
 
 function unique(items) {
     const seen = new Set();
@@ -194,7 +193,7 @@ function extractExpressionVariables(expr) {
                     collectPlainVariables
                 );
                 helperDeps.forEach((name) => {
-                    if (!IGNORED_SYMBOLS.has(name) && !math[name]) {
+                    if (!isReservedMathSymbol(math, name)) {
                         vars.add(name);
                     }
                 });
@@ -207,7 +206,7 @@ function extractExpressionVariables(expr) {
                 return;
             }
             const name = node.name;
-            if (!name || IGNORED_SYMBOLS.has(name) || math[name]) {
+            if (!name || isReservedMathSymbol(math, name)) {
                 return;
             }
             vars.add(name);
@@ -240,20 +239,15 @@ function expressionUsesAnySymbol(expr, symbolNames) {
 }
 
 function inferSingleVariable({ explicitVars = [], rangeNames = [], exprVars = [], preferred = [], fallback = 'x' }) {
-    const pool = unique([
-        ...explicitVars,
-        ...preferred,
-        ...rangeNames,
-        ...exprVars
-    ]);
-
-    for (const candidate of pool) {
-        if (candidate) {
-            return candidate;
-        }
-    }
-
-    return fallback;
+    if (explicitVars.length) return explicitVars[0];
+    const used = new Set(exprVars);
+    const preferredInExpression = preferred.find((name) => used.has(name));
+    if (preferredInExpression) return preferredInExpression;
+    const rangedInExpression = rangeNames.find((name) => used.has(name));
+    if (rangedInExpression) return rangedInExpression;
+    if (exprVars.length) return exprVars[0];
+    const preferredRange = preferred.find((name) => rangeNames.includes(name));
+    return preferredRange || rangeNames[0] || preferred[0] || fallback;
 }
 
 function inferCoordinateVariables({ explicitVars = [], rangeNames = [], exprVars = [], defaults = ['x', 'y'] }) {
@@ -262,7 +256,15 @@ function inferCoordinateVariables({ explicitVars = [], rangeNames = [], exprVars
         return coords;
     }
 
-    const pool = unique([...rangeNames, ...exprVars, ...defaults]);
+    // A range should not invent an unrelated coordinate. Prefer conventional
+    // axes that actually occur, then named expression variables, then defaults.
+    const named = new Set([...rangeNames, ...exprVars]);
+    const pool = unique([
+        ...defaults.filter((name) => named.has(name)),
+        ...rangeNames.filter((name) => exprVars.includes(name)),
+        ...exprVars,
+        ...defaults
+    ]);
     for (const candidate of pool) {
         if (coords.length === defaults.length) {
             break;
@@ -272,12 +274,16 @@ function inferCoordinateVariables({ explicitVars = [], rangeNames = [], exprVars
         }
     }
 
-    return coords.slice(0, defaults.length);
+    const result = coords.slice(0, defaults.length);
+    if (!explicitVars.length && result.every((name) => defaults.includes(name))) {
+        return defaults.filter((name) => result.includes(name));
+    }
+    return result;
 }
 
 function inferCoordinateSystem(varNames = [], expr = '', components = []) {
-    const names = new Set((varNames || []).map((name) => String(name).trim().toLowerCase()).filter(Boolean));
-    const searchText = [expr, ...(components || [])].join(' ').toLowerCase();
+    const names = new Set((varNames || []).map((name) => String(name).trim()).filter(Boolean));
+    const searchText = [expr, ...(components || [])].join(' ');
 
     if (names.has('phi') || (names.has('theta') && names.has('phi')) || /\bphi\b/.test(searchText)) {
         return 'spherical';
@@ -371,7 +377,7 @@ function analyze2dPlot(expr, options = {}) {
         };
     }
 
-    if (kind === 'polar' || (equation && equation.lhs.toLowerCase() === 'r') || (!equation && expressionUsesAnySymbol(text, ['theta']))) {
+    if (kind === 'polar' || (equation && equation.lhs === 'r') || (!equation && expressionUsesAnySymbol(text, ['theta']))) {
         const angleVar = inferSingleVariable({
             explicitVars,
             rangeNames,
@@ -388,7 +394,7 @@ function analyze2dPlot(expr, options = {}) {
             };
         }
 
-        if (equation.lhs.toLowerCase() === 'r') {
+        if (equation.lhs === 'r') {
             return {
                 family: 'polar',
                 lhs: equation.lhs,
@@ -413,14 +419,20 @@ function analyze2dPlot(expr, options = {}) {
             defaults: ['x', 'y']
         });
         const dependentVar = explicitVars[1] || 'y';
-        const explicitMatch = equation.lhs.toLowerCase() === dependentVar.toLowerCase() || /^(y|f\(x\))$/i.test(equation.lhs);
+        const explicitMatch = equation.lhs === dependentVar || /^(y|f\(x\))$/.test(equation.lhs);
 
         if (explicitMatch) {
             return {
                 family: 'explicit',
                 lhs: equation.lhs,
                 rhs: equation.rhs,
-                independentVar: explicitVars[0] || coordVars[0],
+                independentVar: inferSingleVariable({
+                    explicitVars,
+                    rangeNames: rangeNames.filter((name) => name !== dependentVar),
+                    exprVars: extractExpressionVariables(equation.rhs),
+                    preferred: ['x'],
+                    fallback: 'x'
+                }),
                 dependentVar
             };
         }
@@ -495,7 +507,7 @@ function analyze3dPlot(expr, options = {}) {
             };
         }
 
-        if (equation && equation.lhs.toLowerCase() === 'r') {
+        if (equation && equation.lhs === 'r') {
             const coordSystem = inferCoordinateSystem(explicitVars, text);
             const defaults = coordSystem === 'spherical' ? ['theta', 'phi'] : ['theta', 'z'];
             const paramVars = inferCoordinateVariables({
@@ -514,7 +526,7 @@ function analyze3dPlot(expr, options = {}) {
             };
         }
 
-        if (equation && equation.lhs.toLowerCase() !== 'z') {
+        if (equation && equation.lhs !== 'z') {
             return {
                 family: 'surface-implicit',
                 lhs: equation.lhs,
@@ -535,8 +547,8 @@ function analyze3dPlot(expr, options = {}) {
             rhs: equation ? equation.rhs : text,
             surfaceVars: inferCoordinateVariables({
                 explicitVars,
-                rangeNames,
-                exprVars,
+                rangeNames: rangeNames.filter((name) => name !== 'z'),
+                exprVars: equation ? extractExpressionVariables(equation.rhs) : exprVars,
                 defaults: ['x', 'y']
             }).slice(0, 2),
             coordSystem: inferCoordinateSystem(explicitVars, text)
@@ -559,7 +571,7 @@ function analyze3dPlot(expr, options = {}) {
             };
         }
 
-        if (equation && (equation.lhs.toLowerCase() === 'r' || expressionUsesAnySymbol(text, ['theta']))) {
+        if (equation && (equation.lhs === 'r' || expressionUsesAnySymbol(text, ['theta']))) {
             return {
                 family: 'curve-polar-2d',
                 lhs: equation.lhs,
@@ -582,13 +594,19 @@ function analyze3dPlot(expr, options = {}) {
                 defaults: ['x', 'y']
             }).slice(0, 2);
             const dependentVar = explicitVars[1] || 'y';
-            const explicitMatch = equation.lhs.toLowerCase() === dependentVar.toLowerCase() || /^(y|f\(x\))$/i.test(equation.lhs);
+            const explicitMatch = equation.lhs === dependentVar || /^(y|f\(x\))$/.test(equation.lhs);
             if (explicitMatch) {
                 return {
                     family: 'curve-explicit-2d',
                     lhs: equation.lhs,
                     rhs: equation.rhs,
-                    independentVar: explicitVars[0] || coordVars[0],
+                    independentVar: inferSingleVariable({
+                        explicitVars,
+                        rangeNames: rangeNames.filter((name) => name !== dependentVar),
+                        exprVars: extractExpressionVariables(equation.rhs),
+                        preferred: ['x'],
+                        fallback: 'x'
+                    }),
                     dependentVar
                 };
             }
@@ -690,8 +708,8 @@ function analyze3dPlot(expr, options = {}) {
         };
     }
 
-    if (equation && (equation.lhs.toLowerCase() === 'r' || expressionUsesAnySymbol(text, ['theta']))) {
-        if (equation.lhs.toLowerCase() === 'r') {
+    if (equation && (equation.lhs === 'r' || expressionUsesAnySymbol(text, ['theta']))) {
+        if (equation.lhs === 'r') {
             return {
                 family: 'curve-polar-2d',
                 lhs: equation.lhs,
@@ -736,15 +754,20 @@ function analyze3dPlot(expr, options = {}) {
         });
         const coordVars2 = coordVars3.slice(0, 2);
         const dependentVar = explicitVars[1] || 'y';
-        const explicitCurveMatch = equation.lhs.toLowerCase() === dependentVar.toLowerCase() || /^(y|f\(x\))$/i.test(equation.lhs);
+        const explicitCurveMatch = equation.lhs === dependentVar || /^(y|f\(x\))$/.test(equation.lhs);
         const mentionsZ = /\bz\b/.test(text) || coordVars3.includes(equation.lhs);
 
-        if (equation.lhs.toLowerCase() === 'z') {
+        if (equation.lhs === 'z') {
             return {
                 family: 'surface-explicit',
                 lhs: equation.lhs,
                 rhs: equation.rhs,
-                surfaceVars: coordVars2,
+                surfaceVars: inferCoordinateVariables({
+                    explicitVars,
+                    rangeNames: rangeNames.filter((name) => name !== 'z'),
+                    exprVars: extractExpressionVariables(equation.rhs),
+                    defaults: ['x', 'y']
+                }),
                 coordSystem: inferCoordinateSystem(explicitVars, text)
             };
         }
@@ -754,7 +777,13 @@ function analyze3dPlot(expr, options = {}) {
                 family: 'curve-explicit-2d',
                 lhs: equation.lhs,
                 rhs: equation.rhs,
-                independentVar: explicitVars[0] || coordVars2[0],
+                independentVar: inferSingleVariable({
+                    explicitVars,
+                    rangeNames: rangeNames.filter((name) => name !== dependentVar),
+                    exprVars: extractExpressionVariables(equation.rhs),
+                    preferred: ['x'],
+                    fallback: 'x'
+                }),
                 dependentVar
             };
         }

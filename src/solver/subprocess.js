@@ -38,7 +38,9 @@ function runSubprocess(scriptPath, payload) {
             return;
         }
 
-        const pyProcess = spawn(python.command, [...(python.args || []), scriptPath]);
+        const pyProcess = spawn(python.command, [...(python.args || []), scriptPath], {
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
         let timer = null;
 
         pyProcess.on('error', (err) => {

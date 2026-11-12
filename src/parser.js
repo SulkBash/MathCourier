@@ -2,7 +2,7 @@ const math = require('./math');
 const { splitTopLevel } = require('./utils');
 
 // Predefined command keywords that are not range variables
-const KEYWORDS = new Set(['vars', 'kind', 'animate', 'camera', 'mode', 'view', 'ic', 'bc', 'param', 'phase', 'xlim', 'ylim', 'zlim', 'dep']);
+const KEYWORDS = new Set(['vars', 'kind', 'animate', 'camera', 'mode', 'view', 'ic', 'bc', 'param', 'phase', 'xlim', 'ylim', 'zlim', 'dep', 'assume', 'domain', 'coords', 'convention', 'dir']);
 
 /**
  * Parses an input string according to the Command Syntax V2 spec.
@@ -73,7 +73,10 @@ function parseCommandSyntax(input, parseOpts = {}) {
                 const remaining = text.slice(i);
                 const keyColonMatch = remaining.match(/^([a-zA-Z][a-zA-Z0-9_]*)\s*:/);
                 if (keyColonMatch) {
-                    const key = keyColonMatch[1].toLowerCase();
+                    const originalKey = keyColonMatch[1];
+                    const normalizedKey = originalKey.toLowerCase();
+                    // Keywords are case-insensitive; mathematical range names are not.
+                    const key = KEYWORDS.has(normalizedKey) ? normalizedKey : originalKey;
                     const keyLength = keyColonMatch[0].length;
                     
                     // Add preceding text to clean chunks
@@ -220,7 +223,7 @@ function parseCommandSyntax(input, parseOpts = {}) {
                     // Save the raw original token string (for debugging or exact reconstruction)
                     const rawToken = text.slice(i, optionEnd);
 
-                    if (options.hasOwnProperty(key)) {
+                    if (Object.prototype.hasOwnProperty.call(options, key)) {
                         errors.push(`Duplicate option: "${key}"`);
                     } else {
                         rawOptions[key] = rawToken;
@@ -293,7 +296,7 @@ function normalizeAndValidate(parsed, commandName) {
     const normCmd = String(commandName || '').toLowerCase().trim();
 
     // 1. Process variables (`vars`) if present
-    if (parsed.options.hasOwnProperty('vars')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'vars')) {
         const rawVars = parsed.options.vars;
         const varParts = splitTopLevel(rawVars, ',');
         
@@ -324,7 +327,7 @@ function normalizeAndValidate(parsed, commandName) {
     }
 
     // 1.5. Process dependent variables (`dep`) if present
-    if (parsed.options.hasOwnProperty('dep')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'dep')) {
         const rawDep = parsed.options.dep;
         const depParts = splitTopLevel(rawDep, ',');
         const depVars = [];
@@ -350,6 +353,7 @@ function normalizeAndValidate(parsed, commandName) {
             }
 
             const isIntegralCmd = (normCmd === 'integ');
+            const allowsInfiniteBounds = isIntegralCmd || normCmd === 'solve';
             const [minExpr, maxExpr] = val;
             let min, max;
             const evalScope = { inf: Infinity, infinity: Infinity };
@@ -357,7 +361,7 @@ function normalizeAndValidate(parsed, commandName) {
             try {
                 const evalMin = math.evaluate(minExpr, evalScope);
                 const numMin = (evalMin && typeof evalMin.toNumber === 'function') ? evalMin.toNumber() : Number(evalMin);
-                if (typeof numMin === 'number' && !isNaN(numMin)) {
+                if (Number.isFinite(numMin) || (allowsInfiniteBounds && !Number.isNaN(numMin))) {
                     min = numMin;
                 } else if (!isIntegralCmd) {
                     errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
@@ -371,7 +375,7 @@ function normalizeAndValidate(parsed, commandName) {
             try {
                 const evalMax = math.evaluate(maxExpr, evalScope);
                 const numMax = (evalMax && typeof evalMax.toNumber === 'function') ? evalMax.toNumber() : Number(evalMax);
-                if (typeof numMax === 'number' && !isNaN(numMax)) {
+                if (Number.isFinite(numMax) || (allowsInfiniteBounds && !Number.isNaN(numMax))) {
                     max = numMax;
                 } else if (!isIntegralCmd) {
                     errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
@@ -385,6 +389,8 @@ function normalizeAndValidate(parsed, commandName) {
             if (isIntegralCmd || (min !== undefined && max !== undefined)) {
                 if (!isIntegralCmd && min >= max) {
                     errors.push(`Range minimum (${min}) must be less than maximum (${max}) for variable "${key}".`);
+                } else if (!allowsInfiniteBounds && !Number.isFinite(max - min)) {
+                    errors.push(`Range for variable "${key}" is too wide to sample.`);
                 } else {
                     ranges.push({ name: key, min, max, minExpr, maxExpr });
                     normalizedOptions[key] = { min, max, minExpr, maxExpr };
@@ -395,7 +401,7 @@ function normalizeAndValidate(parsed, commandName) {
 
     // 3. Process view (allowed: '2d', '3d')
     let view = (normCmd === 'pde') ? '3d' : '2d';
-    if (parsed.options.hasOwnProperty('view')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'view')) {
         const val = String(parsed.options.view).toLowerCase().trim();
         if (val === '2d' || val === '3d') {
             view = val;
@@ -406,7 +412,7 @@ function normalizeAndValidate(parsed, commandName) {
     normalizedOptions.view = view;
 
     // 4. Process mode (allowed values depend on command)
-    if (parsed.options.hasOwnProperty('mode')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'mode')) {
         const val = String(parsed.options.mode).toLowerCase().trim();
         const differentialModes = new Set(['hybrid', 'sym', 'num']);
         const solveModes = new Set(['factor', 'expand', 'simplify', 'hybrid', 'sym', 'num']);
@@ -434,7 +440,7 @@ function normalizeAndValidate(parsed, commandName) {
     }
 
     // 5. Process kind (validation depends on commandName and view)
-    if (parsed.options.hasOwnProperty('kind')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'kind')) {
         const val = String(parsed.options.kind).toLowerCase().trim();
         let isValid = false;
 
@@ -462,7 +468,7 @@ function normalizeAndValidate(parsed, commandName) {
     }
 
     // 6. Process camera (allowed format: <axis><angle?> e.g. camera:z360, camera:x)
-    if (parsed.options.hasOwnProperty('camera')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'camera')) {
         const val = String(parsed.options.camera).trim();
         const cameraMatch = val.match(/^([xyz])(\d+)?$/i);
         if (cameraMatch) {
@@ -470,7 +476,8 @@ function normalizeAndValidate(parsed, commandName) {
             const angle = cameraMatch[2] ? parseInt(cameraMatch[2], 10) : null;
             normalizedOptions.camera = { axis, angle };
 
-            if (view !== '3d' && normCmd !== 'pde') {
+            // !solve defers this decision until it knows whether the route is a PDE.
+            if (view !== '3d' && normCmd !== 'pde' && normCmd !== 'solve') {
                 errors.push('Option "camera" is only valid in 3D view (view:3d).');
             }
         } else {
@@ -479,7 +486,7 @@ function normalizeAndValidate(parsed, commandName) {
     }
 
     // 7. Process animate
-    if (parsed.options.hasOwnProperty('animate')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'animate')) {
         const val = String(parsed.options.animate).trim();
         if (/^[a-zA-Z][a-zA-Z0-9_]*$/.test(val)) {
             normalizedOptions.animate = val;
@@ -488,15 +495,44 @@ function normalizeAndValidate(parsed, commandName) {
         }
     }
 
+    // These options cannot be mistaken for labeled numerical ranges.
+    for (const [key, allowed] of Object.entries({
+        domain: ['real', 'complex'],
+        coords: ['cartesian', 'cylindrical', 'spherical'],
+        convention: ['cycles', 'angular'],
+        dir: ['both', 'left', 'right']
+    })) {
+        if (Object.prototype.hasOwnProperty.call(parsed.options, key)) {
+            const value = String(parsed.options[key]).trim().toLowerCase();
+            if (normCmd !== 'solve') {
+                errors.push('Option "' + key + '" is only supported by !solve.');
+            } else if (!allowed.includes(value)) {
+                errors.push('Invalid ' + key + ': expected ' + allowed.join(', ') + '.');
+            } else {
+                normalizedOptions[key] = value;
+            }
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'assume')) {
+        const value = String(parsed.options.assume).trim();
+        if (normCmd !== 'solve') {
+            errors.push('Option "assume" is only supported by !solve.');
+        } else if (!value) {
+            errors.push('Option "assume" cannot be empty.');
+        } else {
+            normalizedOptions.assume = value;
+        }
+    }
+
     // 8. Process other options (ic, bc, param)
     const passThroughKeys = ['ic', 'bc', 'param'];
     for (const key of passThroughKeys) {
-        if (parsed.options.hasOwnProperty(key)) {
+        if (Object.prototype.hasOwnProperty.call(parsed.options, key)) {
             normalizedOptions[key] = String(parsed.options[key]).trim();
         }
     }
 
-    if (parsed.options.hasOwnProperty('phase')) {
+    if (Object.prototype.hasOwnProperty.call(parsed.options, 'phase')) {
         const phaseParts = splitTopLevel(String(parsed.options.phase).trim())
             .map((part) => part.trim())
             .filter(Boolean);
@@ -514,7 +550,7 @@ function normalizeAndValidate(parsed, commandName) {
 
     // 8.5. Process display range options (xlim, ylim, zlim)
     for (const key of ['xlim', 'ylim', 'zlim']) {
-        if (parsed.options.hasOwnProperty(key)) {
+        if (Object.prototype.hasOwnProperty.call(parsed.options, key)) {
             const val = parsed.options[key];
             if (!Array.isArray(val)) {
                 errors.push(`Option "${key}" is expected to be a range option of the form ${key}:[min, max].`);
@@ -528,7 +564,7 @@ function normalizeAndValidate(parsed, commandName) {
             try {
                 const evalMin = math.evaluate(minExpr, evalScope);
                 const numMin = (evalMin && typeof evalMin.toNumber === 'function') ? evalMin.toNumber() : Number(evalMin);
-                if (typeof numMin === 'number' && !isNaN(numMin)) {
+                if (Number.isFinite(numMin)) {
                     min = numMin;
                 } else {
                     errors.push(`Invalid range bound for "${key}": "${minExpr}" does not evaluate to a finite number.`);
@@ -540,7 +576,7 @@ function normalizeAndValidate(parsed, commandName) {
             try {
                 const evalMax = math.evaluate(maxExpr, evalScope);
                 const numMax = (evalMax && typeof evalMax.toNumber === 'function') ? evalMax.toNumber() : Number(evalMax);
-                if (typeof numMax === 'number' && !isNaN(numMax)) {
+                if (Number.isFinite(numMax)) {
                     max = numMax;
                 } else {
                     errors.push(`Invalid range bound for "${key}": "${maxExpr}" does not evaluate to a finite number.`);
@@ -552,6 +588,8 @@ function normalizeAndValidate(parsed, commandName) {
             if (min !== undefined && max !== undefined) {
                 if (min >= max) {
                     errors.push(`Range minimum (${min}) must be less than maximum (${max}) for option "${key}".`);
+                } else if (!Number.isFinite(max - min)) {
+                    errors.push(`Range for option "${key}" is too wide to display.`);
                 } else {
                     normalizedOptions[key] = [min, max];
                 }
@@ -563,11 +601,11 @@ function normalizeAndValidate(parsed, commandName) {
     if (normCmd !== 'deriv' && variables.some((variable) => variable.order !== 1)) {
         errors.push('Option "vars" only supports order markers like x:2 for derivative helpers. Use deriv[...].');
     } else if (normCmd === 'ode') {
-        if (!parsed.options.hasOwnProperty('ic')) {
+        if (!Object.prototype.hasOwnProperty.call(parsed.options, 'ic')) {
             errors.push('Command "!ode" requires initial conditions "ic:{...}".');
         }
     } else if (normCmd === 'pde') {
-        if (!parsed.options.hasOwnProperty('ic') || !parsed.options.hasOwnProperty('bc')) {
+        if (!Object.prototype.hasOwnProperty.call(parsed.options, 'ic') || !Object.prototype.hasOwnProperty.call(parsed.options, 'bc')) {
             errors.push('Command "!pde" requires initial conditions "ic:{...}" and boundary conditions "bc:{...}".');
         }
     }
@@ -576,13 +614,28 @@ function normalizeAndValidate(parsed, commandName) {
         success: errors.length === 0,
         body: parsed.body,
         options: normalizedOptions,
+        rawOptions: parsed.rawOptions || {},
         variables,
         ranges,
         errors
     };
 }
 
+// Check options against the route that will actually consume them. Parsing a
+// recognized keyword is not enough: a keyword can be irrelevant to a route.
+function validateRouteOptions(parsed, allowedKeys, label, { allowRanges = false } = {}) {
+    const allowed = new Set(allowedKeys);
+    const rangeNames = new Set((parsed.ranges || []).map((range) => range.name));
+    const unsupported = Object.keys(parsed.rawOptions || {}).find((key) => (
+        !allowed.has(key) && !(allowRanges && rangeNames.has(key))
+    ));
+    return unsupported
+        ? `Option "${unsupported}" is not supported for ${label}.`
+        : null;
+}
+
 module.exports = {
     parseCommandSyntax,
-    normalizeAndValidate
+    normalizeAndValidate,
+    validateRouteOptions
 };

@@ -1,5 +1,5 @@
 const { create, all } = require('mathjs');
-const { splitTopLevel, preprocessCalculusHelpers } = require('./utils');
+const { splitTopLevel, preprocessCalculusHelpers, isReservedMathSymbol, MATHJS_VARIABLE_NAMES } = require('./utils');
 const {
     LINE_PARAM_PREFERENCES,
     SURFACE_PARAM_PREFERENCES,
@@ -12,10 +12,16 @@ const {
 } = require('./inline-calculus');
 const math = create(all);
 
+// SymPy treats these names as variables. Remove mathjs's implicit numeric
+// defaults so a missing value cannot silently become a different constant.
+for (const name of MATHJS_VARIABLE_NAMES) delete math[name];
+
 function digamma(x) {
+    if (!Number.isFinite(x)) return NaN;
     if (x <= 0) {
-        if (Math.sin(Math.PI * x) === 0) return NaN;
-        return digamma(1 - x) - Math.PI / Math.tan(Math.PI * x);
+        if (Number.isInteger(x)) return NaN;
+        const fractionalPart = x - Math.round(x);
+        return digamma(1 - x) - Math.PI / Math.tan(Math.PI * fractionalPart);
     }
     let shift = 0;
     while (x < 8.0) {
@@ -34,9 +40,30 @@ function polygamma(n, x) {
         n = Number(n);
         x = Number(x);
     }
-    if (isNaN(n) || isNaN(x)) return NaN;
+    if (!Number.isFinite(n) || !Number.isFinite(x)) return NaN;
     if (n < 0 || !Number.isInteger(n)) return NaN;
     if (n === 0) return digamma(x);
+    if (n > 170 || (x <= 0 && Number.isInteger(x))) return NaN;
+
+    if (x < -1000) {
+        // Reflection avoids a recurrence with potentially billions of shifts.
+        // P_0(t) = t, P_(k+1)(t) = -(1 + t^2) P'_k(t).
+        const fractionalPart = x - Math.round(x);
+        const cot = 1 / Math.tan(Math.PI * fractionalPart);
+        let coefficients = [0, 1];
+        for (let order = 0; order < n; order++) {
+            const next = Array(coefficients.length + 1).fill(0);
+            for (let power = 1; power < coefficients.length; power++) {
+                const derivative = power * coefficients[power];
+                next[power - 1] -= derivative;
+                next[power + 1] -= derivative;
+            }
+            coefficients = next;
+        }
+        const cotDerivative = coefficients.reduceRight((value, coefficient) => value * cot + coefficient, 0);
+        const reflected = polygamma(n, 1 - x);
+        return (n % 2 === 0 ? reflected : -reflected) - Math.pow(Math.PI, n + 1) * cotDerivative;
+    }
     
     let shift = 0;
     let tempX = x;
@@ -393,8 +420,7 @@ function extractVarsFromSource(source) {
             }
 
             const name = child.name;
-            const ignored = ['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity'];
-            if (!name || ignored.includes(name) || math[name]) {
+            if (!name || isReservedMathSymbol(math, name)) {
                 return;
             }
 

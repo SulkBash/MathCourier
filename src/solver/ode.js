@@ -17,20 +17,14 @@ async function solveOde(inputStr) {
     const combinedText = `${body}; ${ic}`;
     const mode = parsed.options.mode || 'hybrid';
 
-    // Find range for independent variable (defaults to t or x)
-    const indRange = parsed.ranges.find(r => r.name === 't' || r.name === 'x') || parsed.ranges[0];
-    const xMin = indRange ? indRange.min : null;
-    const xMax = indRange ? indRange.max : null;
-
     const payload = {
         text: combinedText,
         mode: mode,
-        x_min: xMin,
-        x_max: xMax
+        named_ranges: Object.fromEntries(parsed.ranges.map((range) => [range.name, [range.min, range.max]]))
     };
 
     if (parsed.options.phase) {
-        const phaseAxes = parsed.options.phase.map(v => v.trim().toLowerCase());
+        const phaseAxes = parsed.options.phase.map(v => v.trim());
         payload.plot_axes = phaseAxes;
     }
 
@@ -42,8 +36,14 @@ async function solveOde(inputStr) {
 
     // Attach domains to response
     const phaseAxes = payload.plot_axes;
+    const findRange = (name) => parsed.ranges.find((range) => range.name === name);
+    const indRange = findRange(response.independent_variable);
     if (phaseAxes) {
-        if (response.curves && Object.keys(response.curves).length > 0) {
+        const phaseXRange = findRange(phaseAxes[0]);
+        const phaseYRange = findRange(phaseAxes[1]);
+        if (phaseXRange) {
+            response.xDomain = [phaseXRange.min, phaseXRange.max];
+        } else if (response.curves && Object.keys(response.curves).length > 0) {
             const firstCurve = Object.values(response.curves)[0];
             if (firstCurve && firstCurve.length > 0) {
                 const xValues = firstCurve.map(pt => pt.x).filter(v => v !== null && !isNaN(v) && isFinite(v));
@@ -59,6 +59,7 @@ async function solveOde(inputStr) {
         if (!response.xDomain) {
             response.xDomain = [-10, 10];
         }
+        if (phaseYRange) response.yDomain = [phaseYRange.min, phaseYRange.max];
     } else {
         if (indRange) {
             response.xDomain = [indRange.min, indRange.max];
@@ -71,8 +72,8 @@ async function solveOde(inputStr) {
         }
     }
 
-    // Find dependent variable range if any
-    const depRange = parsed.ranges.find(r => r !== indRange);
+    // A normal time-domain plot has one shared vertical display range.
+    const depRange = !phaseAxes && parsed.ranges.find((range) => range !== indRange);
     if (depRange) {
         response.yDomain = [depRange.min, depRange.max];
     }

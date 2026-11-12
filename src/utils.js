@@ -4,7 +4,7 @@
  * @param {string} delimiter 
  * @returns {string[]}
  */
-function splitTopLevel(text, delimiter = ',') {
+function splitTopLevel(text, delimiter = ',', options = {}) {
     const parts = [];
     let current = '';
     let parenDepth = 0;
@@ -75,7 +75,7 @@ function splitTopLevel(text, delimiter = ',') {
             braceDepth === 0
         ) {
             const trimmed = current.trim();
-            if (trimmed) {
+            if (trimmed || options.preserveEmpty) {
                 parts.push(trimmed);
             }
             current = '';
@@ -86,7 +86,7 @@ function splitTopLevel(text, delimiter = ',') {
     }
 
     const tail = current.trim();
-    if (tail) {
+    if (tail || options.preserveEmpty) {
         parts.push(tail);
     }
 
@@ -118,6 +118,14 @@ function formatVarToTex(variableName) {
 }
 
 const INLINE_BRACKET_HELPERS = [
+    'invlaplace',
+    'invfourier',
+    'dimension',
+    'laplace',
+    'fourier',
+    'convert',
+    'series',
+    'limit',
     'gradx',
     'grady',
     'gradz',
@@ -132,8 +140,29 @@ const INLINE_BRACKET_HELPERS = [
     'div'
 ];
 
+// Keep this aligned with python/math_utils.py: other built-in numeric names
+// (such as E, PI, phi, and tau) may be ordinary mathematical variables.
+const RESERVED_MATH_CONSTANTS = new Set(['pi', 'e', 'i', 'inf', 'infinity', 'true', 'false', 'NaN', 'null', 'Infinity']);
+const MATHJS_VARIABLE_NAMES = new Set([
+    'E', 'PI', 'phi', 'tau', 'LN10', 'LN2', 'LOG10E', 'LOG2E', 'SQRT1_2', 'SQRT2',
+    'efimovFactor', 'fineStructure', 'sackurTetrode', 'weakMixingAngle'
+]);
+
+function isReservedMathSymbol(math, name) {
+    return RESERVED_MATH_CONSTANTS.has(name) ||
+        (Object.prototype.hasOwnProperty.call(math, name) && typeof math[name] === 'function');
+}
+
 function quoteMathStringLiteral(value) {
     return JSON.stringify(String(value));
+}
+
+function isHelperBoundary(input, index) {
+    if (index === 0 || !/[A-Za-z0-9_]/.test(input[index - 1])) return true;
+    // Numeric coefficients such as 2deriv[...] are multiplication, while
+    // the suffix of a variable such as my2deriv is not a helper name.
+    const previousToken = input.slice(0, index).match(/[A-Za-z0-9_.]+$/);
+    return Boolean(previousToken && /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE]\d+)?$/.test(previousToken[0]));
 }
 
 function preprocessCalculusHelpers(input) {
@@ -143,10 +172,13 @@ function preprocessCalculusHelpers(input) {
     let i = 0;
 
     while (i < input.length) {
-        const helperName = INLINE_BRACKET_HELPERS.find((name) => input.startsWith(`${name}[`, i));
+        const atIdentifierBoundary = isHelperBoundary(input, i);
+        const helperMatch = atIdentifierBoundary && input.slice(i).match(/^([A-Za-z][A-Za-z0-9_]*)\s*\[/);
+        const helperName = helperMatch && INLINE_BRACKET_HELPERS.includes(helperMatch[1].toLowerCase())
+            ? helperMatch[1].toLowerCase() : null;
 
         if (helperName) {
-            const openBracketIdx = i + helperName.length;
+            const openBracketIdx = i + helperMatch[0].length - 1;
 
             // Scan for the matching close bracket ']'
             let depth = 1;
@@ -203,7 +235,7 @@ function preprocessCalculusHelpers(input) {
                 const preprocessedInside = preprocessCalculusHelpers(inside);
 
                 // Split inside arguments by top-level commas
-                const rawArgs = splitTopLevel(preprocessedInside, ',');
+                const rawArgs = splitTopLevel(preprocessedInside, ',', { preserveEmpty: true });
                 const quotedArgs = rawArgs.map(arg => {
                     const trimmed = arg.trim();
                     // If it's already fully wrapped in double or single quotes, keep it
@@ -233,5 +265,8 @@ module.exports = {
     splitTopLevel,
     buildLatex,
     formatVarToTex,
+    isReservedMathSymbol,
+    MATHJS_VARIABLE_NAMES,
+    isHelperBoundary,
     preprocessCalculusHelpers
 };

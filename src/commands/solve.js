@@ -2,8 +2,9 @@ const math = require('../math');
 const renderer = require('../renderer');
 const solver = require('../solver');
 const { parseVectorHelperCall } = require('../inline-calculus');
-const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
-const { preprocessCalculusHelpers, splitTopLevel } = require('../utils');
+const { parseCommandSyntax, normalizeAndValidate, validateRouteOptions } = require('../parser');
+const { preprocessCalculusHelpers, splitTopLevel, isReservedMathSymbol } = require('../utils');
+const { expandScientificPlot } = require('../solver/scientific');
 const handleOdeCommand = require('./ode');
 const handlePdeCommand = require('./pde');
 
@@ -19,7 +20,8 @@ const HELPER_BRACKET_NAMES = new Set([
     'curl',
     'curlx',
     'curly',
-    'curlz'
+    'curlz',
+    'limit', 'series', 'laplace', 'invlaplace', 'fourier', 'invfourier', 'convert', 'dimension'
 ]);
 
 const MATRIX_FUNCTION_RE = /\b(?:det|inv|inverse|eigen|eig|eigs|rref)\s*\(/i;
@@ -28,7 +30,8 @@ const PDE_PATTERN_RE = /(?:\bdu\/dt\b|\bd2u\/dx2\b|\bu_t\b|\bu_xx\b)/i;
 const REMOVED_SOLVE_MODE_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)$/i;
 const REMOVED_SOLVE_PREFIX_RE = /^(diff|int|grad|lap|div|curl|matrix|ode|pde)\s+([\s\S]+)$/i;
 const TOP_LEVEL_VECTOR_HELPERS = new Set(['grad', 'lap', 'div', 'curl']);
-const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
+const SCIENTIFIC_HELPERS = new Set(['limit', 'series', 'laplace', 'invlaplace', 'fourier', 'invfourier', 'convert', 'dimension']);
+const HAS_SCIENTIFIC_HELPER = /(?<![A-Za-z_])(?:limit|series|laplace|invlaplace|fourier|invfourier|convert|dimension)\s*\[/i;
 
 function getMode(parsed) {
     if (!parsed || !parsed.options || !parsed.options.mode) {
@@ -402,7 +405,7 @@ function extractVarsFromSource(source) {
             }
 
             const name = node.name;
-            if (!name || IGNORED_SYMBOLS.has(name) || math[name]) {
+            if (!name || isReservedMathSymbol(math, name)) {
                 return;
             }
 
@@ -471,6 +474,13 @@ function rebuildInputWithBody(parsed, body, extraOptions = []) {
 
 function withSolveMode(parsed, mode) {
     return rebuildInput(parsed, [`mode:${mode}`]);
+}
+
+function appendHelperNotes(result, notes) {
+    if (result.success && result.latex && notes && notes.length) {
+        result.latex = result.latex.replace('\n\\end{aligned}', ' \\\\\n' + notes.join(' \\\\\n') + '\n\\end{aligned}');
+    }
+    return result;
 }
 
 async function renderSolverResult(solverFn, input) {
@@ -547,8 +557,50 @@ async function handleSolveCommand(input) {
     const mode = getMode(parsed);
     const hasRelation = hasTopLevelRelation(body);
     const bracketHelper = parseTopLevelBracketHelper(body, TOP_LEVEL_VECTOR_HELPERS);
+    const scientificHelper = parseTopLevelBracketHelper(body, SCIENTIFIC_HELPERS);
 
+    if (scientificHelper) {
+        const allowed = new Set(['assume', 'dir', 'convention', 'mode']);
+        const unsupported = Object.keys(parsed.rawOptions || {}).find((key) => !allowed.has(key));
+        if (unsupported) {
+            return { success: false, error: 'Option "' + unsupported + '" is not supported for this helper.' };
+        }
+        if (mode) {
+            if (!['factor', 'expand', 'simplify'].includes(mode)) {
+                return { success: false, error: `mode:${mode} is not supported for this helper.` };
+            }
+            if (['convert', 'dimension'].includes(scientificHelper.name)) {
+                return { success: false, error: 'Expression modes are not supported for unit quantities or dimension metadata.' };
+            }
+            if (parsed.options.dir && scientificHelper.name !== 'limit') {
+                return { success: false, error: 'Option "dir" only applies to limits.' };
+            }
+            if (parsed.options.convention && !['fourier', 'invfourier'].includes(scientificHelper.name)) {
+                return { success: false, error: 'Option "convention" only applies to Fourier transforms.' };
+            }
+            const innerOptions = splitTopLevel(scientificHelper.inner, ',').slice(1);
+            for (const key of ['dir', 'convention']) {
+                if (parsed.options[key] && innerOptions.some((part) => new RegExp(`^\\s*${key}\\s*:`, 'i').test(part))) {
+                    return { success: false, error: `Specify ${key} inside or after the helper, not both.` };
+                }
+            }
+            const extras = ['dir', 'convention'].filter((key) => parsed.options[key])
+                .map((key) => `${key}:${parsed.options[key]}`);
+            const combined = [scientificHelper.inner, ...extras].join(', ');
+            const optionParts = [parsed.rawOptions.assume, `mode:${mode}`].filter(Boolean);
+            const expression = `${scientificHelper.name}[${combined}] ${optionParts.join(' ')}`;
+            return renderSolverResult(solver.solveEquation, expression);
+        }
+        return renderSolverResult(
+            () => solver.solveScientific(scientificHelper.name, scientificHelper.inner, parsed.options)
+        );
+    }
     if (bracketHelper) {
+        if (parsed.options.assume || parsed.options.domain || parsed.options.dir || parsed.options.convention) {
+            return { success: false, error: 'Those options are not supported for vector operators.' };
+        }
+        const optionError = validateRouteOptions(parsed, ['vars', 'coords', 'mode'], 'vector operators');
+        if (optionError) return { success: false, error: optionError };
         if (mode && mode !== 'simplify') {
             return {
                 success: false,
@@ -556,33 +608,94 @@ async function handleSolveCommand(input) {
             };
         }
 
-        const helperInputResult = buildVectorHelperInput(bracketHelper.name, bracketHelper.inner);
+        const innerParts = splitTopLevel(bracketHelper.inner, ',');
+        const hasInnerVars = innerParts.slice(1).some((part) => /^\s*vars\s*:/i.test(part));
+        if (parsed.rawOptions.vars && hasInnerVars) {
+            return { success: false, error: 'Specify vars either inside the helper or after it, not both.' };
+        }
+        const helperBody = parsed.rawOptions.vars
+            ? `${bracketHelper.inner}, vars:{${parsed.variables.map((entry) => entry.name).join(', ')}}`
+            : bracketHelper.inner;
+
+        if (HAS_SCIENTIFIC_HELPER.test(helperBody)) {
+            if (!parsed.options.coords || parsed.options.coords === 'cartesian') {
+                return renderSolverResult(async () => {
+                    const result = await solver.solveEquation(`${bracketHelper.name}[${helperBody}] mode:simplify`);
+                    if (result.success && result.latex && parsed.options.coords === 'cartesian') {
+                        result.latex = result.latex.replace('\\begin{aligned}\n', '\\begin{aligned}\n\\text{Cartesian coordinates} \\\\\n');
+                    }
+                    return result;
+                });
+            }
+            const expanded = await expandScientificPlot(helperBody);
+            if (!expanded.success) return expanded;
+            if (expanded.seriesTruncated) {
+                return { success: false, error: 'A series remainder cannot be discarded in a curvilinear vector operation.' };
+            }
+            return renderSolverResult(() => appendHelperNotes(
+                solver.solveCurvilinear(bracketHelper.name, expanded.expression, parsed.options.coords), expanded.notes));
+        }
+
+        if (parsed.options.coords && parsed.options.coords !== 'cartesian') {
+            return renderSolverResult(
+                () => solver.solveCurvilinear(bracketHelper.name, helperBody, parsed.options.coords)
+            );
+        }
+
+        const helperInputResult = buildVectorHelperInput(bracketHelper.name, helperBody);
         if (!helperInputResult.success) {
             return { success: false, error: helperInputResult.error };
         }
         const helperInput = helperInputResult.input;
-        if (bracketHelper.name === 'grad') {
-            return renderSolverResult(solver.solveGradient, helperInput);
+        const operators = {
+            grad: solver.solveGradient,
+            lap: solver.solveLaplacian,
+            div: solver.solveDivergence,
+            curl: solver.solveCurl
+        };
+        const operator = operators[bracketHelper.name];
+        if (parsed.options.coords === 'cartesian') {
+            return renderSolverResult(async () => {
+                const result = await Promise.resolve(operator(helperInput));
+                if (result.success && result.latex) {
+                    result.latex = result.latex.replace('\\begin{aligned}\n', '\\begin{aligned}\n\\text{Cartesian coordinates} \\\\\n');
+                }
+                return result;
+            });
         }
-        if (bracketHelper.name === 'lap') {
-            return renderSolverResult(solver.solveLaplacian, helperInput);
-        }
-        if (bracketHelper.name === 'div') {
-            return renderSolverResult(solver.solveDivergence, helperInput);
-        }
-        if (bracketHelper.name === 'curl') {
-            return renderSolverResult(solver.solveCurl, helperInput);
-        }
+        return renderSolverResult(operator, helperInput);
+    }
+
+    if (parsed.options.coords || parsed.options.dir || parsed.options.convention) {
+        return { success: false, error: 'Coordinate, direction, and Fourier convention options require their corresponding helper.' };
     }
 
     if (mode === 'factor' || mode === 'expand' || mode === 'simplify') {
+        const optionError = validateRouteOptions(parsed, ['mode', 'assume'], 'expression transformations');
+        if (optionError) return { success: false, error: optionError };
+        if (/\b(?:eigen|eig|eigs)\s*\(/i.test(body) && looksLikeMatrix(body)) {
+            return { success: false, error: 'Eigenvalue operations do not support expression modes. Remove mode to evaluate the matrix operation.' };
+        }
         return renderSolverResult(solver.solveEquation, withSolveMode(parsed, mode));
     }
 
     if (looksLikePde(body, parsed.options)) {
+        if (parsed.options.assume || parsed.options.domain) {
+            return { success: false, error: 'Assumptions and domain options are not yet supported for PDEs.' };
+        }
+        const optionError = validateRouteOptions(parsed, ['ic', 'bc', 'view', 'camera'], 'PDEs', { allowRanges: true });
+        if (optionError) return { success: false, error: optionError };
+        if (parsed.ranges.length > 2) return { success: false, error: 'PDEs support at most one spatial and one time range.' };
         return handlePdeCommand(input);
     }
     if (looksLikeOde(body, parsed.options)) {
+        if (parsed.options.assume || parsed.options.domain) {
+            return { success: false, error: 'Assumptions and domain options are not yet supported for ODEs.' };
+        }
+        const optionError = validateRouteOptions(parsed, ['ic', 'mode', 'phase'], 'ODEs', { allowRanges: true });
+        if (optionError) return { success: false, error: optionError };
+        const maxRanges = parsed.options.phase ? 3 : 2;
+        if (parsed.ranges.length > maxRanges) return { success: false, error: 'Too many ranges for this ODE plot.' };
         return handleOdeCommand(input);
     }
 
@@ -594,10 +707,28 @@ async function handleSolveCommand(input) {
     }
 
     if (hasRelation) {
+        const optionError = validateRouteOptions(parsed, ['vars', 'assume', 'domain'], 'equation solving', { allowRanges: true });
+        if (optionError) return { success: false, error: optionError };
+        if (/\b(?:eigen|eig|eigs)\s*\(/i.test(body) && looksLikeMatrix(body)) {
+            return { success: false, error: 'Eigenvalue operations cannot be used as scalar equations. Evaluate the matrix operation separately.' };
+        }
         return renderSolverResult(solver.solveEquation, input);
     }
 
     if (looksLikeMatrix(body)) {
+        if (parsed.options.assume || parsed.options.domain) {
+            return { success: false, error: 'Assumptions and domain options are not supported for matrix operations. Matrix equations can use them.' };
+        }
+        const optionError = validateRouteOptions(parsed, [], 'matrix operations');
+        if (optionError) return { success: false, error: optionError };
+        if (HAS_SCIENTIFIC_HELPER.test(body)) {
+            const expanded = await expandScientificPlot(body);
+            if (!expanded.success) return expanded;
+            if (expanded.seriesTruncated) {
+                return { success: false, error: 'A series remainder cannot be discarded in a matrix operation.' };
+            }
+            return renderSolverResult(() => appendHelperNotes(solver.solveMatrixExpression(expanded.expression), expanded.notes));
+        }
         return renderSolverResult(solver.solveMatrixExpression, body);
     }
 
@@ -608,6 +739,8 @@ async function handleSolveCommand(input) {
         };
     }
 
+    const optionError = validateRouteOptions(parsed, ['assume'], 'expression simplification');
+    if (optionError) return { success: false, error: optionError };
     return renderSolverResult(solver.solveEquation, withSolveMode(parsed, 'simplify'));
 }
 

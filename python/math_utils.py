@@ -2,12 +2,15 @@ import re
 import sympy
 from sympy.parsing.sympy_parser import (
     standard_transformations,
-    implicit_multiplication_application,
+    implicit_multiplication,
     rationalize,
-    parse_expr,
 )
+from safe_parser import parse_expr
 
-transformations = (standard_transformations + (implicit_multiplication_application, rationalize))
+# Like mathjs, a contiguous name such as `xy` is one symbol. SymPy's
+# implicit_multiplication_application also splits symbol names into letters,
+# which made the meaning depend on the solver backend.
+transformations = standard_transformations + (implicit_multiplication, rationalize)
 VALID_INLINE_VAR_RE = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 
@@ -421,18 +424,20 @@ def _parse_inline_option(text):
     if colon_index == -1:
         return None
 
-    key = source[:colon_index].strip().lower()
+    original_key = source[:colon_index].strip()
+    normalized_key = original_key.lower()
+    key = normalized_key if normalized_key in {"vars", "dep", "at", "kind", "param"} else original_key
     value = source[colon_index + 1 :].strip()
     if not re.match(VALID_INLINE_VAR_RE, key) or not value:
         return None
 
     if value.startswith("{") and value.endswith("}"):
-        return {"key": key, "type": "grouped", "value": value[1:-1].strip()}
+        return {"key": key, "original_key": original_key, "type": "grouped", "value": value[1:-1].strip()}
 
     if value.startswith("[") and value.endswith("]"):
-        return {"key": key, "type": "range", "value": value[1:-1].strip()}
+        return {"key": key, "original_key": original_key, "type": "range", "value": value[1:-1].strip()}
 
-    return {"key": key, "type": "scalar", "value": value}
+    return {"key": key, "original_key": original_key, "type": "scalar", "value": value}
 
 
 def _parse_inline_variable_recipe(raw_text, label):
@@ -466,7 +471,9 @@ def _parse_inline_assignments(raw_text, label):
         option = _parse_inline_option(part)
         if not option or option["type"] == "range":
             raise ValueError(f"{label} expects assignments like x:expr.")
-        assignments.append((option["key"], option["value"]))
+        if any(name == option["original_key"] for name, _value in assignments):
+            raise ValueError(f'Duplicate assignment for "{option["original_key"]}".')
+        assignments.append((option["original_key"], option["value"]))
     return assignments
 
 
@@ -513,7 +520,7 @@ def _parse_inline_range_option(source_text):
         raise ValueError(f'Range "{source_text}" must contain exactly two bounds.')
 
     return {
-        "name": option["key"],
+        "name": option["original_key"],
         "lower": parts[0].strip(),
         "upper": parts[1].strip(),
     }
@@ -646,6 +653,8 @@ def _parse_inline_vector_helper_args(label, expr, args, field=False):
         if option["key"] != "vars":
             raise ValueError(f'{label} does not support option "{option["key"]}".')
 
+        if variable_recipe is not None:
+            raise ValueError(f"Duplicate vars option in {label}.")
         variable_recipe = _parse_inline_variable_recipe(option["value"], label)
         if any(order != 1 for _symbol, order in variable_recipe):
             raise ValueError(f"{label} vars do not support derivative-style order markers.")
@@ -691,7 +700,71 @@ def _parse_inline_vector_helper_args(label, expr, args, field=False):
     return expr_source, symbols, scalar
 
 
+def _scientific_condition_start():
+    from scientific_helpers import current
+    context = current()
+    return (context, len(context["conditions"]) if context else 0,
+            len(context["real_targets"]) if context else 0)
+
+
+def _check_derivative_substitutions(expr, substitutions, context, condition_start, real_start):
+    if not substitutions:
+        return
+    by_name = {symbol.name: value for symbol, value in substitutions.items()}
+    for name in (context["real_targets"][real_start:] if context else []):
+        if name in by_name and by_name[name].is_real is not True:
+            raise ValueError("The Fourier or inverse Laplace output variable requires a real evaluation point.")
+    if expr.has(sympy.Order) and any(
+            variable.name in by_name for order in expr.atoms(sympy.Order) for variable in order.variables):
+        raise ValueError("A derivative containing a series remainder cannot be evaluated at a point safely.")
+    for item in (context["conditions"][condition_start:] if context else []):
+        target = item["target"]
+        if any(symbol.name in by_name for symbol in item["plane"].free_symbols | item["condition"].free_symbols):
+            raise ValueError("Cannot propagate the Laplace convergence region through this parameter evaluation.")
+        if target.name not in by_name:
+            continue
+        value = by_name[target.name]
+        replacements = {symbol: by_name[symbol.name] for symbol in
+                        item["plane"].free_symbols | item["condition"].free_symbols
+                        if symbol.name in by_name}
+        plane = item["plane"].xreplace(replacements)
+        condition = item["condition"].xreplace(replacements)
+        if condition != sympy.true or (plane != -sympy.oo and sympy.Gt(sympy.re(value), plane) != sympy.true):
+            raise ValueError("The derivative evaluation point is outside, or not known to be inside, the Laplace convergence region.")
+
+
+def _check_integral_domain(expr, ranges, call_dict, kind, context, condition_start, real_start):
+    if not ranges:
+        return
+    if expr.has(sympy.Order):
+        raise ValueError("A series remainder cannot be used as an exact definite integral over fixed bounds.")
+    range_by_name = {entry["name"]: entry for entry in ranges}
+    for name in (context["real_targets"][real_start:] if context else []):
+        if name in range_by_name:
+            bounds = [parse_expr(str(range_by_name[name][key]).replace("^", "**"), local_dict=call_dict,
+                                 transformations=transformations) for key in ("lower", "upper")]
+            if any(bound not in {sympy.oo, -sympy.oo} and bound.is_real is not True for bound in bounds):
+                raise ValueError("Fourier and inverse Laplace output variables require real integration bounds.")
+    for item in (context["conditions"][condition_start:] if context else []):
+        if item["plane"] == -sympy.oo and item["condition"] == sympy.true:
+            continue
+        relevant = {item["target"].name} | {
+            symbol.name for symbol in item["plane"].free_symbols | item["condition"].free_symbols
+        }
+        if not relevant.intersection(range_by_name) and kind not in {"line", "surface"}:
+            continue
+        entry = range_by_name.get(item["target"].name)
+        if (kind in {"line", "surface"} or not entry or item["condition"] != sympy.true
+                or item["plane"].free_symbols):
+            raise ValueError("Cannot establish that the integration region lies inside the Laplace convergence region.")
+        bounds = [parse_expr(str(entry[key]).replace("^", "**"), local_dict=call_dict,
+                             transformations=transformations) for key in ("lower", "upper")]
+        if any(bound.is_real is not True or sympy.Gt(bound, item["plane"]) != sympy.true for bound in bounds):
+            raise ValueError("The integration bounds must lie entirely inside the Laplace convergence region.")
+
+
 def deriv_inline(expr, *args):
+    scientific_context, condition_start, real_start = _scientific_condition_start()
     call_dict = get_base_local_dict()
     expr_source = str(expr).strip("'\"")
     remaining = list(args)
@@ -700,6 +773,7 @@ def deriv_inline(expr, *args):
     dep_vars = None
     positional_values = []
     assignment_specs = []
+    seen_options = set()
 
     has_option_like = any(isinstance(arg, str) and _parse_inline_option(arg) for arg in remaining)
     if remaining and isinstance(remaining[0], str) and re.match(VALID_INLINE_VAR_RE, remaining[0]) and not has_option_like:
@@ -719,7 +793,13 @@ def deriv_inline(expr, *args):
                 positional_values.append(arg)
                 continue
 
+            if option["key"] in seen_options:
+                raise ValueError(f'Duplicate {option["key"]} option in deriv.')
+            seen_options.add(option["key"])
+
             if option["key"] == "vars":
+                if variable_recipe is not None:
+                    raise ValueError("Specify derivative variables only once.")
                 variable_recipe = _parse_inline_variable_recipe(option["value"], "deriv")
                 continue
 
@@ -778,9 +858,13 @@ def deriv_inline(expr, *args):
     unique_symbols = _ordered_unique_symbols(variable_recipe)
     if positional_values and len(positional_values) != len(unique_symbols):
         raise ValueError("deriv positional evaluation arguments must match the number of unique variables.")
+    if positional_values and any(name in {symbol.name for symbol in unique_symbols} for name, _value in assignment_specs):
+        raise ValueError("Specify each derivative evaluation point only once.")
 
     substitutions = {}
     for symbol, value in zip(unique_symbols, positional_values):
+        if isinstance(value, str):
+            value = parse_expr(value.replace("^", "**"), local_dict=call_dict, transformations=transformations)
         substitutions[symbol] = value
 
     for name, expr_text in assignment_specs:
@@ -793,12 +877,14 @@ def deriv_inline(expr, *args):
         )
 
     if substitutions:
+        _check_derivative_substitutions(expr_parsed, substitutions, scientific_context, condition_start, real_start)
         result = result.subs(substitutions)
 
     return result
 
 
 def integ_inline(expr, *args):
+    scientific_context, condition_start, real_start = _scientific_condition_start()
     call_dict = get_base_local_dict()
     expr_source = str(expr).strip("'\"")
     remaining = list(args)
@@ -807,6 +893,7 @@ def integ_inline(expr, *args):
     param_source = None
     ranges = []
     variable_recipe = None
+    seen_options = set()
 
     has_option_like = any(isinstance(arg, str) and _parse_inline_option(arg) for arg in remaining)
     if remaining and isinstance(remaining[0], str) and re.match(VALID_INLINE_VAR_RE, remaining[0]) and not has_option_like:
@@ -825,6 +912,8 @@ def integ_inline(expr, *args):
 
             range_option = _parse_inline_range_option(arg)
             if range_option:
+                if any(entry["name"] == range_option["name"] for entry in ranges):
+                    raise ValueError(f'Duplicate range for "{range_option["name"]}".')
                 ranges.append(range_option)
                 continue
 
@@ -835,6 +924,10 @@ def integ_inline(expr, *args):
                     continue
                 raise ValueError(f'Unsupported integ helper argument "{arg}".')
 
+            if option["key"] in seen_options:
+                raise ValueError(f'Duplicate {option["key"]} option in integ.')
+            seen_options.add(option["key"])
+
             if option["key"] == "kind":
                 kind = option["value"].lower()
                 continue
@@ -844,6 +937,8 @@ def integ_inline(expr, *args):
                 continue
 
             if option["key"] == "vars":
+                if variable_recipe is not None:
+                    raise ValueError("Specify integration variables only once.")
                 variable_recipe = _parse_inline_variable_recipe(option["value"], "integ")
                 if any(order != 1 for _symbol, order in variable_recipe):
                     raise ValueError("integ vars do not support derivative-style order markers.")
@@ -853,6 +948,10 @@ def integ_inline(expr, *args):
 
     if kind and kind not in {"line", "surface", "volume"}:
         raise ValueError(f'Unsupported inline integral kind "{kind}".')
+    if variable_recipe and (ranges or kind):
+        raise ValueError("Use either vars or named ranges for an integral, not both.")
+    if param_source and kind not in {"line", "surface"}:
+        raise ValueError('Option "param" requires kind:line or kind:surface.')
 
     if kind == "line":
         if not param_source or len(ranges) != 1:
@@ -861,6 +960,7 @@ def integ_inline(expr, *args):
         coords = {name: sympy.Symbol(name) for name in ("x", "y", "z")}
         call_dict.update(coords)
         expr_parsed = _parse_inline_scalar(expr_source, tuple(coords.values()), "integ")
+        _check_integral_domain(expr_parsed, ranges, call_dict, kind, scientific_context, condition_start, real_start)
         expr_eval = expr_parsed.doit() if hasattr(expr_parsed, "doit") else expr_parsed
         if isinstance(expr_eval, (sympy.Tuple, sympy.MatrixBase, list, tuple)):
             vector_parts = list(expr_eval)
@@ -870,7 +970,7 @@ def integ_inline(expr, *args):
         if len(path_components) not in (2, 3):
             raise ValueError("Line-integral parametrizations must have 2 or 3 components.")
 
-        param_symbol = _choose_parameter_symbols(path_components, 1, call_dict, LINE_PARAM_PREFERENCES)[0]
+        param_symbol = sympy.Symbol(ranges[0]["name"])
         lower = parse_expr(str(ranges[0]["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)
         upper = parse_expr(str(ranges[0]["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)
         substitution_map = {coords["x"]: path_components[0], coords["y"]: path_components[1]}
@@ -883,6 +983,9 @@ def integ_inline(expr, *args):
             integrand = sum(component * derivative for component, derivative in zip(substituted, tangent))
         else:
             speed = sympy.sqrt(sum(sympy.diff(component, param_symbol) ** 2 for component in path_components))
+            if vector_parts is not None:
+                raise ValueError("Vector field and line parametrization must have the same dimension.")
+            integrand = expr_parsed.subs(substitution_map) * speed
         is_vector = bool(vector_parts and len(vector_parts) == len(path_components))
         return InlineIntegral(
             integrand,
@@ -901,6 +1004,7 @@ def integ_inline(expr, *args):
         coords = {name: sympy.Symbol(name) for name in ("x", "y", "z")}
         call_dict.update(coords)
         expr_parsed = _parse_inline_scalar(expr_source, tuple(coords.values()), "integ")
+        _check_integral_domain(expr_parsed, ranges, call_dict, kind, scientific_context, condition_start, real_start)
         expr_eval = expr_parsed.doit() if hasattr(expr_parsed, "doit") else expr_parsed
         if isinstance(expr_eval, (sympy.Tuple, sympy.MatrixBase, list, tuple)):
             vector_parts = list(expr_eval)
@@ -910,7 +1014,7 @@ def integ_inline(expr, *args):
         if len(surface_components) != 3:
             raise ValueError("Surface-integral parametrizations must have exactly 3 components.")
 
-        param_symbols = _choose_parameter_symbols(surface_components, 2, call_dict, SURFACE_PARAM_PREFERENCES)
+        param_symbols = [sympy.Symbol(entry["name"]) for entry in ranges]
         first_param, second_param = param_symbols
         range_by_name = {entry["name"]: entry for entry in ranges}
         first_range = range_by_name.get(first_param.name, ranges[0])
@@ -952,19 +1056,20 @@ def integ_inline(expr, *args):
         if len(ranges) != 3:
             raise ValueError("integ kind:volume requires exactly three ranges.")
 
-        coords = {name: sympy.Symbol(name) for name in ("x", "y", "z")}
+        coords = {entry["name"]: sympy.Symbol(entry["name"]) for entry in ranges}
         call_dict.update(coords)
         expr_parsed = parse_expr(expr_source.replace("^", "**"), local_dict=call_dict, transformations=transformations)
-        range_by_name = {entry["name"]: entry for entry in ranges}
-        x_range = range_by_name.get("x", ranges[0])
-        y_range = range_by_name.get("y", ranges[1])
-        z_range = range_by_name.get("z", ranges[2])
+        _check_integral_domain(expr_parsed, ranges, call_dict, kind, scientific_context, condition_start, real_start)
+        limits = [
+            (coords[entry["name"]],
+             parse_expr(str(entry["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations),
+             parse_expr(str(entry["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations))
+            for entry in ranges
+        ]
 
         return InlineIntegral(
             expr_parsed,
-            (coords["z"], parse_expr(str(z_range["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations), parse_expr(str(z_range["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)),
-            (coords["y"], parse_expr(str(y_range["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations), parse_expr(str(y_range["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)),
-            (coords["x"], parse_expr(str(x_range["lower"]).replace("^", "**"), local_dict=call_dict, transformations=transformations), parse_expr(str(x_range["upper"]).replace("^", "**"), local_dict=call_dict, transformations=transformations)),
+            *reversed(limits),
             expr_parsed=expr_parsed,
             kind="volume",
         )
@@ -977,6 +1082,7 @@ def integ_inline(expr, *args):
         variable_recipe = [(_infer_default_inline_variable(expr_source, call_dict, "inline integration"), 1)]
 
     expr_parsed = parse_expr(expr_source.replace("^", "**"), local_dict=call_dict, transformations=transformations)
+    _check_integral_domain(expr_parsed, ranges, call_dict, kind, scientific_context, condition_start, real_start)
 
     if ranges:
         integrate_args = []
@@ -1020,6 +1126,7 @@ def get_base_local_dict():
         "arcctg": sympy.acot,
         "pi": sympy.pi,
         "e": sympy.E,
+        "i": sympy.I,
         "inf": sympy.oo,
         "infinity": sympy.oo,
         "grad": grad_inline,
@@ -1040,5 +1147,12 @@ def get_base_local_dict():
     for char_code in range(65, 91):
         letter = chr(char_code)
         base_dict[letter] = sympy.Symbol(letter)
+
+    from scientific_helpers import local_helpers, current
+    base_dict.update(local_helpers())
+    context = current()
+    if context:
+        from assumptions import assumed_symbols
+        base_dict.update(assumed_symbols(context["facts"]))
         
     return base_dict
