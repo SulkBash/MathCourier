@@ -1,5 +1,5 @@
 // Recreate the README gallery from the same command handlers used by the bot.
-// Requires the normal Python/Chromium setup and ffmpeg for the animated GIF.
+// Requires Python/Chromium, ffmpeg for the GIF, and QuickLaTeX for diagrams.
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -31,9 +31,9 @@ const examples = [
         command: 'F(x,y,z) = (-y,x,z/2) view:3d kind:vector vars:{x,y,z} x:[-4,4] y:[-4,4] z:[-4,4]'
     },
     {
-        file: 'coupled-oscillator.png',
-        handler: solve,
-        command: 'dx/dt=-y; dy/dt=x ic:{x(0)=1; y(0)=0} t:[-6.28,6.28]'
+        file: 'chemical-benzoic-acid.png',
+        handler: latex,
+        command: String.raw`\scalebox{2.0}{\chemfig{HO-[:90]C(=[0]O)-[:90]*6(-=-=-=)}}`
     },
     {
         file: 'heat-equation.png',
@@ -41,9 +41,9 @@ const examples = [
         command: 'du/dt = 0.5*d2u/dx2 ic:{u(x,0)=sin(x)} bc:{u(0,t)=0; u(pi,t)=0} x:[0,pi] t:[0,2]'
     },
     {
-        file: 'laplace-transform.png',
-        handler: solve,
-        command: 'laplace[exp(-a*t)*sin(w*t),t,s] assume:{a>0,w:real}'
+        file: 'circuit-lc-filter.png',
+        handler: latex,
+        command: String.raw`\begin{tikzpicture}[scale=1.5,transform shape]\draw (0,0) to[sV,l=$v_{in}$] (0,3) to[R,l=$R$] (3,3) to[L,l=$L$] (6,3) to[C,l=$C_2$] (6,0) -- (0,0);\draw (3,3) node[circ]{} to[C,l=$C_1$] (3,0) node[circ]{};\end{tikzpicture}`
     },
     {
         file: 'schrodinger-equation.png',
@@ -66,6 +66,13 @@ function makeGif(video) {
 }
 
 async function main() {
+    const requested = process.argv.slice(2);
+    const unknown = requested.filter((file) => !examples.some((example) => example.file === file));
+    if (unknown.length) throw new Error(`Unknown preview: ${unknown.join(', ')}`);
+    const selected = requested.length
+        ? examples.filter((example) => requested.includes(example.file))
+        : examples;
+
     // The cards are actual bot output, captured at high pixel density so they
     // remain crisp when displayed on GitHub and high-resolution screens.
     config.puppeteer.launchArgs.defaultViewport = { width: 1200, height: 1200, deviceScaleFactor: 2 };
@@ -75,7 +82,7 @@ async function main() {
     try {
         await renderer.initialize();
         if (!renderer.isLocalReady()) throw new Error('A working local Chromium renderer is required.');
-        for (const example of examples) {
+        for (const example of selected) {
             const originalCreatePage = katex.createRenderPage;
             if (example.animated) {
                 // Video frames have no alpha channel; use the card color as
