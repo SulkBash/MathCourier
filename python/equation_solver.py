@@ -3,10 +3,12 @@ import re
 import sys
 
 import sympy
-from sympy.parsing.sympy_parser import parse_expr
+from safe_parser import parse_expr
 from sympy.solvers.inequalities import reduce_inequalities, solve_univariate_inequality
+from sympy.solvers.solveset import NonlinearError
 
 from math_utils import get_base_local_dict, split_top_level, transformations
+from assumptions import assumed_symbols, assumption_latex, parse_assumptions, symbol_domain
 
 
 VALID_VAR_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -185,13 +187,23 @@ def convert_matrix_literals(text):
     return "".join(output)
 
 
-def parse_math_expr(expr_str, call_dict):
+def parse_math_expr(expr_str, call_dict, evaluate=True):
     normalized = convert_matrix_literals(str(expr_str).replace("^", "**"))
-    return parse_expr(
+    result = parse_expr(
         normalized,
         local_dict=call_dict,
         transformations=transformations,
+        evaluate=evaluate,
     )
+    if hasattr(result, "atoms"):
+        substitutions = {
+            symbol: call_dict[symbol.name]
+            for symbol in result.atoms(sympy.Symbol)
+            if isinstance(call_dict.get(symbol.name), sympy.Symbol) and call_dict[symbol.name] != symbol
+        }
+        if substitutions:
+            result = result.xreplace(substitutions)
+    return result
 
 
 def relation_latex(operator):
@@ -261,7 +273,25 @@ def find_top_level_relations(text):
     return relations
 
 
-def parse_statement(raw_text, call_dict):
+def denominator_symbols(expr):
+    symbols = set()
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, sympy.Pow) and node.exp.is_negative is True:
+            symbols.update(node.base.free_symbols)
+    return symbols
+
+
+def display_expression(expr, original):
+    if denominator_symbols(original) - denominator_symbols(expr):
+        return original
+    return expr
+
+
+def needs_domain_preservation(text):
+    return "/" in text or bool(re.search(r"(?:\^|\*\*)\s*(?:\(\s*)?-", text))
+
+
+def parse_statement(raw_text, call_dict, preserve_input=False):
     text = str(raw_text or "").strip()
     if not text:
         raise ValueError("Empty equation entry.")
@@ -275,12 +305,14 @@ def parse_statement(raw_text, call_dict):
 
     if not relations:
         expr = parse_math_expr(text, call_dict)
+        original_expr = parse_math_expr(text, call_dict, evaluate=False) if preserve_input or needs_domain_preservation(text) else expr
         return {
             "kind": "expression",
             "raw": text,
             "expr": expr,
-            "display": sympy.latex(expr),
-            "free_symbols": set(expr.free_symbols),
+            "original_expr": original_expr,
+            "display": sympy.latex(original_expr if preserve_input else display_expression(expr, original_expr)),
+            "free_symbols": set(original_expr.free_symbols),
         }
 
     index, operator = relations[0]
@@ -291,6 +323,8 @@ def parse_statement(raw_text, call_dict):
 
     lhs = parse_math_expr(lhs_text, call_dict)
     rhs = parse_math_expr(rhs_text, call_dict)
+    original_lhs = parse_math_expr(lhs_text, call_dict, evaluate=False) if preserve_input or needs_domain_preservation(lhs_text) else lhs
+    original_rhs = parse_math_expr(rhs_text, call_dict, evaluate=False) if preserve_input or needs_domain_preservation(rhs_text) else rhs
 
     return {
         "kind": "relation",
@@ -298,8 +332,10 @@ def parse_statement(raw_text, call_dict):
         "operator": operator,
         "lhs": lhs,
         "rhs": rhs,
-        "display": f"{sympy.latex(lhs)} {relation_latex(operator)} {sympy.latex(rhs)}",
-        "free_symbols": set(lhs.free_symbols) | set(rhs.free_symbols),
+        "original_lhs": original_lhs,
+        "original_rhs": original_rhs,
+        "display": f"{sympy.latex(original_lhs if preserve_input else display_expression(lhs, original_lhs))} {relation_latex(operator)} {sympy.latex(original_rhs if preserve_input else display_expression(rhs, original_rhs))}",
+        "free_symbols": set(original_lhs.free_symbols) | set(original_rhs.free_symbols),
     }
 
 
@@ -432,14 +468,6 @@ def format_original_statements(statements, solving_mode=False):
 def format_solution_set(var_symbol, solution_set):
     simplified = sympy.simplify(solution_set)
 
-    if isinstance(simplified, sympy.Intersection):
-        non_real_parts = [part for part in simplified.args if part != sympy.S.Reals]
-        if len(non_real_parts) == 1 and isinstance(
-            non_real_parts[0],
-            (sympy.FiniteSet, sympy.Interval, sympy.Union, sympy.ImageSet),
-        ):
-            simplified = sympy.simplify(non_real_parts[0])
-
     if simplified == sympy.EmptySet:
         return "\\text{No solution}"
 
@@ -468,6 +496,9 @@ def format_system_solutions(target_symbols, solutions):
 
         if not pieces:
             continue
+        if solution.get("_conditions"):
+            condition = sympy.And(*solution["_conditions"])
+            pieces.append(r"\text{provided } " + sympy.latex(condition))
 
         if len(solutions) > 1:
             formatted.append(f"\\text{{Solution {index}}}: " + ", \\quad ".join(pieces))
@@ -525,23 +556,79 @@ def evaluate_truth(statements):
     return True
 
 
-def filter_solutions_by_domain(solutions, domain_map):
+def original_expressions(statement):
+    if statement["kind"] == "expression":
+        return [statement.get("original_expr", statement["expr"])]
+    return [
+        statement.get("original_lhs", statement["lhs"]),
+        statement.get("original_rhs", statement["rhs"]),
+    ]
+
+
+def input_denominator_conditions(statements):
+    """Keep restrictions from the input, even if algebra cancels a factor."""
+    conditions = []
+    for statement in statements:
+        for expr in original_expressions(statement):
+            for node in sympy.preorder_traversal(expr):
+                if not (isinstance(node, sympy.Pow) and node.exp.is_negative is True):
+                    continue
+                condition = sympy.Ne(node.base, 0)
+                if condition is sympy.false:
+                    raise ValueError("The input has a zero denominator under the given assumptions.")
+                if condition is not sympy.true and condition not in conditions:
+                    conditions.append(condition)
+    return conditions
+
+
+def has_variable_denominator(expr, variable):
+    return any(
+        isinstance(node, sympy.Pow) and node.exp.is_negative is True and node.base.has(variable)
+        for node in sympy.preorder_traversal(expr)
+    )
+
+
+def solution_satisfies_denominators(statement, solution):
+    for expr in original_expressions(statement):
+        for node in sympy.preorder_traversal(expr):
+            if isinstance(node, sympy.Pow) and node.exp.is_negative is True:
+                denominator = sympy.simplify(node.base.subs(solution))
+                if denominator.is_zero is True:
+                    return False
+    return True
+
+
+def filter_solutions_by_domain(solutions, domain_map, statements=(), target_symbols=(), requested_domain=None):
     if isinstance(solutions, dict):
         solutions = [solutions]
 
     filtered = []
     for solution in solutions:
-        keep = True
-        for name, domain in domain_map.items():
-            symbol = sympy.Symbol(name)
+        keep = all(solution_satisfies_denominators(statement, solution) for statement in statements)
+        conditions = []
+        for symbol in target_symbols:
             if symbol not in solution:
                 continue
-            membership = domain.contains(sympy.simplify(solution[symbol]))
+            domain = domain_map.get(symbol.name)
+            if domain is None and requested_domain:
+                domain = sympy.S.Reals if requested_domain == "real" else sympy.S.Complexes
+            if domain is None and (symbol.is_real is True or symbol.is_zero is False):
+                domain = sympy.S.Complexes
+            if domain is None:
+                continue
+            domain = symbol_domain(symbol, domain)
+            value = sympy.simplify(solution[symbol])
+            membership = domain.contains(value)
             if falsy(membership):
                 keep = False
                 break
+            if not truthy(membership):
+                conditions.append(sympy.Contains(value, domain, evaluate=False))
         if keep:
-            filtered.append(solution)
+            result = dict(solution)
+            if conditions:
+                result["_conditions"] = conditions
+            filtered.append(result)
 
     return filtered
 
@@ -596,21 +683,60 @@ def expand_matrix_equalities(statements):
     return expanded
 
 
-def solve_single_equation(statement, var_symbol, domain_map):
+def restrict_variable_domains(statements, var_symbol, domain=None):
+    real_domain = domain if domain is not None else sympy.S.Reals
+    complex_domain = sympy.S.Complexes
+
+    for statement in statements:
+        for expr in original_expressions(statement):
+            if not has_variable_denominator(expr, var_symbol):
+                continue
+            try:
+                real_domain = real_domain.intersect(
+                    sympy.calculus.util.continuous_domain(expr, var_symbol, sympy.S.Reals)
+                )
+                excluded = sympy.singularities(expr, var_symbol, domain=sympy.S.Complexes)
+                complex_domain = complex_domain - excluded
+            except (NotImplementedError, ValueError) as exc:
+                raise ValueError("Could not determine the expression's domain reliably.") from exc
+    return real_domain, complex_domain
+
+
+def solve_single_equation(statement, var_symbol, domain_map, requested_domain=None):
     residual = statement_residual(statement)
     domain = domain_map.get(var_symbol.name)
+    real_domain, complex_domain = restrict_variable_domains([statement], var_symbol, domain)
+    real_domain = symbol_domain(var_symbol, real_domain)
+    complex_domain = symbol_domain(var_symbol, complex_domain)
 
-    if domain is not None:
-        solution_set = sympy.solveset(residual, var_symbol, domain=domain)
-    else:
-        solution_set = sympy.solveset(residual, var_symbol, domain=sympy.S.Reals)
-        if solution_set == sympy.EmptySet:
-            solution_set = sympy.solveset(residual, var_symbol, domain=sympy.S.Complexes)
+    use_complex = requested_domain != "real" and domain is None
+    try:
+        solution_set = sympy.solveset(residual, var_symbol, domain=complex_domain if use_complex else real_domain)
+    except (ValueError, NotImplementedError):
+        if not use_complex or requested_domain is not None:
+            raise
+        # Some complex solves (notably Abs) are unsupported even though a
+        # complete real subset can still be computed.
+        solution_set = sympy.solveset(residual, var_symbol, domain=real_domain)
+        statement["real_fallback"] = True
+        statement["partial_solution"] = True
 
     if isinstance(solution_set, sympy.ConditionSet):
-        fallback = sympy.solve(sympy.Eq(residual, 0), var_symbol)
+        try:
+            fallback = sympy.solve(sympy.Eq(residual, 0), var_symbol)
+        except (NotImplementedError, ValueError):
+            fallback = []
         if fallback:
             solution_set = sympy.FiniteSet(*fallback)
+            statement["partial_solution"] = True
+            if domain is not None:
+                solution_set = solution_set.intersect(real_domain)
+            elif requested_domain == "real":
+                solution_set = solution_set.intersect(real_domain)
+            elif complex_domain != sympy.S.Complexes:
+                solution_set = solution_set.intersect(complex_domain)
+        else:
+            statement["partial_solution"] = True
 
     if domain is not None and isinstance(solution_set, sympy.Set):
         solution_set = solution_set.intersect(domain)
@@ -631,13 +757,62 @@ def solve_inequalities(statements, var_symbol, domain_map):
         solution = reduced.as_set()
 
     domain = domain_map.get(var_symbol.name)
-    if domain is not None:
-        solution = solution.intersect(domain)
+    real_domain, _ = restrict_variable_domains(statements, var_symbol, domain)
+    real_domain = symbol_domain(var_symbol, real_domain)
+    solution = solution.intersect(real_domain)
 
     return sympy.simplify(solution)
 
 
-def handle_expression_mode(statements, mode):
+def parameterized_linear_cases(statement, variable, domain_map, requested_domain):
+    """Keep the degenerate coefficient cases of a*x + b = 0."""
+    residual = statement_residual(statement)
+    try:
+        polynomial = sympy.Poly(residual, variable)
+    except sympy.PolynomialError:
+        return None
+    if polynomial.degree() != 1:
+        return None
+    coefficient, constant = polynomial.all_coeffs()
+    if coefficient.is_zero is not None or not coefficient.free_symbols:
+        return None
+    if any(has_variable_denominator(expr, variable) for expr in original_expressions(statement)):
+        return None
+
+    real_domain, complex_domain = restrict_variable_domains([statement], variable, domain_map.get(variable.name))
+    real_domain = symbol_domain(variable, real_domain)
+    complex_domain = symbol_domain(variable, complex_domain)
+    domain = complex_domain if requested_domain != "real" and variable.name not in domain_map else real_domain
+    root = sympy.cancel(-constant / coefficient)
+    nonzero = sympy.Ne(coefficient, 0)
+    if domain in (sympy.S.Reals, sympy.S.Complexes):
+        predicate = sympy.Q.real(root) if domain == sympy.S.Reals else sympy.Q.complex(root)
+        try:
+            known = sympy.ask(predicate, nonzero)
+        except (TypeError, ValueError, NotImplementedError):
+            known = None
+        membership = sympy.true if known is True else sympy.false if known is False else sympy.Contains(root, domain, evaluate=False)
+    else:
+        membership = domain.contains(root)
+    cases = []
+    if membership is not sympy.false:
+        condition = nonzero if membership is sympy.true else sympy.And(nonzero, membership)
+        cases.append(f"{sympy.latex(variable)} = {sympy.latex(root)} & \\text{{if }} {sympy.latex(condition)}")
+    if membership is not sympy.true:
+        condition = nonzero if membership is sympy.false else sympy.And(nonzero, sympy.Not(membership))
+        cases.append(f"\\text{{No solution}} & \\text{{if }} {sympy.latex(condition)}")
+    coefficient_zero = sympy.Eq(coefficient, 0)
+    constant_zero = sympy.Eq(constant, 0)
+    all_condition = sympy.And(coefficient_zero, constant_zero)
+    empty_condition = sympy.And(coefficient_zero, sympy.Ne(constant, 0))
+    if all_condition is not sympy.false:
+        cases.append(f"{sympy.latex(variable)} \\in {sympy.latex(domain)} & \\text{{if }} {sympy.latex(all_condition)}")
+    if empty_condition is not sympy.false:
+        cases.append(f"\\text{{No solution}} & \\text{{if }} {sympy.latex(empty_condition)}")
+    return r"\begin{cases} " + r" \\ ".join(cases) + r" \end{cases}"
+
+
+def handle_expression_mode(statements, mode, helper_used=False):
     if mode not in EXPRESSION_MODES:
         raise ValueError(f'Unsupported expression mode "{mode}".')
 
@@ -655,20 +830,35 @@ def handle_expression_mode(statements, mode):
         original = statement["expr"]
         evaluated = sympy.simplify(original.doit())
         result = transform(evaluated)
-        lines.append(f"{sympy.latex(original)} &= {sympy.latex(result)}")
+        rendered_result = sympy.latex(result)
+        display = statement["display"]
+        if helper_used and display == rendered_result:
+            display = r"\text{Result}"
+        lines.append(f"{display} &= {rendered_result}")
+        if result.has(sympy.Integral, sympy.Derivative, sympy.Limit, sympy.Sum):
+            statement["partial_solution"] = True
+            lines.append(r"\text{Some cases remain unevaluated}")
 
     return build_latex(lines)
 
 
-def handle_solving_mode(statements, explicit_variables, domain_map):
+def handle_solving_mode(statements, explicit_variables, domain_map, call_dict, requested_domain=None):
     original_latex = format_original_statements(statements, solving_mode=True)
     expanded_statements = expand_matrix_equalities(statements)
     all_symbol_names = ordered_symbol_names(expanded_statements)
 
     if explicit_variables:
-        target_symbols = [sympy.Symbol(name) for name in explicit_variables]
+        missing = [name for name in explicit_variables if name not in all_symbol_names]
+        if missing and all_symbol_names:
+            raise ValueError(
+                "Variable " + ", ".join(missing) + " does not appear as a separate symbol. "
+                "Multi-letter names are single variables; use * between variables when multiplying."
+            )
+        target_symbols = [call_dict.get(name, sympy.Symbol(name)) for name in explicit_variables]
     else:
         if not all_symbol_names:
+            if domain_map:
+                raise ValueError("Ranges require a variable in the equation or an explicit vars option.")
             outcome = "\\text{Tautology (always true)}" if evaluate_truth(expanded_statements) else "\\text{Contradiction (no solution)}"
             return build_latex([
                 original_latex,
@@ -676,13 +866,20 @@ def handle_solving_mode(statements, explicit_variables, domain_map):
             ])
 
         if len(all_symbol_names) > 1:
-            raise ValueError(
-                "Multiple variables detected: "
-                + ", ".join(all_symbol_names)
-                + ". Please specify vars:<variable>."
-            )
+            if len(expanded_statements) == 1:
+                raise ValueError(
+                    "Multiple variables detected: "
+                    + ", ".join(all_symbol_names)
+                    + ". Please specify vars:<variable>."
+                )
+            target_symbols = [call_dict.get(name, sympy.Symbol(name)) for name in all_symbol_names]
+        else:
+            target_symbols = [call_dict.get(all_symbol_names[0], sympy.Symbol(all_symbol_names[0]))]
 
-        target_symbols = [sympy.Symbol(all_symbol_names[0])]
+    target_names = {symbol.name for symbol in target_symbols}
+    unused_ranges = [name for name in domain_map if name not in target_names]
+    if unused_ranges:
+        raise ValueError("Range " + ", ".join(unused_ranges) + " does not match a variable being solved for.")
 
     has_inequality = any(
         statement["kind"] == "relation" and statement["operator"] in {"<", ">", "<=", ">="}
@@ -690,6 +887,8 @@ def handle_solving_mode(statements, explicit_variables, domain_map):
     )
 
     if has_inequality:
+        if requested_domain == "complex":
+            raise ValueError("Inequalities require a real domain.")
         if len(target_symbols) != 1:
             raise ValueError("Inequality solving currently supports exactly one target variable.")
 
@@ -700,20 +899,60 @@ def handle_solving_mode(statements, explicit_variables, domain_map):
         ])
 
     if len(expanded_statements) == 1 and len(target_symbols) == 1:
-        solution = solve_single_equation(expanded_statements[0], target_symbols[0], domain_map)
-        return build_latex([
+        cases = parameterized_linear_cases(expanded_statements[0], target_symbols[0], domain_map, requested_domain)
+        if cases:
+            return build_latex([original_latex, f"\\implies {cases}"])
+        try:
+            polynomial = sympy.Poly(statement_residual(expanded_statements[0]), target_symbols[0])
+            leading = polynomial.LC()
+            parameters = {
+                symbol for symbol in polynomial.as_expr().free_symbols - {target_symbols[0]}
+                if symbol.is_zero is not True
+            }
+            if (polynomial.degree() > 1 and leading.free_symbols and leading.is_zero is None) or (
+                    polynomial.degree() > 2 and parameters):
+                # Radical formulas for higher-degree parameterized polynomials
+                # can be undefined at exceptional parameter values.
+                expanded_statements[0]["partial_solution"] = True
+        except sympy.PolynomialError:
+            pass
+        solution = solve_single_equation(expanded_statements[0], target_symbols[0], domain_map, requested_domain)
+        lines = [
             original_latex,
             f"\\implies {format_solution_set(target_symbols[0], solution)}",
-        ])
+        ]
+        if expanded_statements[0].get("partial_solution"):
+            if solution == sympy.EmptySet:
+                lines[1] = r"\implies \text{No solution found}"
+            lines.append(r"\text{Partial solution; completeness not established}")
+            if expanded_statements[0].get("real_fallback"):
+                lines.append(r"\text{Only real solutions shown; complex case unresolved}")
+        return build_latex(lines)
 
     equations = [statement_residual(statement) for statement in expanded_statements]
     solutions = sympy.solve(equations, target_symbols, dict=True)
-    solutions = filter_solutions_by_domain(solutions, domain_map)
+    solutions = filter_solutions_by_domain(solutions, domain_map, expanded_statements, target_symbols, requested_domain or "complex")
 
-    return build_latex([
+    # solve() can omit periodic families and parameter-dependent degeneracies.
+    # Only claim completeness for systems that are linear and have no free
+    # parameters outside the requested unknowns.
+    parameters = set().union(*(equation.free_symbols for equation in equations)) - set(target_symbols)
+    try:
+        sympy.linear_eq_to_matrix(equations, target_symbols)
+        partial = bool(parameters)
+    except NonlinearError:
+        partial = True
+    formatted = format_system_solutions(target_symbols, solutions)
+    if partial and formatted == r"\text{No solution}":
+        formatted = r"\text{No solution found}"
+    lines = [
         original_latex,
-        f"\\implies {format_system_solutions(target_symbols, solutions)}",
-    ])
+        f"\\implies {formatted}",
+    ]
+    if partial:
+        statements[0]["partial_solution"] = True
+        lines.append(r"\text{Partial solution; completeness not established}")
+    return build_latex(lines)
 
 
 def main():
@@ -729,13 +968,22 @@ def main():
         )
         variables = normalize_variables(input_data.get("variables", input_data.get("variable")))
         ranges = normalize_ranges(input_data.get("ranges"))
+        assumption_facts = parse_assumptions(input_data.get("assume"))
+        from scientific_helpers import configure
+        scientific_context = configure(assumption_facts)
+        requested_domain = input_data.get("domain")
+        if requested_domain not in (None, "real", "complex"):
+            raise ValueError("Domain must be real or complex.")
         mode = input_data.get("mode")
         if mode is not None:
             mode = str(mode).strip().lower()
             if mode == "null":
                 mode = None
+        if mode is not None and requested_domain:
+            raise ValueError("For expression modes, use assume:{x:real} rather than domain.")
 
         call_dict = get_base_local_dict()
+        call_dict.update(assumed_symbols(assumption_facts))
         call_dict.update({
             "Matrix": sympy.Matrix,
             "det": det_inline,
@@ -746,17 +994,74 @@ def main():
             "trace": trace_inline,
         })
         for name in set(variables) | set(ranges.keys()):
-            call_dict[name] = sympy.Symbol(name)
+            if name not in assumption_facts:
+                call_dict[name] = sympy.Symbol(name)
 
-        statements = [parse_statement(entry, call_dict) for entry in equations]
+        statements = [parse_statement(entry, call_dict, preserve_input=bool(assumption_facts)) for entry in equations]
+        if scientific_context["used"]:
+            for statement in statements:
+                values = ([statement["expr"]] if statement["kind"] == "expression"
+                          else [statement["lhs"], statement["rhs"]])
+                if any(hasattr(value, "has") and value.has(sympy.nan, sympy.zoo) for value in values):
+                    raise ValueError("The combined helper expression is indeterminate or undefined.")
+        if mode is None and "series" in scientific_context["used"]:
+            raise ValueError("A series includes a remainder and cannot be solved as an exact equation. Use it in an expression or plot its truncated polynomial.")
+        if mode is None and scientific_context["real_targets"]:
+            targets = set(variables) if variables else {
+                symbol.name for statement in statements for symbol in statement["free_symbols"]
+            }
+            real_targets = set(scientific_context["real_targets"])
+            if targets & real_targets:
+                if requested_domain == "complex":
+                    raise ValueError("Fourier and inverse Laplace output variables are real; use domain:real.")
+                if requested_domain is None:
+                    if not targets <= real_targets:
+                        raise ValueError("The transform output variable is real. Use domain:real or isolate that variable with vars.")
+                    requested_domain = "real"
+        if mode is None and scientific_context["conditions"]:
+            targets = set(variables) if variables else {
+                symbol.name for statement in statements for symbol in statement["free_symbols"]
+            }
+            for item in scientific_context["conditions"]:
+                if item["plane"] == -sympy.oo and item["condition"] == sympy.true:
+                    continue
+                constrained = {item["target"].name} | {
+                    symbol.name for symbol in item["plane"].free_symbols | item["condition"].free_symbols
+                }
+                if targets & constrained:
+                    raise ValueError("Solving for a variable in a Laplace convergence condition is not yet supported. Solve the closed form separately and check the convergence region.")
+        denominator_conditions = input_denominator_conditions(statements)
         domain_map = build_domain_map(ranges, call_dict)
 
         if mode is None:
-            latex = handle_solving_mode(statements, variables, domain_map)
+            latex = handle_solving_mode(statements, variables, domain_map, call_dict, requested_domain)
         else:
-            latex = handle_expression_mode(statements, mode)
+            latex = handle_expression_mode(statements, mode, bool(scientific_context["used"]))
 
-        emit({"success": True, "latex": latex})
+        labels = []
+        if requested_domain:
+            labels.append(r"\text{Domain: }& \mathbb{" + ("R" if requested_domain == "real" else "C") + "}")
+        elif mode is None:
+            has_inequality = any(statement["kind"] == "relation" and statement["operator"] != "=" for statement in statements)
+            labels.append(r"\text{Default domain: }& \mathbb{" + ("R" if has_inequality else "C") + "}")
+        if domain_map:
+            labels.append(r"\text{Ranges: }& " + r",\quad ".join(
+                sympy.latex(call_dict[name]) + r"\in " + sympy.latex(interval)
+                for name, interval in domain_map.items()
+            ))
+        if assumption_facts:
+            labels.append(r"\text{Assumptions: }& " + assumption_latex(assumption_facts))
+        if denominator_conditions:
+            labels.append(r"\text{Input requires: }& " + r",\quad ".join(sympy.latex(condition) for condition in denominator_conditions))
+        labels.extend(scientific_context["lines"])
+        if labels:
+            latex = latex.replace("\n\\end{aligned}", " \\\\\n" + " \\\\\n".join(labels) + "\n\\end{aligned}")
+        emit({
+            "success": True,
+            "latex": latex,
+            "complete": not any(statement.get("partial_solution") for statement in statements),
+            "real_subset": any(statement.get("real_fallback") for statement in statements)
+        })
     except Exception as exc:
         emit({"success": False, "error": str(exc)})
 

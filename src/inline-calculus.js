@@ -5,6 +5,7 @@ const COORDINATE_NAMES = new Set(['x', 'y', 'z']);
 const LINE_PARAM_PREFERENCES = ['t', 's', 'tau', 'theta', 'u', 'v'];
 const SURFACE_PARAM_PREFERENCES = ['u', 'v', 's', 't', 'theta', 'phi', 'r', 'w'];
 const VECTOR_VAR_PREFERENCES = ['x', 'y', 'z', 'r', 'theta', 'phi', 'u', 'v', 'w', 's', 't'];
+const INLINE_OPTION_NAMES = new Set(['vars', 'dep', 'at', 'kind', 'param']);
 const SCALAR_VECTOR_INLINE_HELPERS = new Set(['grad', 'gradx', 'grady', 'gradz', 'lap']);
 const VECTOR_FIELD_INLINE_HELPERS = new Set(['div', 'curl', 'curlx', 'curly', 'curlz']);
 const VECTOR_INLINE_HELPERS = new Set([
@@ -95,7 +96,9 @@ function parseOptionToken(text) {
         return null;
     }
 
-    const key = source.slice(0, colonIndex).trim().toLowerCase();
+    const originalKey = source.slice(0, colonIndex).trim();
+    const normalizedKey = originalKey.toLowerCase();
+    const key = INLINE_OPTION_NAMES.has(normalizedKey) ? normalizedKey : originalKey;
     const rawValue = source.slice(colonIndex + 1).trim();
     if (!VALID_VAR_RE.test(key) || !rawValue) {
         return null;
@@ -104,6 +107,7 @@ function parseOptionToken(text) {
     if (rawValue.startsWith('{') && rawValue.endsWith('}')) {
         return {
             key,
+            originalKey,
             type: 'grouped',
             value: rawValue.slice(1, -1).trim(),
             rawValue
@@ -113,6 +117,7 @@ function parseOptionToken(text) {
     if (rawValue.startsWith('[') && rawValue.endsWith(']')) {
         return {
             key,
+            originalKey,
             type: 'range',
             value: rawValue.slice(1, -1).trim(),
             rawValue
@@ -121,6 +126,7 @@ function parseOptionToken(text) {
 
     return {
         key,
+        originalKey,
         type: 'scalar',
         value: rawValue,
         rawValue
@@ -170,10 +176,13 @@ function parseAssignmentList(raw) {
         if (!token || token.type === 'range') {
             return { success: false, error: `Invalid assignment "${part}". Use name:expression.` };
         }
-        if (!VALID_VAR_RE.test(token.key)) {
-            return { success: false, error: `Invalid assignment target "${token.key}".` };
+        if (!VALID_VAR_RE.test(token.originalKey)) {
+            return { success: false, error: `Invalid assignment target "${token.originalKey}".` };
         }
-        assignments.push({ name: token.key, exprSource: token.value });
+        if (assignments.some((assignment) => assignment.name === token.originalKey)) {
+            return { success: false, error: `Duplicate assignment for "${token.originalKey}".` };
+        }
+        assignments.push({ name: token.originalKey, exprSource: token.value });
     }
 
     return { success: true, assignments };
@@ -181,7 +190,7 @@ function parseAssignmentList(raw) {
 
 function parseRangeOptionText(text) {
     const option = parseOptionToken(text);
-    if (!option || option.type !== 'range' || !VALID_VAR_RE.test(option.key)) {
+    if (!option || option.type !== 'range' || !VALID_VAR_RE.test(option.originalKey)) {
         return null;
     }
 
@@ -193,7 +202,7 @@ function parseRangeOptionText(text) {
     return {
         success: true,
         range: {
-            name: option.key,
+            name: option.originalKey,
             lowerSource: parts[0].trim(),
             upperSource: parts[1].trim()
         }
@@ -375,6 +384,9 @@ function parseVectorHelperCall(functionName, descriptors, extractVars) {
         if (option.key !== 'vars') {
             return { success: false, error: `Unsupported ${functionName} helper option "${option.key}".` };
         }
+        if (variableRecipe) {
+            return { success: false, error: `Duplicate vars option in ${functionName}.` };
+        }
 
         const parsedRecipe = parseVariableRecipe(option.value);
         if (!parsedRecipe.success) {
@@ -476,6 +488,7 @@ function parseDerivativeCall(descriptors, extractVars) {
     let atAssignments = [];
     let positionalEvalSources = [];
     let usesPositionalSyntax = false;
+    const seenOptions = new Set();
 
     if (
         rest.length > 0 &&
@@ -503,7 +516,13 @@ function parseDerivativeCall(descriptors, extractVars) {
                 continue;
             }
 
+            if (seenOptions.has(option.key)) {
+                return { success: false, error: `Duplicate ${option.key} option in deriv.` };
+            }
+            seenOptions.add(option.key);
+
             if (option.key === 'vars') {
+                if (recipe) return { success: false, error: 'Specify derivative variables only once.' };
                 const parsedRecipe = parseVariableRecipe(option.value);
                 if (!parsedRecipe.success) {
                     return parsedRecipe;
@@ -555,6 +574,9 @@ function parseDerivativeCall(descriptors, extractVars) {
             error: `deriv positional evaluation arguments must match the number of unique variables (${uniqueVariables.length}).`
         };
     }
+    if (positionalEvalSources.length && atAssignments.some((assignment) => uniqueVariables.includes(assignment.name))) {
+        return { success: false, error: 'Specify each derivative evaluation point only once.' };
+    }
 
     return {
         success: true,
@@ -584,6 +606,7 @@ function parseIntegralCall(descriptors, extractVars) {
     let ranges = [];
     let variableRecipe = null;
     let usesPositionalSyntax = false;
+    const seenOptions = new Set();
 
     if (rest.length > 0 && isBareVariableDescriptor(rest[0]) && !hasOptionLikeArgs) {
         const varName = rest[0].source.trim();
@@ -608,6 +631,9 @@ function parseIntegralCall(descriptors, extractVars) {
                 if (!rangeResult.success) {
                     return rangeResult;
                 }
+                if (ranges.some((range) => range.name === rangeResult.range.name)) {
+                    return { success: false, error: `Duplicate range for "${rangeResult.range.name}".` };
+                }
                 ranges.push(rangeResult.range);
                 continue;
             }
@@ -620,6 +646,10 @@ function parseIntegralCall(descriptors, extractVars) {
                 }
                 return { success: false, error: `Unsupported integ helper argument "${bare}".` };
             }
+            if (seenOptions.has(option.key)) {
+                return { success: false, error: `Duplicate ${option.key} option in integ.` };
+            }
+            seenOptions.add(option.key);
 
             if (option.key === 'kind') {
                 kind = option.value.toLowerCase();
@@ -632,6 +662,7 @@ function parseIntegralCall(descriptors, extractVars) {
             }
 
             if (option.key === 'vars') {
+                if (variableRecipe) return { success: false, error: 'Specify integration variables only once.' };
                 const parsedRecipe = parseVariableRecipe(option.value);
                 if (!parsedRecipe.success) {
                     return parsedRecipe;
@@ -652,6 +683,21 @@ function parseIntegralCall(descriptors, extractVars) {
 
     if (kind && !['line', 'surface', 'volume'].includes(kind)) {
         return { success: false, error: `Unsupported integral kind "${kind}".` };
+    }
+    if (variableRecipe && (ranges.length || kind)) {
+        return { success: false, error: 'Use either vars or named ranges for an integral, not both.' };
+    }
+    if (paramSource && !['line', 'surface'].includes(kind)) {
+        return { success: false, error: 'Option "param" requires kind:line or kind:surface.' };
+    }
+    if (kind === 'line' && (!paramSource || ranges.length !== 1)) {
+        return { success: false, error: 'integ kind:line requires param:{...} and exactly one range.' };
+    }
+    if (kind === 'surface' && (!paramSource || ranges.length !== 2)) {
+        return { success: false, error: 'integ kind:surface requires param:{...} and exactly two ranges.' };
+    }
+    if (kind === 'volume' && ranges.length !== 3) {
+        return { success: false, error: 'integ kind:volume requires exactly three ranges.' };
     }
 
     if (!kind && ranges.length === 0 && !variableRecipe) {

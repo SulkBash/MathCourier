@@ -30,6 +30,14 @@ function loadSolveRouter() {
                 calls.push({ fn: 'solveEquation', input });
                 return { success: true, latex: `EQ:${input}` };
             },
+            solveScientific: async (operation, input, options) => {
+                calls.push({ fn: 'solveScientific', operation, input, options });
+                return { success: true, latex: 'SCI:' + operation };
+            },
+            solveCurvilinear: async (operation, input, coords) => {
+                calls.push({ fn: 'solveCurvilinear', operation, input, coords });
+                return { success: true, latex: 'COORD:' + operation };
+            },
             solveMatrixExpression: async (input) => {
                 calls.push({ fn: 'solveMatrixExpression', input });
                 return { success: true, latex: `MATRIX:${input}` };
@@ -80,6 +88,69 @@ function loadSolveRouter() {
 
 async function run() {
     console.log('=== RUNNING SOLVE ROUTER TESTS ===');
+
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('limit[sin(x)/x, x, 0] dir:left');
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(calls[0].fn, 'solveScientific');
+        assert.strictEqual(calls[0].operation, 'limit');
+        assert.strictEqual(calls[0].options.dir, 'left');
+        console.log('PASS: Scientific helpers route with options');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('limit[a*x,x,0] dir:left assume:{a>0} mode:simplify');
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(calls[0].fn, 'solveEquation');
+        assert.strictEqual(calls[0].input, 'limit[a*x,x,0, dir:left] assume:{a>0} mode:simplify');
+        console.log('PASS: Expression modes preserve scientific helper options');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('grad[r^2] coords:spherical');
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(calls[0].fn, 'solveCurvilinear');
+        assert.strictEqual(calls[0].coords, 'spherical');
+        console.log('PASS: Curvilinear vector helpers route by coordinate system');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('grad[x^2+y^2] vars:{y,x}');
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(calls[0].input, 'x^2+y^2 vars:{y, x}');
+        console.log('PASS: Outer vector vars reach the Cartesian solver');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('grad[rho^2] vars:{rho,alpha,beta} coords:spherical');
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(calls[0].input, 'rho^2, vars:{rho, alpha, beta}');
+        console.log('PASS: Outer vector vars reach the curvilinear solver');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('grad[x^2, vars:{x}] vars:{y}');
+        assert.strictEqual(result.success, false);
+        assert.match(result.error, /either inside.*not both/i);
+        assert.deepStrictEqual(calls, []);
+        console.log('PASS: Conflicting inner and outer vector vars are rejected');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('x=1 kind:vector');
+        assert.strictEqual(result.success, false);
+        assert.match(result.error, /kind.*not supported/i);
+        assert.deepStrictEqual(calls, []);
+        console.log('PASS: Equation options cannot be silently ignored');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('sqrt(x^2) assume:{x:real}');
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(calls[0].input, 'sqrt(x^2) assume:{x:real} mode:simplify');
+        console.log('PASS: Assumptions survive expression-mode routing');
+    }
 
     {
         const { handleSolveCommand, calls } = loadSolveRouter();
@@ -160,6 +231,13 @@ async function run() {
         assert.deepStrictEqual(calls.map((entry) => entry.fn), ['handleOdeCommand']);
         assert.strictEqual(calls[0].input, 'dy/dx = -y ic:{y(0)=1}');
         console.log('PASS: ODEs auto-route without removed mode overrides');
+    }
+    {
+        const { handleSolveCommand, calls } = loadSolveRouter();
+        const result = await handleSolveCommand('du/dt=d2u/dx2 ic:{u(x,0)=sin(x)} bc:{u(0,t)=0} view:2d camera:z');
+        assert.strictEqual(result.route, 'pde');
+        assert.strictEqual(calls[0].fn, 'handlePdeCommand');
+        console.log('PASS: PDE camera options reach the correct route');
     }
 
     {

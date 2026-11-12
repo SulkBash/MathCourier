@@ -1,5 +1,7 @@
 const handlePdeCommand = require('../src/commands/pde');
 const renderer = require('../src/renderer');
+const katex = require('../src/renderer/katex');
+const assert = require('assert');
 const { createHarness } = require('./test-harness');
 
 const harness = createHarness('PDE SOLVER & VISUALIZER INTEGRATION TESTS');
@@ -43,6 +45,39 @@ async function runTests() {
         console.log('Bootstrapping LaTeX Renderer (Puppeteer)...');
         await renderer.initialize();
         console.log('Renderer ready.\n');
+
+        await harness.runTest('PDE surface uses the actual variable names as axis titles', async () => {
+            const originalCreatePage = katex.createRenderPage;
+            let titles = null;
+            katex.createRenderPage = async () => {
+                const page = await originalCreatePage();
+                const evaluate = page.evaluate.bind(page);
+                page.evaluate = async (...args) => {
+                    const result = await evaluate(...args);
+                    const renderedTitles = await evaluate(() => {
+                        const plot = document.getElementById('plotly-graph');
+                        const scene = plot && plot.layout && plot.layout.scene;
+                        return scene ? [scene.xaxis.title.text, scene.yaxis.title.text, scene.zaxis.title.text] : null;
+                    });
+                    if (renderedTitles) titles = renderedTitles;
+                    return result;
+                };
+                return page;
+            };
+            try {
+                const result = await renderer.renderPde({
+                    success: true,
+                    x: [0, 1], t: [0, 1], u: [[0, 1], [1, 0]],
+                    xDomain: [0, 1], tDomain: [0, 1], pde_latex: '',
+                    spatial_variable: 'X', temporal_variable: 'T', dependent_variable: 'v'
+                });
+                harness.expectMediaSuccess(result);
+                assert.deepStrictEqual(titles, ['X', 'T', 'v']);
+                console.log('  ok: X, T, and v are displayed on the correct axes');
+            } finally {
+                katex.createRenderPage = originalCreatePage;
+            }
+        });
 
         for (const tc of testCases) {
             await harness.runTest(tc.name, async () => {

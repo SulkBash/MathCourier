@@ -1,7 +1,24 @@
 const assert = require('assert');
 const plot3dModule = require('../src/renderer/plot3d');
+const { analyze3dPlot } = require('../src/plot-semantics');
 
 console.log('=== RUNNING 3D INTERNALS TESTS ===');
+
+{
+    const inferred = analyze3dPlot('z=x+y', { labeledDomains: { z: [0, 4] } });
+    assert.deepStrictEqual(inferred.surfaceVars, ['x', 'y']);
+    assert.strictEqual(analyze3dPlot('z=x+y+R', { variables: ['x', 'y'] }).coordSystem, 'cartesian');
+    const context = {
+        customOptions: {}, expr: 'z=xy+y',
+        semantics: { family: 'surface-explicit', lhs: 'z', rhs: 'xy+y', surfaceVars: ['xy', 'y'], coordSystem: 'cartesian' },
+        parameterDomain1: null, parameterDomain2: null, providedDomains: { x: true, y: true, z: false }
+    };
+    const scene = plot3dModule._internals.buildPlot3dScene(context, { xDomain: [1, 2], yDomain: [3, 4], zDomain: null });
+    assert.strictEqual(scene.success, true, scene.error);
+    assert.strictEqual(scene.plotData.z[0][0], 4);
+    assert.strictEqual(plot3dModule._internals.normalizeAnimationIdentifier('T'), 'T');
+    console.log('PASS: 3D sampling preserves multi-letter variables and uppercase animation names');
+}
 
 {
     const traceVars = plot3dModule._internals.getPlot3dTraceVariables({

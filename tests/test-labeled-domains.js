@@ -12,7 +12,8 @@ async function runTest(name, fn) {
     try {
         const result = await fn();
         if (result.success && result.data) {
-            const filename = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+$/, '') + '.png';
+            const extension = result.mimeType === 'video/mp4' ? '.mp4' : result.mimeType === 'image/jpeg' ? '.jpg' : '.png';
+            const filename = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+$/, '') + extension;
             const out = path.join(OUTPUT_DIR, filename);
             fs.writeFileSync(out, Buffer.from(result.data, 'base64'));
             console.log(`  ok (${result.source}) -> ${out}`);
@@ -31,6 +32,48 @@ async function runTests() {
 
     await renderer.initialize();
     if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
+
+    await runTest('Plot uppercase named variable with its range', () =>
+        handlePlotCommand('sin(T) T:[0, 3]')
+    );
+    await runTest('Plot phi as a named variable', () =>
+        handlePlotCommand('sin(phi) phi:[0, 3]')
+    );
+    await runTest('Plot nested scientific helper', () =>
+        handlePlotCommand('limit[sin(t*x)/t,t,0]+1 x:[-2,2]')
+    );
+    await runTest('Plot truncated series in 2D', () =>
+        handlePlotCommand('series[sin(x),x,0,5] x:[-2,2]')
+    );
+    await runTest('Plot truncated series in 3D', () =>
+        handlePlotCommand('series[sin(x*y),x,0,5] view:3d x:[-2,2] y:[-2,2]')
+    );
+    await runTest('Plot animated truncated series in 3D', () =>
+        handlePlotCommand('series[sin(x*y),x,0,5] view:3d camera:z x:[-2,2] y:[-2,2]')
+    );
+    for (const input of [
+        'sin(x) unused:[0,1]',
+        'z=x+y view:3d unused:[0,1]',
+        'sin(x) animate:Q Q:[0,1]',
+        'z=x+y view:3d animate:Q Q:[0,1]'
+    ]) {
+        const result = await handlePlotCommand(input);
+        if (result.success || !String(result.error).includes('not used')) {
+            console.error(`  FAIL: unused range was not rejected for ${input}: ${result.error || 'unexpected success'}`);
+            process.exitCode = 1;
+        } else {
+            console.log(`  ok: unused range rejected for ${input}`);
+        }
+    }
+    for (const input of ['sin(x)+phi', 'z=x+y+E view:3d vars:{x,y}']) {
+        const result = await handlePlotCommand(input);
+        if (result.success || !String(result.error).includes('no value')) {
+            console.error(`  FAIL: unbound variable was not rejected for ${input}: ${result.error || 'unexpected success'}`);
+            process.exitCode = 1;
+        } else {
+            console.log(`  ok: unbound variable rejected for ${input}`);
+        }
+    }
 
     // Test 1: Labeled X domain in 2D plot
     await runTest('Plot 2D with labeled X domain', () =>

@@ -89,7 +89,7 @@ async function runTests() {
     });
 
     await harness.runTest('Plot vector field', async () => {
-        const result = await renderer.renderPlot('v(x,y)=(sin(x)/xy,cos(y)/xy)', { xDomain: [-2, 2], yDomain: [-2, 2] });
+        const result = await renderer.renderPlot('v(x,y)=(sin(x)/(x*y),cos(y)/(x*y))', { xDomain: [-2, 2], yDomain: [-2, 2] });
         harness.writeResult('Plot vector field', harness.expectMediaSuccess(result));
     });
 

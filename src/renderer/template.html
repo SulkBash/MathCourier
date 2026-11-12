@@ -885,7 +885,7 @@
       return p10 * 10;
     }
 
-    function build3dAxisLayout(domain, options) {
+    function build3dAxisLayout(domain, options, title) {
       const tickSize = Math.max(10, Math.round(Math.min(options.renderWidth || options.width || 600, options.height || 450) * 0.018));
       return {
         gridcolor: options.gridColor || 'rgba(255, 255, 255, 0.08)',
@@ -894,6 +894,7 @@
         showbackground: false,
         zerolinecolor: options.axisColor || 'rgba(255, 255, 255, 0.3)',
         range: domain,
+        ...(title ? { title: { text: title } } : {}),
         tickfont: {
           size: tickSize,
           color: options.axisLabelColor || 'rgba(248, 250, 252, 0.8)'
@@ -1061,9 +1062,9 @@
           },
           aspectmode: options.aspectmode || (type === 'vector3d' ? 'cube' : 'auto'),
           aspectratio: options.aspectratio,
-          xaxis: build3dAxisLayout(options.xLim || options.xDomain, options),
-          yaxis: build3dAxisLayout(options.yLim || options.yDomain, options),
-          zaxis: build3dAxisLayout(options.zLim || options.zDomain, options),
+          xaxis: build3dAxisLayout(options.xLim || options.xDomain, options, options.axisTitles && options.axisTitles.x),
+          yaxis: build3dAxisLayout(options.yLim || options.yDomain, options, options.axisTitles && options.axisTitles.y),
+          zaxis: build3dAxisLayout(options.zLim || options.zDomain, options, options.axisTitles && options.axisTitles.z),
           camera: options.camera || {
             eye: { x: 1.5, y: 1.5, z: 1.25 },
             up: { x: 0, y: 0, z: 1 },

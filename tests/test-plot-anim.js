@@ -33,6 +33,10 @@ const animated2dCases = [
     {
         name: '7. Vector Field Parameter Sweep',
         input: '(-a*y, a*x) kind:vector animate:a x:[-5, 5] y:[-5, 5] a:[0.25, 2]'
+    },
+    {
+        name: '8. Truncated Series Progressive Draw',
+        input: 'series[sin(x),x,0,5] animate:x x:[-3,3] y:[-2,2]'
     }
 ];
 

@@ -1,5 +1,5 @@
 const renderer = require('../renderer');
-const { parseCommandSyntax } = require('../parser');
+const { parseCommandSyntax, validateRouteOptions } = require('../parser');
 
 const VALID_MODES = new Set(['formula', 'chem', 'tikz']);
 
@@ -32,6 +32,8 @@ async function handleLatexCommand(input, options = {}) {
     if (!parsed.success) {
         return { success: false, error: parsed.errors.join('\n') };
     }
+    const optionError = validateRouteOptions(parsed, ['mode'], '!latex');
+    if (optionError) return { success: false, error: optionError };
 
     const body = (parsed.body || '').trim();
     if (!body) {

@@ -1,7 +1,7 @@
 const math = require('../math');
 const config = require('../../config');
 const katexModule = require('./katex');
-const { formatVarToTex } = require('../utils');
+const { formatVarToTex, MATHJS_VARIABLE_NAMES } = require('../utils');
 const { analyze2dPlot, extractExpressionVariables } = require('../plot-semantics');
 
 const DEFAULT_PLOT2D_ANIMATION_FRAMES = Math.max(8, Number(config.bot?.plot2dAnimationFrames) || 20);
@@ -20,80 +20,6 @@ function toReal(val) {
     }
     return typeof val === 'number' ? val : NaN;
 }
-// Insert implicit multiplication between adjacent x/y/t variables for mathjs
-function preprocessExpr(expr) {
-    if (!expr) return '';
-
-    const symbols = new Set(['x', 'y', 't']);
-    const isIdentifierChar = (char) => /[A-Za-z0-9_]/.test(char);
-    let result = '';
-    let inQuotes = false;
-    let quoteChar = null;
-
-    for (let i = 0; i < expr.length; i++) {
-        const char = expr[i];
-
-        if (inQuotes) {
-            result += char;
-            if (char === '\\' && i + 1 < expr.length) {
-                result += expr[i + 1];
-                i++;
-            } else if (char === quoteChar) {
-                inQuotes = false;
-                quoteChar = null;
-            }
-            continue;
-        }
-
-        if (char === '"' || char === '\'') {
-            inQuotes = true;
-            quoteChar = char;
-            result += char;
-            continue;
-        }
-
-        result += char;
-
-        if (!symbols.has(char.toLowerCase())) {
-            continue;
-        }
-
-        const prevChar = i > 0 ? expr[i - 1] : '';
-        if (prevChar && isIdentifierChar(prevChar)) {
-            let skip = true;
-            let nextIndex = i + 1;
-            while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
-                nextIndex++;
-            }
-            if (nextIndex < expr.length && symbols.has(expr[nextIndex].toLowerCase())) {
-                skip = false;
-            }
-            if (/\d/.test(prevChar)) {
-                skip = false;
-            }
-            if (skip) {
-                continue;
-            }
-        }
-
-        let nextIndex = i + 1;
-        while (nextIndex < expr.length && /\s/.test(expr[nextIndex])) {
-            nextIndex++;
-        }
-
-        if (nextIndex >= expr.length) {
-            continue;
-        }
-
-        const nextChar = expr[nextIndex];
-        if (symbols.has(nextChar.toLowerCase()) || nextChar === '(') {
-            result += '*';
-        }
-    }
-
-    return result;
-}
-
 function splitByTopLevelCommas(expr) {
     const parts = [];
     let current = '';
@@ -240,8 +166,8 @@ function parseSingleExpressionStructured(expr, opts) {
         type = 'vector';
         const [uExpr, vExpr] = semantics.components;
         const [xVar, yVar] = semantics.coordVars;
-        const uCompiled = math.compile(preprocessExpr(uExpr));
-        const vCompiled = math.compile(preprocessExpr(vExpr));
+        const uCompiled = math.compile(uExpr);
+        const vCompiled = math.compile(vExpr);
 
         const steps = 16;
         const [xMin, xMax] = opts.xDomain;
@@ -297,8 +223,8 @@ function parseSingleExpressionStructured(expr, opts) {
         type = 'parametric';
         const [xExpr, yExpr] = semantics.components;
         const paramVar = semantics.parameterVar;
-        const xCompiled = math.compile(preprocessExpr(xExpr));
-        const yCompiled = math.compile(preprocessExpr(yExpr));
+        const xCompiled = math.compile(xExpr);
+        const yCompiled = math.compile(yExpr);
         const points = [];
         const [tMin, tMax] = opts.parameterDomain || [0, 2 * Math.PI];
         const steps = 500;
@@ -332,7 +258,7 @@ function parseSingleExpressionStructured(expr, opts) {
     } else if (semantics.family === 'polar') {
         type = 'polar';
         const angleVar = semantics.angleVar;
-        const rCompiled = math.compile(preprocessExpr(semantics.rhs));
+        const rCompiled = math.compile(semantics.rhs);
         const points = [];
         const [thetaMin, thetaMax] = opts.parameterDomain || [0, 2 * Math.PI];
         const steps = 500;
@@ -368,7 +294,7 @@ function parseSingleExpressionStructured(expr, opts) {
         type = 'explicit';
         const independentVar = semantics.independentVar;
         const dependentVar = semantics.dependentVar || 'y';
-        const compiled = math.compile(preprocessExpr(semantics.rhs));
+        const compiled = math.compile(semantics.rhs);
         const points = [];
         const [xMin, xMax] = opts.xDomain;
         const [yMin, yMax] = opts.yDomain;
@@ -447,7 +373,7 @@ function parseSingleExpressionStructured(expr, opts) {
         const lhs = semantics.lhs;
         const rhs = semantics.rhs;
         const [xVar, yVar] = semantics.coordVars || ['x', 'y'];
-        const combined = `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+        const combined = `(${lhs}) - (${rhs})`;
         const compiled = math.compile(combined);
         const steps = 150;
         const [xMin, xMax] = opts.xDomain;
@@ -532,7 +458,7 @@ function parseSingleExpression(expr, opts) {
     if (parts.length > 1) {
         helpers = parts.slice(0, parts.length - 1);
         mainStatement = parts[parts.length - 1];
-        preprocessedHelpers = helpers.map(h => preprocessExpr(h)).join(';\n') + ';\n';
+        preprocessedHelpers = helpers.join(';\n') + ';\n';
     }
 
     const namedVectorField = parseNamedVectorField(mainStatement);
@@ -541,7 +467,7 @@ function parseSingleExpression(expr, opts) {
     let isParametric = false;
     let parametricTuple = null;
 
-    if (vectorOrParametricTuple && vectorOrParametricTuple.some(comp => /\bt\b/i.test(comp))) {
+    if (vectorOrParametricTuple && vectorOrParametricTuple.some(comp => /\bt\b/.test(comp))) {
         isParametric = true;
         parametricTuple = vectorOrParametricTuple;
     }
@@ -562,13 +488,13 @@ function parseSingleExpression(expr, opts) {
         lhs = mainStatement.substring(0, eqIdx).trim();
         rhs = mainStatement.substring(eqIdx + 1).trim();
         
-        if (lhs.toLowerCase() === 'r') {
+        if (lhs === 'r') {
             isPolar = true;
             isExplicitPolar = true;
         } else if (/\br\b/i.test(mainStatement) || /\btheta\b/i.test(mainStatement)) {
             isPolar = true;
             isImplicit = true;
-        } else if (!/^(y|f\(x\))$/i.test(lhs)) {
+        } else if (!/^(y|f\(x\))$/.test(lhs)) {
             isImplicit = true;
         }
     } else {
@@ -590,8 +516,8 @@ function parseSingleExpression(expr, opts) {
 
     if (isVector) {
         type = 'vector';
-        let uCompiled = math.compile(preprocessedHelpers + preprocessExpr(uExpr));
-        let vCompiled = math.compile(preprocessedHelpers + preprocessExpr(vExpr));
+        let uCompiled = math.compile(preprocessedHelpers + uExpr);
+        let vCompiled = math.compile(preprocessedHelpers + vExpr);
 
         const steps = 16;
         const [xMin, xMax] = opts.xDomain;
@@ -645,8 +571,8 @@ function parseSingleExpression(expr, opts) {
     } else if (isParametric) {
         type = 'parametric';
         const [xExpr, yExpr] = parametricTuple;
-        const xCompiled = math.compile(preprocessedHelpers + preprocessExpr(xExpr));
-        const yCompiled = math.compile(preprocessedHelpers + preprocessExpr(yExpr));
+        const xCompiled = math.compile(preprocessedHelpers + xExpr);
+        const yCompiled = math.compile(preprocessedHelpers + yExpr);
 
         const points = [];
         const [tMin, tMax] = opts.parameterDomain || [0, 2 * Math.PI];
@@ -683,7 +609,7 @@ function parseSingleExpression(expr, opts) {
         label = mainStatement;
     } else if (isExplicitPolar) {
         type = 'polar';
-        const rCompiled = math.compile(preprocessedHelpers + preprocessExpr(rhs));
+        const rCompiled = math.compile(preprocessedHelpers + rhs);
 
         const points = [];
         const [thetaMin, thetaMax] = opts.parameterDomain || [0, 2 * Math.PI];
@@ -719,7 +645,7 @@ function parseSingleExpression(expr, opts) {
         label = mainStatement;
     } else if (!isImplicit) {
         type = 'explicit';
-        let compiled = math.compile(preprocessedHelpers + preprocessExpr(rhs));
+        let compiled = math.compile(preprocessedHelpers + rhs);
 
         const points = [];
         const [xMin, xMax] = opts.xDomain;
@@ -800,7 +726,7 @@ function parseSingleExpression(expr, opts) {
         label = mainStatement;
     } else {
         type = 'implicit';
-        const combined = preprocessedHelpers + `(${preprocessExpr(lhs)}) - (${preprocessExpr(rhs)})`;
+        const combined = preprocessedHelpers + `(${lhs}) - (${rhs})`;
         let compiled = math.compile(combined);
 
         const steps = 150;
@@ -876,6 +802,12 @@ async function renderPlot(rawExpr, customOptions = {}, renderPage = null) {
                 labeledDomains: customOptions.labeledDomains
             })
             : null;
+        const expressionSources = [
+            ...parts,
+            ...(semantics && Array.isArray(semantics.components) ? semantics.components : []),
+            semantics && semantics.lhs,
+            semantics && semantics.rhs
+        ].filter(Boolean);
 
         const traceVars = semantics
             ? (() => {
@@ -895,16 +827,29 @@ async function renderPlot(rawExpr, customOptions = {}, renderPage = null) {
                 }
             })()
             : [];
+        const boundVariables = new Set([
+            ...traceVars,
+            ...(semantics && semantics.coordVars || []),
+            semantics && semantics.angleVar,
+            semantics && semantics.parameterVar,
+            customOptions.animationVar,
+            'x', 'y'
+        ].filter(Boolean));
+        const unboundBuiltin = expressionSources.flatMap((source) => extractExpressionVariables(source))
+            .find((name) => MATHJS_VARIABLE_NAMES.has(name) && !boundVariables.has(name));
+        if (unboundBuiltin) {
+            return { success: false, error: `Variable "${unboundBuiltin}" has no value or plot axis.` };
+        }
 
         let isParametricOrPolar = false;
         if (semantics) {
             isParametricOrPolar = ['parametric', 'polar', 'implicit-polar'].includes(semantics.family);
         } else {
             for (const part of parts) {
-                const trimmed = part.toLowerCase();
+                const trimmed = part;
                 const tuple = parseVectorTuple(part, 2);
-                const isParametric = tuple && tuple.some(comp => /\bt\b/i.test(comp));
-                const isPolar = trimmed.startsWith('r=') || trimmed.includes('r =') || /\btheta\b/i.test(trimmed);
+                const isParametric = tuple && tuple.some(comp => /\bt\b/.test(comp));
+                const isPolar = trimmed.startsWith('r=') || trimmed.includes('r =') || /\btheta\b/.test(trimmed);
                 if (isParametric || isPolar) {
                     isParametricOrPolar = true;
                     break;
@@ -952,15 +897,20 @@ async function renderPlot(rawExpr, customOptions = {}, renderPage = null) {
                 tracingVar = animVar;
             }
         }
+        if (isAnimated && !isTracingMode && !expressionSources.some((source) => extractExpressionVariables(source).includes(animVar))) {
+            return { success: false, error: `Animation variable "${animVar}" is not used by this plot.` };
+        }
 
         const domains = customOptions.domains || [];
         const labeled = customOptions.labeledDomains || {};
+        const usedRanges = new Set();
         let positionalConsumed = 0;
 
         function resolveDomainForVar(varNames, fallbackDefault) {
             const names = Array.isArray(varNames) ? varNames : [varNames];
             for (const name of names) {
                 if (labeled[name]) {
+                    usedRanges.add(name);
                     return labeled[name];
                 }
             }
@@ -1037,6 +987,11 @@ async function renderPlot(rawExpr, customOptions = {}, renderPage = null) {
                 xDomain = resolveDomainForVar('x', graphStyle.defaultXDomain || [-10, 10]);
                 yDomain = resolveDomainForVar('y', graphStyle.defaultYDomain || [-10, 10]);
             }
+        }
+
+        const unusedRanges = Object.keys(labeled).filter((name) => !usedRanges.has(name));
+        if (unusedRanges.length) {
+            return { success: false, error: `Range ${unusedRanges.join(', ')} is not used by this plot.` };
         }
 
         if (isAnimated) {
@@ -1226,6 +1181,7 @@ async function renderPlot(rawExpr, customOptions = {}, renderPage = null) {
                         }
                     }
 
+                    if (customOptions.seriesTruncated) latexText += '\\quad\\text{(truncated series)}';
                     const renderResult = await animPage.evaluate((lat, t, pData, opt) => {
                         return window.renderGraph(lat, t, pData, opt);
                     }, latexText, type, plotData, opts);
@@ -1330,6 +1286,7 @@ async function renderPlot(rawExpr, customOptions = {}, renderPage = null) {
                 latexText = latexParts.join(',\\quad ');
             }
 
+            if (customOptions.seriesTruncated) latexText += '\\quad\\text{(truncated series)}';
             const renderResult = await page.evaluate((lat, t, pData, opt) => {
                 return window.renderGraph(lat, t, pData, opt);
             }, latexText, type, plotData, opts);
@@ -1406,5 +1363,6 @@ async function renderOde(latexText, curves, customOptions = {}, renderPage = nul
 module.exports = {
     renderPlot,
     renderOde,
-    splitByTopLevelCommas
+    splitByTopLevelCommas,
+    _internals: { parseSingleExpression }
 };

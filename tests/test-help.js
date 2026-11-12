@@ -51,6 +51,15 @@ assert(solveHelp.includes('grad[x^2*y*z, vars:{x, y, z}]'));
 assert(solveHelp.includes('det([1, 2; 3, 4])'));
 assert(getHelp('matrix').includes('Command not found: !matrix'));
 assert(getHelp('ode').includes('Command not found: !ode'));
+assert(solveHelp.includes('limit[sin(x)/x, x, 0]'));
+assert(solveHelp.includes('coords:spherical'));
+assert(getHelp('laplace').includes('convention:angular'));
+assert(getHelp('coords').includes('theta measured from +z'));
+const scientificHelp = getHelp('scientific');
+assert(scientificHelp.includes('limit[expr,x,0,dir:left]'));
+assert(scientificHelp.includes('Plots show the truncated polynomial'));
+assert(scientificHelp.includes('range entirely within its convergence region'));
+assert(scientificHelp.includes('ODE/PDE routes do not yet support'));
 console.log('PASS: Solve help documents helper-based syntax and no removed command aliases');
 
 const helperHelp = getHelp('deriv');
@@ -75,7 +84,7 @@ console.log('PASS: Helper docs now include dedicated deriv/integ pages and a ric
 
 const varsHelp = getHelp('vars');
 assert(varsHelp.includes('*vars - Variable Specification*'));
-assert(varsHelp.includes('!solve PV = nRT vars:T'));
+assert(varsHelp.includes('!solve P*V = n*R*T vars:T'));
 assert(!varsHelp.includes('!desp'));
 
 const syntaxHelp = getHelp('syntax');

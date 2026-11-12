@@ -1,5 +1,6 @@
 const assert = require('assert');
 const solver = require('../src/solver');
+const { computeRref } = require('../src/solver/matrix');
 
 const cases = [
     {
@@ -69,6 +70,86 @@ const cases = [
         verify: (result) => {
             assert.strictEqual(result.success, true);
             assert.ok(result.latex.includes('\\begin{bmatrix} 3 & 5 \\\\ 7 & 9 \\end{bmatrix}'));
+        }
+    },
+    {
+        name: 'Small matrix entries survive arithmetic and formatting',
+        run: () => solver.solveMatrixExpression('[1e-12, 0; 0, 1] * [1, 0; 0, 1]'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('&= \\begin{bmatrix} 1\\cdot10^{-12} & 0 \\\\ 0 & 1 \\end{bmatrix}'));
+        }
+    },
+    {
+        name: 'Small nonzero determinants are preserved',
+        run: () => solver.solveMatrixExpression('det([1e-12, 0; 0, 1])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('&= 1\\cdot10^{-12}'));
+        }
+    },
+    {
+        name: 'Values near an integer are not rounded to that integer',
+        run: () => solver.solveMatrixExpression('det([1.000000000001, 0; 0, 1])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('&= 1.000000000001'));
+        }
+    },
+    {
+        name: 'Nearby decimals are not presented as exact fractions',
+        run: () => solver.solveMatrixExpression('det([0.333333334, 0; 0, 1])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('&= 0.333333334'));
+            assert.ok(!result.latex.includes('&= \\frac{1}{3}'));
+        }
+    },
+    {
+        name: 'Small nonzero matrix entries remain invertible',
+        run: () => solver.solveMatrixExpression('inv([1e-12, 0; 0, 1])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('\\begin{bmatrix} 1000000000000 & 0 \\\\ 0 & 1 \\end{bmatrix}'));
+        }
+    },
+    {
+        name: 'RREF retains tiny pivots',
+        run: () => solver.solveMatrixExpression('rref([1e-17, 1])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('\\begin{bmatrix} 1 & 100000000000000000 \\end{bmatrix}'));
+        }
+    },
+    {
+        name: 'RREF handles numerical cancellation without losing rank',
+        run: () => solver.solveMatrixExpression('rref([0.1, 0.2; 0.3, 0.6])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('\\begin{bmatrix} 1 & 2 \\\\ 0 & 0 \\end{bmatrix}'));
+        }
+    },
+    {
+        name: 'RREF preserves a small independent pivot',
+        run: () => solver.solveMatrixExpression('rref([1, 1; 1, 1.000000000001])'),
+        verify: (result) => {
+            assert.strictEqual(result.success, true);
+            assert.ok(result.latex.includes('\\begin{bmatrix} 1 & 0 \\\\ 0 & 1 \\end{bmatrix}'));
+        }
+    },
+    {
+        name: 'RREF is stable when a matrix is rescaled',
+        run: () => [1e-20, 1e-12, 1, 1e12, 1e20].map((scale) =>
+            computeRref([[scale, 2 * scale], [3 * scale, 4 * scale]]).toArray()
+        ),
+        verify: (results) => {
+            for (const rows of results) {
+                for (let row = 0; row < 2; row++) {
+                    for (let column = 0; column < 2; column++) {
+                        assert.ok(Math.abs(rows[row][column] - (row === column ? 1 : 0)) < 1e-9);
+                    }
+                }
+            }
         }
     },
     {

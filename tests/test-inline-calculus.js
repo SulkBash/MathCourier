@@ -1,4 +1,6 @@
 const assert = require('assert');
+const { spawnSync } = require('child_process');
+const path = require('path');
 const math = require('../src/math');
 const solver = require('../src/solver');
 const { preprocessCalculusHelpers } = require('../src/utils');
@@ -14,6 +16,32 @@ function approxEqual(actual, expected, tolerance = 1e-3) {
 
 async function run() {
     console.log('--- STARTING INLINE CALCULUS TESTS ---');
+
+    const probeCode = [
+        "const math = require('./src/math');",
+        "const evaluate = (n, x) => math.evaluate('polygamma(n, x)', { n, x });",
+        'console.log(JSON.stringify({',
+        '  farFirst: evaluate(1, -1000000000.5),',
+        '  farSecond: evaluate(2, -1000.25),',
+        '  farThird: evaluate(3, -1001.25),',
+        '  farDigamma: evaluate(0, -1000000000.5),',
+        '  pole: Number.isNaN(evaluate(1, -1)),',
+        '  hugeOrder: Number.isNaN(evaluate(1000000000, 1)),',
+        '  infiniteArgument: Number.isNaN(evaluate(1, -Infinity))',
+        '}));'
+    ].join('\n');
+    const polygammaProbe = spawnSync(process.execPath, ['-e', probeCode], {
+        cwd: path.join(__dirname, '..'), encoding: 'utf8', timeout: 10000
+    });
+    assert.ifError(polygammaProbe.error);
+    assert.strictEqual(polygammaProbe.status, 0, polygammaProbe.stderr);
+    const polygammaValues = JSON.parse(polygammaProbe.stdout);
+    approxEqual(polygammaValues.farFirst, Math.PI ** 2 - 1e-9, 1e-8);
+    approxEqual(polygammaValues.farSecond, 124.02510572269784, 1e-7);
+    approxEqual(polygammaValues.farThird, 1558.5454565420496, 1e-6);
+    approxEqual(polygammaValues.farDigamma, 20.723265837946414, 1e-8);
+    assert(polygammaValues.pole && polygammaValues.hugeOrder && polygammaValues.infiniteArgument);
+    console.log('PASS: Polygamma handles extreme inputs without blocking');
 
     approxEqual(
         math.evaluate('deriv("x^3*y^2", "vars:{x:2, y}")', { x: 2, y: 3 }),
@@ -91,6 +119,21 @@ async function run() {
         1e-3
     );
     console.log('PASS: Quote-free deriv[...] bracket notation evaluates numerically');
+
+    approxEqual(math.evaluate('deriv[X^2, X, at:{X:3}]'), 6, 1e-6);
+    approxEqual(math.evaluate('integ[T, T:[0,1]]'), 0.5, 1e-6);
+    console.log('PASS: Inline assignments and ranges preserve variable case');
+    assert.throws(() => math.evaluate('phi+1', {}));
+    assert.throws(() => math.evaluate('E+1', {}));
+    approxEqual(math.evaluate('phi+E', { phi: 3, E: 2 }), 5, 1e-9);
+    console.log('PASS: Variable names do not silently fall back to mathjs constants');
+    assert.throws(() => math.evaluate('integ[x,x:[0,1],x:[0,2]]'), /Duplicate range/);
+    assert.throws(() => math.evaluate('deriv[x^2,vars:{x},vars:{y}]'), /Duplicate vars/);
+    assert.throws(() => math.evaluate('deriv[x^2,x,at:{x:1,x:2}]'), /Duplicate assignment/);
+    console.log('PASS: Inline helpers reject duplicate options');
+    approxEqual(math.evaluate('integ[x^2+y^2,kind:line,param:{cos(t),sin(t)},t:[0,2*pi]]'), 2 * Math.PI, 1e-3);
+    approxEqual(math.evaluate('integ[u*v*w,kind:volume,u:[0,1],v:[0,2],w:[0,3]]'), 4.5, 1e-3);
+    console.log('PASS: Inline line and volume integrals match their symbolic forms');
 
     approxEqual(
         math.evaluate('integ[x^2 + y^2, x:[0, 1], y:[0, 2]]'),

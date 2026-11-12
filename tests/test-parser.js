@@ -73,6 +73,21 @@ runTest('Detect duplicate options', () => {
     assert(res.errors.includes('Duplicate option: "x"'), 'Missing duplicate x error');
 });
 
+runTest('Range variables preserve case while option names remain case-insensitive', () => {
+    const parsed = parseCommandSyntax('T^2=4 VARS:T DOMAIN:REAL T:[0,3] t:[-3,0]');
+    assert(parsed.success, parsed.errors.join('\n'));
+    const normalized = normalizeAndValidate(parsed, 'solve');
+    assert(normalized.success, normalized.errors.join('\n'));
+    assertDeepEqual(normalized.variables, [{ name: 'T', order: 1 }]);
+    assertDeepEqual(normalized.ranges.map((range) => range.name), ['T', 't']);
+    assert(normalized.options.domain === 'real', 'Domain keyword should be case-insensitive');
+    const duplicate = parseCommandSyntax('x=1 VARS:x vars:x');
+    assert(!duplicate.success, 'Case variants of the same keyword must be duplicates');
+    const inheritedName = normalizeAndValidate(parseCommandSyntax('hasOwnProperty=1 hasOwnProperty:[0,2]'), 'solve');
+    assert(inheritedName.success, inheritedName.errors.join('\n'));
+    assertDeepEqual(inheritedName.ranges.map((range) => range.name), ['hasOwnProperty']);
+});
+
 runTest('Detect unclosed range bracket', () => {
     const input = 'sin(x) x:[-5, 5';
     const res = parseCommandSyntax(input);
@@ -162,6 +177,27 @@ runTest('Ranges evaluation and normalization', () => {
     const n3 = normalizeAndValidate(p3, 'plot');
     assert(!n3.success, 'Should fail for symbol bounds');
     assert(n3.errors.some(e => e.includes('does not evaluate to a finite number')), 'Missing non-finite error');
+});
+
+runTest('Plot and differential equation ranges must be finite and sampleable', () => {
+    for (const [command, input] of [
+        ['plot', 'sin(x) x:[-inf, inf]'],
+        ['plot', 'sin(x) xlim:[-1, inf]'],
+        ['plot', 'sin(x) x:[-1e308, 1e308]'],
+        ['plot', 'sin(x) ylim:[-1e308, 1e308]'],
+        ['ode', 'dy/dx = -y ic:{y(0)=1} x:[0, inf]'],
+        ['pde', 'du/dt = d2u/dx2 ic:{u(x,0)=sin(x)} bc:{u(0,t)=0} t:[0, inf]']
+    ]) {
+        const result = normalizeAndValidate(parseCommandSyntax(input), command);
+        assert(!result.success, `Should reject an invalid ${command} range: ${input}`);
+    }
+
+    const integral = normalizeAndValidate(parseCommandSyntax('exp(-x^2) x:[0, inf]'), 'integ');
+    assert(integral.success, 'Improper integrals should continue to accept infinite bounds');
+    const symbolicIntegral = normalizeAndValidate(parseCommandSyntax('1 y:[0, 1-x]'), 'integ');
+    assert(symbolicIntegral.success, 'Integrals should continue to accept symbolic bounds');
+    const symbolicDomain = normalizeAndValidate(parseCommandSyntax('x > 0 x:[-inf, inf]'), 'solve');
+    assert(symbolicDomain.success, 'Symbolic solving should continue to accept infinite domains');
 });
 
 runTest('View and Kind enum validation for plots', () => {

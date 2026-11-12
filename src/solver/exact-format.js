@@ -25,12 +25,13 @@ function normalizeRealNumber(value, epsilon = ZERO_EPSILON) {
         return value;
     }
 
-    if (Math.abs(value) < epsilon) {
+    if (value === 0) {
         return 0;
     }
 
     const rounded = Math.round(value);
-    if (Math.abs(value - rounded) < epsilon) {
+    const roundingNoise = Math.min(epsilon, Number.EPSILON * Math.max(1, Math.abs(value)) * 4);
+    if (rounded !== 0 && Math.abs(value - rounded) <= roundingNoise) {
         return rounded;
     }
 
@@ -39,11 +40,17 @@ function normalizeRealNumber(value, epsilon = ZERO_EPSILON) {
 
 function formatDecimalTex(value, precision = 12) {
     const normalized = normalizeRealNumber(value);
-    const formatted = math.format(normalized, {
+    let formatted = math.format(normalized, {
         precision,
         lowerExp: -4,
         upperExp: 12
     });
+    if (normalized !== Math.round(normalized) && Number(formatted) === Math.round(normalized)) {
+        formatted = math.format(normalized, { precision: 16, lowerExp: -4, upperExp: 12 });
+        if (Number(formatted) === Math.round(normalized)) {
+            formatted = math.format(normalized, { precision: 17, lowerExp: -4, upperExp: 12 });
+        }
+    }
 
     try {
         return math.parse(formatted).toTex();
@@ -73,6 +80,7 @@ function approximateFraction(value, options = {}) {
 
     for (let denominator = 1; denominator <= maxDenominator; denominator++) {
         const numerator = Math.round(absoluteValue * denominator);
+        if (numerator === 0) continue;
         const approximation = numerator / denominator;
         const error = Math.abs(absoluteValue - approximation);
 
@@ -128,7 +136,10 @@ function formatExactNumberTex(value, options = {}) {
         return String(normalized);
     }
 
-    const fraction = approximateFraction(normalized, { maxDenominator, tolerance });
+    // A loose absolute tolerance can present a nearby decimal as an exact
+    // fraction (for example, 0.333333334 as 1/3).
+    const fractionTolerance = Math.min(tolerance, Number.EPSILON * Math.max(1, Math.abs(normalized)) * 8);
+    const fraction = approximateFraction(normalized, { maxDenominator, tolerance: fractionTolerance });
     if (fraction && fraction.denominator !== 1) {
         return formatFractionTex(fraction);
     }

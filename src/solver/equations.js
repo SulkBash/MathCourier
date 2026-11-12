@@ -3,13 +3,13 @@ const path = require('path');
 const { parseCommandSyntax, normalizeAndValidate } = require('../parser');
 const { extractInlineDependencies, VECTOR_INLINE_HELPERS } = require('../inline-calculus');
 const { runSubprocess } = require('./subprocess');
-const { splitTopLevel, preprocessCalculusHelpers } = require('../utils');
+const { splitTopLevel, preprocessCalculusHelpers, isReservedMathSymbol } = require('../utils');
 const { formatExactScalarTex, formatExactNumberTex } = require('./exact-format');
 
 const EQUATION_SOLVER_PATH = path.join(__dirname, '../../python/', 'equation_solver.py');
 const EXPRESSION_MODES = new Set(['simplify', 'factor', 'expand']);
-const IGNORED_SYMBOLS = new Set(['pi', 'e', 'i', 'true', 'false', 'NaN', 'null', 'Infinity']);
 const MATRIX_FUNCTION_RE = /\b(?:det|inv|inverse|eigen|eig|eigs|rref)\s*\(/i;
+const SCIENTIFIC_HELPER_RE = /(?<![A-Za-z_])(?:limit|series|laplace|invlaplace|fourier|invfourier|convert|dimension)\s*\[/i;
 
 function collectPlainVariables(source) {
     try {
@@ -42,7 +42,7 @@ function extractVariables(node) {
                     collectPlainVariables
                 );
                 helperDeps.forEach((name) => {
-                    if (!IGNORED_SYMBOLS.has(name) && !math[name]) {
+                    if (!isReservedMathSymbol(math, name)) {
                         vars.add(name);
                     }
                 });
@@ -56,7 +56,7 @@ function extractVariables(node) {
             }
 
             const name = n.name;
-            if (!IGNORED_SYMBOLS.has(name) && !math[name]) {
+            if (!isReservedMathSymbol(math, name)) {
                 vars.add(name);
             }
         }
@@ -245,6 +245,40 @@ function hasMatrixSyntaxStatements(statements) {
     });
 }
 
+function hasVariableDenominator(parsedStatements) {
+    return parsedStatements.some(({ node }) => {
+        let found = false;
+        node.traverse((part) => {
+            if (part.isOperatorNode && part.op === '/' && part.args.length === 2 &&
+                extractVariables(part.args[1]).length > 0) {
+                found = true;
+            }
+            if (part.isOperatorNode && part.op === '^' && part.args.length === 2 &&
+                extractVariables(part.args[0]).length > 0 && extractVariables(part.args[1]).length === 0) {
+                try {
+                    if (part.args[1].evaluate() < 0) found = true;
+                } catch (_) {
+                    // Other expressions are handled by the normal solver.
+                }
+            }
+        });
+        return found;
+    });
+}
+
+function hasSmallNumericConstant(parsedStatements) {
+    return parsedStatements.some(({ node }) => {
+        let found = false;
+        node.traverse((part) => {
+            if (part.isConstantNode && typeof part.value === 'number' &&
+                part.value !== 0 && Math.abs(part.value) < 1e-8) {
+                found = true;
+            }
+        });
+        return found;
+    });
+}
+
 function buildRangePayload(ranges) {
     const payload = {};
     for (const range of ranges || []) {
@@ -258,7 +292,9 @@ function buildEquationPayload(statements, parsed, mode = null) {
         equations: statements,
         variables: (parsed.variables || []).map((entry) => entry.name),
         ranges: buildRangePayload(parsed.ranges),
-        mode
+        mode,
+        assume: parsed.options.assume || null,
+        domain: parsed.options.domain || null
     };
 }
 
@@ -304,19 +340,14 @@ function solveEquationLocally(parsedStatements, variables) {
 
     if (n === 0) {
         try {
-            const value = parsedStatements[0].node.evaluate();
-            const isTautology = Math.abs(value) < 1e-10;
-            return {
-                success: true,
-                latex: [
-                    '\\begin{aligned}',
-                    `${formatEquationTex(parsedStatements[0])} \\\\`,
-                    isTautology
-                        ? '\\implies \\text{Tautology (always true)}'
-                        : '\\implies \\text{Contradiction (no solution)}',
-                    '\\end{aligned}'
-                ].join('\n')
-            };
+            for (const statement of parsedStatements) {
+                const magnitude = math.abs(statement.node.evaluate());
+                if (typeof magnitude !== 'number' || !Number.isFinite(magnitude)) {
+                    return { success: false, error: 'Equation contains an undefined or non-finite value.', invalidInput: true };
+                }
+            }
+            // Symbolic arithmetic avoids rounding errors and checks every statement.
+            return { success: false, error: 'Exact evaluation is required for constant equations.' };
         } catch (err) {
             return { success: false, error: `Evaluation error: ${err.message}` };
         }
@@ -388,6 +419,9 @@ function solveEquationLocally(parsedStatements, variables) {
 
             for (let index = 0; index < n; index++) {
                 const value = solution[index][0];
+                if (typeof value === 'number' && value !== 0 && Math.abs(value) < 1e-8) {
+                    return { success: false, error: 'Exact evaluation is required for small solutions.' };
+                }
                 const formattedValue = formatExactScalarTex(value, {
                     maxDenominator: 64,
                     tolerance: 1e-8,
@@ -435,6 +469,9 @@ function solveEquationLocally(parsedStatements, variables) {
 
     if (isLinear && linearCoeff !== 0) {
         const root = -constantTerm / linearCoeff;
+        if (root !== 0 && Math.abs(root) < 1e-8) {
+            return { success: false, error: 'Exact evaluation is required for small solutions.' };
+        }
         return {
             success: true,
             latex: [
@@ -460,6 +497,11 @@ function solveEquationLocally(parsedStatements, variables) {
         ) {
             const degree = rationalized.coefficients.length - 1;
             if (degree >= 1 && degree <= 3) {
+                if (rationalized.coefficients.some((coefficient) =>
+                    typeof coefficient === 'number' && coefficient !== 0 && Math.abs(coefficient) < 1e-8
+                )) {
+                    return { success: false, error: 'Exact evaluation is required for small polynomial coefficients.' };
+                }
                 polynomialRoots = math.polynomialRoot(...rationalized.coefficients);
             }
         }
@@ -468,6 +510,12 @@ function solveEquationLocally(parsedStatements, variables) {
     }
 
     if (polynomialRoots) {
+        if (polynomialRoots.some((root) => {
+            const parts = root && root.isComplex ? [root.re, root.im] : [root];
+            return parts.some((part) => typeof part === 'number' && part !== 0 && Math.abs(part) < 1e-8);
+        })) {
+            return { success: false, error: 'Exact evaluation is required for small solutions.' };
+        }
         const roots = polynomialRoots.map((root, index) => {
             return `${variableName}_${index + 1} = ${formatExactScalarTex(root, {
                 maxDenominator: 64,
@@ -598,6 +646,7 @@ function solveEquationLocally(parsedStatements, variables) {
                 '\\begin{aligned}',
                 `${equationTex} \\\\`,
                 `\\implies ${variableName} \\approx ${Number(rootVal.toFixed(10)).toString()}`,
+                '\\quad\\text{(one numerical root; others may exist)}',
                 '\\end{aligned}'
             ].join('\n')
         };
@@ -632,8 +681,11 @@ async function solveEquation(inputStr) {
     const hasMatrixSyntax = hasMatrixSyntaxStatements(statements);
     const shouldUsePythonDirectly =
         EXPRESSION_MODES.has(mode) ||
+        SCIENTIFIC_HELPER_RE.test(body) ||
         hasInequality ||
         hasMatrixSyntax ||
+        Boolean(parsed.options.assume) ||
+        Boolean(parsed.options.domain) ||
         targetVariables.length > 0 ||
         parsed.ranges.length > 0;
 
@@ -657,6 +709,11 @@ async function solveEquation(inputStr) {
         return chooseError(localParseError, symbolicFallback);
     }
 
+    if (localMeta.variables.length > 0 &&
+        (hasVariableDenominator(localMeta.parsedStatements) || hasSmallNumericConstant(localMeta.parsedStatements))) {
+        return runEquationSubprocess(buildEquationPayload(statements, parsed, mode));
+    }
+
     if (statements.length === 1 && localMeta.variables.length > 1) {
         const localVariableError = {
             success: false,
@@ -670,11 +727,14 @@ async function solveEquation(inputStr) {
     }
 
     const localResult = solveEquationLocally(localMeta.parsedStatements, localMeta.variables);
+    if (localResult.invalidInput) {
+        return { success: false, error: localResult.error };
+    }
     if (localResult.success) {
         if (shouldTrySymbolicUpgrade(localResult, statements, localMeta.variables)) {
             const symbolicResult = await runEquationSubprocess(buildEquationPayload(statements, parsed, null));
             if (symbolicResult.success) {
-                return symbolicResult;
+                if (symbolicResult.complete !== false || symbolicResult.real_subset) return symbolicResult;
             }
         }
 
