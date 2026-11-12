@@ -221,7 +221,7 @@ Public release history lives in GitHub Releases rather than a tracked `CHANGELOG
 \draw (0,0) to[R, l=$R$] (2,0)
       to[C, l=$C$] (2,2)
       to[L, l=$L$] (0,2)
-      to[V, l=$V$] (0,0);
+      to[V, l=$V$] (0,0); mode:tikz
 ```
 
 Another standalone formula example:
