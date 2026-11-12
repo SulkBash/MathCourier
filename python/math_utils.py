@@ -736,7 +736,10 @@ def _check_derivative_substitutions(expr, substitutions, context, condition_star
 def _check_integral_domain(expr, ranges, call_dict, kind, context, condition_start, real_start):
     if not ranges:
         return
-    if expr.has(sympy.Order):
+    # Vector fields can parse to a native Python tuple rather than a SymPy
+    # expression. Check every component without bypassing series safeguards.
+    components = expr if isinstance(expr, (tuple, list)) else (expr,)
+    if any(sympy.sympify(component).has(sympy.Order) for component in components):
         raise ValueError("A series remainder cannot be used as an exact definite integral over fixed bounds.")
     range_by_name = {entry["name"]: entry for entry in ranges}
     for name in (context["real_targets"][real_start:] if context else []):

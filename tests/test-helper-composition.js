@@ -56,6 +56,8 @@ async function run() {
     await successful('laplace[exp(-t),t,s]+1', ['\\operatorname{Re}', '> -1']);
     await successful('deriv[laplace[1,t,s],s,at:{s:2}]', ['\\frac{1}{4}', '\\operatorname{Re}']);
     await successful('integ[laplace[1,t,s],s:[1,2]]', ['\\log', '\\operatorname{Re}']);
+    await successful('integ[(-y,x),kind:line,param:{cos(t),sin(t)},t:[0,2*pi]]', ['\\int_C', '&= 2 \\pi']);
+    await successful('integ[(0,0,z),kind:surface,param:{sin(u)*cos(v),sin(u)*sin(v),cos(u)},u:[0,pi],v:[0,2*pi]]', ['\\iint_S', '\\frac{4 \\pi}{3}']);
     await successful('convert[convert[5*km,m],cm]', ['500000', '\\text{cm}']);
     await successful('dimension[convert[5*km,m]]', ['\\mathrm{L}']);
     await successful('grad[limit[sin(t*x)/t,t,0]+y] vars:{x,y}', ['\\nabla', '\\lim_{t\\to 0}']);
@@ -81,6 +83,8 @@ async function run() {
     await rejected('deriv[laplace[exp(-a*t),t,s],a,at:{a:-1}]', 'convergence region');
     await rejected('integ[laplace[1,t,s],s:[-2,-1]]', 'convergence region');
     await rejected('integ[series[sin(x),x,0,5],x:[1,2]]', 'series remainder');
+    await rejected('integ[(series[sin(x),x,0,5],x),kind:line,param:{t,t},t:[0,1]]', 'series remainder');
+    await rejected('integ[(laplace[1,t,s],0),kind:line,param:{t,t},t:[0,1]]', 'convergence region');
     await rejected('convert[5*km,m]+1', 'unit conversions');
     await rejected('dimension[m]+1', 'metadata');
     await rejected('eigen([limit[sin(t)/t,t,0],0;0,2]) mode:simplify', 'eigenvalue');
